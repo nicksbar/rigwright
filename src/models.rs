@@ -11,6 +11,7 @@ pub enum Manufacturer {
 pub enum Protocol {
     IcomCiV { default_address: u8 },
     YaesuCat,
+    YaesuLegacyCat,
     KenwoodCat,
 }
 
@@ -54,6 +55,11 @@ const HF_BASE: ModelCapabilities = ModelCapabilities {
 
 const HF_SCOPE: ModelCapabilities = ModelCapabilities {
     spectrum: true,
+    ..HF_BASE
+};
+
+const ALL_MODE_BASE: ModelCapabilities = ModelCapabilities {
+    vhf_uhf: true,
     ..HF_BASE
 };
 
@@ -102,6 +108,34 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
             vhf_uhf: true,
             ..HF_SCOPE
         },
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Yaesu,
+        model: "FT-817ND",
+        protocol: Protocol::YaesuLegacyCat,
+        support: SupportLevel::Framework,
+        capabilities: ALL_MODE_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Yaesu,
+        model: "FT-818",
+        protocol: Protocol::YaesuLegacyCat,
+        support: SupportLevel::Framework,
+        capabilities: ALL_MODE_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Yaesu,
+        model: "FT-857D",
+        protocol: Protocol::YaesuLegacyCat,
+        support: SupportLevel::Framework,
+        capabilities: ALL_MODE_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Yaesu,
+        model: "FT-897D",
+        protocol: Protocol::YaesuLegacyCat,
+        support: SupportLevel::Framework,
+        capabilities: ALL_MODE_BASE,
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Yaesu,
@@ -194,5 +228,15 @@ mod tests {
         assert_eq!(mp.protocol, Protocol::YaesuCat);
         assert_eq!(d.support, SupportLevel::Framework);
         assert_eq!(mp.support, SupportLevel::Framework);
+    }
+
+    #[test]
+    fn catalogs_legacy_yaesu_binary_cat_family() {
+        for model in ["FT-817ND", "FT-818", "FT-857D", "FT-897D"] {
+            let profile = find_model(model).expect("legacy Yaesu profile");
+            assert_eq!(profile.protocol, Protocol::YaesuLegacyCat);
+            assert_eq!(profile.support, SupportLevel::Framework);
+            assert!(!profile.capabilities.spectrum);
+        }
     }
 }
