@@ -17,6 +17,12 @@ Only the IC-7300 is regularly hardware-tested. Other Icom models may respond to
 parts of the driver, but are not yet claimed as supported. Yaesu, Kenwood,
 Hamlib, network transports, and a mock transport are future work.
 
+The source tree follows the public API: protocol-neutral types live in
+`hal.rs`, `controls.rs`, and `models.rs`; shared framing lives under `protocol/`;
+and vendor/model profiles live under `icom/`, `yaesu/`, and `kenwood/`. See
+[`docs/supported-radios.md`](docs/supported-radios.md) for maturity labels and
+official command-manual sources.
+
 ## Use
 
 ```toml
@@ -48,4 +54,3 @@ Run the hardware probe with `cargo run --example ci_v_probe`. It currently uses
 ## License
 
 MIT
-
