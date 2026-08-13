@@ -9,9 +9,9 @@ repository = "https://github.com/nicksbar/rigwright"
 readme = "README.md"
 keywords = ["amateur-radio", "ham-radio", "radio", "icom", "civ"]
 categories = ["hardware-support"]
+publish = ["crates-io"]
 
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
 serialport = "4"
-
