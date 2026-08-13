@@ -119,6 +119,20 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Yaesu,
+        model: "FTDX101D",
+        protocol: Protocol::YaesuCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_SCOPE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Yaesu,
+        model: "FTDX101MP",
+        protocol: Protocol::YaesuCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_SCOPE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Yaesu,
         model: "FT-991A",
         protocol: Protocol::YaesuCat,
         support: SupportLevel::Framework,
@@ -170,5 +184,15 @@ mod tests {
             .map(|profile| profile.model)
             .collect();
         assert_eq!(validated, ["IC-7300"]);
+    }
+
+    #[test]
+    fn catalogs_both_ftdx101_variants() {
+        let d = find_model("FTDX101D").expect("FTDX101D profile");
+        let mp = find_model("ftdx101mp").expect("FTDX101MP profile");
+        assert_eq!(d.protocol, Protocol::YaesuCat);
+        assert_eq!(mp.protocol, Protocol::YaesuCat);
+        assert_eq!(d.support, SupportLevel::Framework);
+        assert_eq!(mp.support, SupportLevel::Framework);
     }
 }

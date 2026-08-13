@@ -7,6 +7,8 @@ use crate::protocol::ascii_cat;
 pub mod ft710;
 pub mod ft991a;
 pub mod ftdx10;
+pub mod ftdx101d;
+pub mod ftdx101mp;
 
 pub fn read_frequency_a() -> Result<Vec<u8>> {
     ascii_cat::encode("FA", None)
