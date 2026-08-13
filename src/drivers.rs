@@ -333,12 +333,22 @@ pub fn open_model(
     baud_rate: u32,
     controller_address: u8,
 ) -> Result<ConfiguredRadio> {
+    open_model_with_radio_address(model, port, baud_rate, controller_address, None)
+}
+
+pub fn open_model_with_radio_address(
+    model: &str,
+    port: impl Into<String>,
+    baud_rate: u32,
+    controller_address: u8,
+    radio_address: Option<u8>,
+) -> Result<ConfiguredRadio> {
     let profile = find_model(model).with_context(|| format!("unknown radio model: {model}"))?;
     let port = port.into();
     Ok(match profile.protocol {
         Protocol::IcomCiV { default_address } => ConfiguredRadio::Icom(
             crate::IcomCiVRadio::new(port, baud_rate, controller_address)
-                .with_radio_address(default_address),
+                .with_radio_address(radio_address.unwrap_or(default_address)),
         ),
         Protocol::YaesuCat => {
             ConfiguredRadio::Ascii(AsciiCatRadio::new(port, baud_rate, AsciiCatFlavor::Yaesu))
@@ -369,6 +379,13 @@ mod tests {
             open_model("TS-590SG", "/dev/null", 115_200, 0xE0).unwrap(),
             ConfiguredRadio::Ascii(_)
         ));
+    }
+    #[test]
+    fn factory_accepts_an_icom_address_override() {
+        let radio =
+            open_model_with_radio_address("IC-7300", "/dev/null", 115_200, 0xE0, Some(0x95))
+                .unwrap();
+        assert!(radio.as_icom().is_some());
     }
     #[test]
     fn decodes_common_ascii_modes() {
