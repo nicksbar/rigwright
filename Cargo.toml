@@ -9,7 +9,7 @@ repository = "https://github.com/nicksbar/rigwright"
 readme = "README.md"
 keywords = ["amateur-radio", "ham-radio", "radio", "icom", "civ"]
 categories = ["hardware-support"]
-publish = ["crates-io"]
+publish = false
 
 [dependencies]
 anyhow = "1"
