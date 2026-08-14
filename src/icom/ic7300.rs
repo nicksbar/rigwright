@@ -2,6 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use serialport::{SerialPort, SerialPortType};
 use std::{
+    collections::VecDeque,
     io::ErrorKind,
     io::Read,
     io::Write,
@@ -23,6 +24,44 @@ struct ScopeSweepAssembler {
     collecting: bool,
     next_division: usize,
     bins: Vec<u8>,
+    dropped_sweeps: u64,
+}
+
+#[derive(Debug, Default)]
+struct ScopeStreamReader {
+    pending: Vec<u8>,
+    assembler: ScopeSweepAssembler,
+    completed: VecDeque<Vec<u8>>,
+    division_frames: u64,
+    completed_sweeps: u64,
+}
+
+impl ScopeStreamReader {
+    fn ingest_bytes(&mut self, bytes: &[u8], radio_address: u8, controller_address: u8) {
+        self.pending.extend_from_slice(bytes);
+        for frame in drain_ci_v_frames(&mut self.pending) {
+            if !is_radio_to_controller_frame(&frame, radio_address, controller_address)
+                || !is_spectrum_data_frame(&frame)
+            {
+                continue;
+            }
+            self.division_frames = self.division_frames.wrapping_add(1);
+            if let Some(sweep) = self.assembler.push(&frame) {
+                self.completed_sweeps = self.completed_sweeps.wrapping_add(1);
+                self.completed.push_back(sweep);
+            }
+        }
+    }
+
+    fn push_bytes(
+        &mut self,
+        bytes: &[u8],
+        radio_address: u8,
+        controller_address: u8,
+    ) -> Vec<Vec<u8>> {
+        self.ingest_bytes(bytes, radio_address, controller_address);
+        self.completed.drain(..).collect()
+    }
 }
 
 impl ScopeSweepAssembler {
@@ -34,6 +73,9 @@ impl ScopeSweepAssembler {
         }
 
         if division == 1 {
+            if self.collecting {
+                self.dropped_sweeps = self.dropped_sweeps.wrapping_add(1);
+            }
             self.collecting = true;
             self.next_division = 2;
             self.bins.clear();
@@ -41,6 +83,9 @@ impl ScopeSweepAssembler {
         }
 
         if !self.collecting || division != self.next_division {
+            if self.collecting {
+                self.dropped_sweeps = self.dropped_sweeps.wrapping_add(1);
+            }
             self.reset();
             return None;
         }
@@ -345,6 +390,7 @@ pub struct IcomCiVRadio {
     controller_address: u8,
     radio_address: u8,
     serial_port: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
+    scope_stream_reader: Arc<Mutex<ScopeStreamReader>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -462,6 +508,7 @@ impl IcomCiVRadio {
             controller_address: address,
             radio_address: 0x94,
             serial_port: Arc::new(Mutex::new(None)),
+            scope_stream_reader: Arc::new(Mutex::new(ScopeStreamReader::default())),
         }
     }
 
@@ -559,6 +606,8 @@ impl IcomCiVRadio {
         let port = guard
             .as_mut()
             .context("radio serial port slot unavailable")?;
+        port.set_timeout(timeout)
+            .context("failed to update radio serial timeout")?;
         operation(port)
     }
 
@@ -602,12 +651,14 @@ impl IcomCiVRadio {
         if let Ok(mut guard) = self.serial_port.lock() {
             *guard = None;
         }
+        if let Ok(mut reader) = self.scope_stream_reader.lock() {
+            *reader = ScopeStreamReader::default();
+        }
     }
 
     fn write_frame(&self, port: &mut Box<dyn SerialPort>, frame: &[u8]) -> Result<()> {
         port.write_all(frame)
             .context("failed to write CI-V frame")?;
-        thread::sleep(Duration::from_millis(120));
         Ok(())
     }
 
@@ -627,6 +678,15 @@ impl IcomCiVRadio {
         while Instant::now() < deadline {
             match port.read(&mut buf) {
                 Ok(bytes) if bytes > 0 => {
+                    // CI-V scope frames are unsolicited and can be interleaved
+                    // with command replies. Feed every byte through the
+                    // persistent scope parser before matching the requested
+                    // response, otherwise normal CAT traffic punches holes in
+                    // the waterfall and leaves the next sweep half-framed.
+                    self.scope_stream_reader
+                        .lock()
+                        .map_err(|_| anyhow!("CI-V scope stream state lock poisoned"))?
+                        .ingest_bytes(&buf[..bytes], self.radio_address, self.controller_address);
                     out.extend_from_slice(&buf[..bytes]);
                     for frame in extract_ci_v_frames(&out) {
                         if !is_radio_to_controller_frame(
@@ -655,32 +715,6 @@ impl IcomCiVRadio {
         Ok(Vec::new())
     }
 
-    fn read_any_frame(&self, port: &mut Box<dyn SerialPort>) -> Result<Vec<u8>> {
-        let mut buf = [0u8; 256];
-        let mut out = Vec::new();
-        let mut attempts = 0;
-        while attempts < 5 {
-            match port.read(&mut buf) {
-                Ok(bytes) if bytes > 0 => {
-                    out.extend_from_slice(&buf[..bytes]);
-                    if let Some(parsed) = extract_ci_v_frame(&out) {
-                        return Ok(parsed.to_vec());
-                    }
-                }
-                Ok(_) => {}
-                Err(err) if err.kind() == ErrorKind::TimedOut => {
-                    // transient serial idle; keep trying
-                }
-                Err(err) => {
-                    return Err(err).context("failed to read CI-V response");
-                }
-            }
-            attempts += 1;
-            thread::sleep(Duration::from_millis(8));
-        }
-        Ok(out)
-    }
-
     fn transact(&self, payload: &[u8], expect_data_frame: bool) -> Result<Vec<u8>> {
         let frame = self.build_frame_payload(payload);
         self.with_serial_port(Duration::from_millis(700), |port| {
@@ -691,7 +725,9 @@ impl IcomCiVRadio {
                     frame_matches_request(response, payload)
                 })
             } else {
-                self.read_any_frame(port)
+                self.read_response_matching(port, Duration::from_millis(1_200), |response| {
+                    is_ack_frame(response) || is_nak_frame(response)
+                })
             }
         })
     }
@@ -873,8 +909,35 @@ impl IcomCiVRadio {
         self.try_scope_waveform_bins_stream_blocking(timeout)
     }
 
+    pub async fn drain_scope_waveform_sweeps(&self, timeout: Duration) -> Result<Vec<Vec<u8>>> {
+        self.drain_scope_waveform_sweeps_blocking(timeout)
+    }
+
+    /// Lifetime counters for diagnosing USB CI-V scope cadence. A complete
+    /// IC-7300 USB sweep consists of exactly 11 division frames.
+    pub fn scope_stream_counters(&self) -> (u64, u64, u64) {
+        self.scope_stream_reader
+            .lock()
+            .map(|reader| {
+                (
+                    reader.division_frames,
+                    reader.completed_sweeps,
+                    reader.assembler.dropped_sweeps,
+                )
+            })
+            .unwrap_or_default()
+    }
+
     pub async fn set_scope_sweep_speed(&self, speed: u8) -> Result<()> {
         self.transact_ack(&scope_sweep_speed_payload(speed))
+    }
+
+    pub async fn set_scope_hold(&self, hold: bool) -> Result<()> {
+        self.transact_ack(&scope_hold_payload(hold))
+    }
+
+    pub async fn set_scope_reference_level_tenths_db(&self, tenths_db: i16) -> Result<()> {
+        self.transact_ack(&scope_reference_level_payload(tenths_db)?)
     }
 
     pub async fn set_scope_center_fixed_mode(&self, fixed_mode: bool) -> Result<()> {
@@ -922,8 +985,18 @@ impl IcomCiVRadio {
         &self,
         timeout: Duration,
     ) -> Result<Option<Vec<u8>>> {
-        let result = self.with_serial_port(Duration::from_millis(250), |port| {
-            self.read_stream_scope_bins(port, timeout)
+        let result = self
+            .drain_scope_waveform_sweeps_blocking(timeout)
+            .map(|sweeps| sweeps.into_iter().next());
+        if result.is_err() {
+            self.close_serial_port();
+        }
+        result
+    }
+
+    fn drain_scope_waveform_sweeps_blocking(&self, timeout: Duration) -> Result<Vec<Vec<u8>>> {
+        let result = self.with_serial_port(Duration::from_millis(25), |port| {
+            self.read_stream_scope_sweeps(port, timeout)
         });
         if result.is_err() {
             self.close_serial_port();
@@ -936,27 +1009,37 @@ impl IcomCiVRadio {
         port: &mut Box<dyn SerialPort>,
         timeout: Duration,
     ) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .read_stream_scope_sweeps(port, timeout)?
+            .into_iter()
+            .next())
+    }
+
+    fn read_stream_scope_sweeps(
+        &self,
+        port: &mut Box<dyn SerialPort>,
+        timeout: Duration,
+    ) -> Result<Vec<Vec<u8>>> {
         let deadline = Instant::now() + timeout;
-        let mut read_buffer = [0_u8; 4096];
-        let mut pending = Vec::with_capacity(8192);
-        let mut assembler = ScopeSweepAssembler::default();
+        // Keep reads small enough that completed sweeps reach the UI at their
+        // native cadence instead of arriving as several-frame visual bursts.
+        let mut read_buffer = [0_u8; 512];
+        let mut sweeps = Vec::new();
+        let mut reader = self
+            .scope_stream_reader
+            .lock()
+            .map_err(|_| anyhow!("CI-V scope stream state lock poisoned"))?;
 
         while Instant::now() < deadline {
             match port.read(&mut read_buffer) {
                 Ok(bytes) if bytes > 0 => {
-                    pending.extend_from_slice(&read_buffer[..bytes]);
-                    for frame in drain_ci_v_frames(&mut pending) {
-                        if !is_radio_to_controller_frame(
-                            &frame,
-                            self.radio_address,
-                            self.controller_address,
-                        ) || !is_spectrum_data_frame(&frame)
-                        {
-                            continue;
-                        }
-                        if let Some(sweep) = assembler.push(&frame) {
-                            return Ok(Some(sweep));
-                        }
+                    sweeps.extend(reader.push_bytes(
+                        &read_buffer[..bytes],
+                        self.radio_address,
+                        self.controller_address,
+                    ));
+                    if !sweeps.is_empty() {
+                        return Ok(sweeps);
                     }
                 }
                 Ok(_) => {}
@@ -965,7 +1048,7 @@ impl IcomCiVRadio {
             }
         }
 
-        Ok(None)
+        Ok(sweeps)
     }
 }
 
@@ -1025,11 +1108,26 @@ fn scope_mode_payload(fixed_mode: bool) -> [u8; 4] {
 }
 
 fn scope_edge_number_payload(edge_number: u8) -> [u8; 4] {
-    [0x27, 0x16, 0x00, edge_number.clamp(1, 3)]
+    [0x27, 0x16, 0x00, edge_number.clamp(1, 4)]
 }
 
 fn scope_sweep_speed_payload(speed: u8) -> [u8; 4] {
     [0x27, 0x1A, 0x00, speed.min(2)]
+}
+
+fn scope_hold_payload(hold: bool) -> [u8; 4] {
+    [0x27, 0x17, 0x00, u8::from(hold)]
+}
+
+fn scope_reference_level_payload(tenths_db: i16) -> Result<[u8; 6]> {
+    if !(-200..=200).contains(&tenths_db) || tenths_db % 5 != 0 {
+        anyhow::bail!("IC-7300 scope reference level must be -20.0..=20.0 dB in 0.5 dB steps");
+    }
+    let magnitude = tenths_db.unsigned_abs();
+    let whole_db = (magnitude / 10) as u8;
+    let half_db = if magnitude % 10 == 5 { 0x50 } else { 0x00 };
+    let sign = u8::from(tenths_db < 0);
+    Ok([0x27, 0x19, 0x00, decimal_to_bcd(whole_db), half_db, sign])
 }
 
 fn scope_vbw_payload(wide: bool) -> [u8; 4] {
@@ -1043,7 +1141,7 @@ fn scope_span_payload(span_hz: u64) -> Result<Vec<u8>> {
     if !ALLOWED_SPANS.contains(&span_hz) {
         anyhow::bail!("unsupported IC-7300 center scope span: {span_hz} Hz");
     }
-    let mut payload = vec![0x27, 0x15];
+    let mut payload = vec![0x27, 0x15, 0x00];
     payload.extend_from_slice(&encode_civ_frequency_bcd(span_hz));
     Ok(payload)
 }
@@ -1055,7 +1153,7 @@ fn scope_fixed_edges_payload(edge_number: u8, lower_hz: u64, upper_hz: u64) -> R
     let range = scope_frequency_range(lower_hz, upper_hz).with_context(|| {
         format!("scope edges {lower_hz}..{upper_hz} do not fit one IC-7300 frequency range")
     })?;
-    let mut payload = vec![0x27, 0x1E, decimal_to_bcd(range), edge_number.clamp(1, 3)];
+    let mut payload = vec![0x27, 0x1E, decimal_to_bcd(range), edge_number.clamp(1, 4)];
     payload.extend_from_slice(&encode_civ_frequency_bcd(lower_hz));
     payload.extend_from_slice(&encode_civ_frequency_bcd(upper_hz));
     Ok(payload)
@@ -1142,7 +1240,9 @@ impl RadioHal for IcomCiVRadio {
 
         self.with_serial_port(Duration::from_millis(700), |port| {
             self.write_frame(port, request)?;
-            self.read_any_frame(port)
+            self.read_response_matching(port, Duration::from_millis(1_200), |frame| {
+                !is_spectrum_data_frame(frame)
+            })
         })
     }
 
@@ -1179,28 +1279,6 @@ pub struct RadioStatus {
     pub frequency_hz: Option<u64>,
     pub mode: Option<String>,
     pub mode_details: Option<OperatingMode>,
-}
-
-fn extract_ci_v_frame(response: &[u8]) -> Option<&[u8]> {
-    let starts: Vec<usize> = response
-        .windows(2)
-        .enumerate()
-        .filter_map(|(idx, w)| {
-            (w[0] == CI_V_FRAME_START && w[1] == CI_V_FRAME_START).then_some(idx)
-        })
-        .collect();
-
-    for start in starts.into_iter().rev() {
-        let candidate = &response[start..];
-        let end = candidate
-            .iter()
-            .position(|&b| b == CI_V_FRAME_END)
-            .map(|idx| start + idx)?;
-        if end >= start + 5 {
-            return Some(&response[start..=end]);
-        }
-    }
-    None
 }
 
 fn extract_ci_v_frames(response: &[u8]) -> Vec<Vec<u8>> {
@@ -1521,11 +1599,25 @@ mod tests {
     fn encodes_documented_scope_commands() {
         assert_eq!(scope_mode_payload(true), [0x27, 0x14, 0x00, 0x01]);
         assert_eq!(scope_edge_number_payload(2), [0x27, 0x16, 0x00, 0x02]);
+        assert_eq!(scope_edge_number_payload(4), [0x27, 0x16, 0x00, 0x04]);
         assert_eq!(scope_sweep_speed_payload(0), [0x27, 0x1A, 0x00, 0x00]);
+        assert_eq!(scope_hold_payload(true), [0x27, 0x17, 0x00, 0x01]);
+        assert_eq!(
+            scope_reference_level_payload(105).unwrap(),
+            [0x27, 0x19, 0x00, 0x10, 0x50, 0x00]
+        );
+        assert_eq!(
+            scope_reference_level_payload(-200).unwrap(),
+            [0x27, 0x19, 0x00, 0x20, 0x00, 0x01]
+        );
         assert_eq!(scope_vbw_payload(true), [0x27, 0x1D, 0x00, 0x01]);
         assert_eq!(
             scope_span_payload(2_500).unwrap(),
-            vec![0x27, 0x15, 0x00, 0x25, 0x00, 0x00, 0x00]
+            vec![0x27, 0x15, 0x00, 0x00, 0x25, 0x00, 0x00, 0x00]
+        );
+        assert_eq!(
+            scope_span_payload(500_000).unwrap(),
+            vec![0x27, 0x15, 0x00, 0x00, 0x00, 0x50, 0x00, 0x00]
         );
         assert_eq!(
             scope_fixed_edges_payload(1, 14_000_000, 14_350_000).unwrap(),
@@ -1705,6 +1797,73 @@ mod tests {
             assert!(assembler.push(&frame(division)).is_none());
         }
         assert_eq!(assembler.push(&frame(11)).unwrap().len(), 475);
+    }
+
+    #[test]
+    fn stream_reader_preserves_every_complete_sweep_in_one_serial_read() {
+        fn frame(division: usize, level: u8) -> Vec<u8> {
+            let mut frame = vec![
+                0xFE,
+                0xFE,
+                0xE0,
+                0x94,
+                0x27,
+                0x00,
+                0x00,
+                decimal_to_bcd(division as u8),
+                0x11,
+            ];
+            if division == 1 {
+                frame.extend_from_slice(&[0x00; 12]);
+            } else {
+                let count = if division == 11 { 25 } else { 50 };
+                frame.extend(std::iter::repeat_n(level, count));
+            }
+            frame.push(0xFD);
+            frame
+        }
+
+        let mut bytes = Vec::new();
+        for level in [20, 80] {
+            for division in 1..=11 {
+                bytes.extend(frame(division, level));
+            }
+        }
+        let sweeps = ScopeStreamReader::default().push_bytes(&bytes, 0x94, 0xE0);
+        assert_eq!(sweeps.len(), 2);
+        assert!(sweeps[0].iter().all(|value| *value == 20));
+        assert!(sweeps[1].iter().all(|value| *value == 80));
+    }
+
+    #[test]
+    fn command_reader_can_queue_a_complete_unsolicited_sweep_for_stream_drain() {
+        let mut bytes = Vec::new();
+        for division in 1..=11 {
+            bytes.extend([
+                0xFE,
+                0xFE,
+                0xE0,
+                0x94,
+                0x27,
+                0x00,
+                0x00,
+                decimal_to_bcd(division),
+                0x11,
+            ]);
+            if division == 1 {
+                bytes.extend([0x00; 12]);
+            } else {
+                let count = if division == 11 { 25 } else { 50 };
+                bytes.extend(std::iter::repeat_n(42, count));
+            }
+            bytes.push(0xFD);
+        }
+
+        let mut reader = ScopeStreamReader::default();
+        reader.ingest_bytes(&bytes, 0x94, 0xE0);
+        let queued = reader.push_bytes(&[], 0x94, 0xE0);
+        assert_eq!(queued.len(), 1);
+        assert!(queued[0].iter().all(|value| *value == 42));
     }
 
     #[test]
