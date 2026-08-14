@@ -11,11 +11,15 @@ evolve independently and be embedded in other amateur-radio applications.
 - Native Icom CI-V over serial, developed and exercised with the IC-7300.
 - Serial-port discovery, CI-V framing and parsing, spectrum-scope data, and raw
   protocol access.
+- Strict IC-7300 USB scope assembly: ordered 11-division input produces one
+  complete 475-bin sweep, with documented center-span and fixed-edge controls.
 - Captured-frame unit tests and a direct CI-V probe example.
 
 Only the IC-7300 is regularly hardware-tested. Other Icom models may respond to
-parts of the driver, but are not yet claimed as supported. Yaesu, Kenwood,
-Hamlib, network transports, and a mock transport are future work.
+parts of the driver but are not yet claimed as validated. Common frequency,
+mode, and PTT drivers exist for the cataloged Yaesu and Kenwood radios and
+remain experimental pending physical-radio testing. Hamlib, network transports,
+and a mock transport are future work.
 
 The source tree follows the public API: protocol-neutral types live in
 `hal.rs`, `controls.rs`, and `models.rs`; shared framing lives under `protocol/`;

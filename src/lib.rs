@@ -1,6 +1,7 @@
 //! Protocol-neutral amateur-radio control with native vendor drivers.
 
 pub mod controls;
+pub mod drivers;
 pub mod hal;
 pub mod icom;
 pub mod kenwood;

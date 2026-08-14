@@ -2,6 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use serialport::{SerialPort, SerialPortType};
 use std::{
+    collections::VecDeque,
     io::ErrorKind,
     io::Read,
     io::Write,
@@ -13,7 +14,111 @@ use std::{
 
 const CI_V_FRAME_START: u8 = 0xFE;
 const CI_V_FRAME_END: u8 = 0xFD;
-const MIN_SCOPE_BINS_FOR_DISPLAY: usize = 180;
+const IC7300_SCOPE_DIVISIONS: usize = 11;
+const IC7300_SCOPE_BINS: usize = 475;
+const IC7300_SCOPE_FULL_CHUNK_BINS: usize = 50;
+const IC7300_SCOPE_LAST_CHUNK_BINS: usize = 25;
+
+#[derive(Debug, Default)]
+struct ScopeSweepAssembler {
+    collecting: bool,
+    next_division: usize,
+    bins: Vec<u8>,
+    dropped_sweeps: u64,
+}
+
+#[derive(Debug, Default)]
+struct ScopeStreamReader {
+    pending: Vec<u8>,
+    assembler: ScopeSweepAssembler,
+    completed: VecDeque<Vec<u8>>,
+    division_frames: u64,
+    completed_sweeps: u64,
+}
+
+impl ScopeStreamReader {
+    fn ingest_bytes(&mut self, bytes: &[u8], radio_address: u8, controller_address: u8) {
+        self.pending.extend_from_slice(bytes);
+        for frame in drain_ci_v_frames(&mut self.pending) {
+            if !is_radio_to_controller_frame(&frame, radio_address, controller_address)
+                || !is_spectrum_data_frame(&frame)
+            {
+                continue;
+            }
+            self.division_frames = self.division_frames.wrapping_add(1);
+            if let Some(sweep) = self.assembler.push(&frame) {
+                self.completed_sweeps = self.completed_sweeps.wrapping_add(1);
+                self.completed.push_back(sweep);
+            }
+        }
+    }
+
+    fn push_bytes(
+        &mut self,
+        bytes: &[u8],
+        radio_address: u8,
+        controller_address: u8,
+    ) -> Vec<Vec<u8>> {
+        self.ingest_bytes(bytes, radio_address, controller_address);
+        self.completed.drain(..).collect()
+    }
+}
+
+impl ScopeSweepAssembler {
+    fn push(&mut self, frame: &[u8]) -> Option<Vec<u8>> {
+        let (division, maximum, bins) = parse_scope_waveform_segment(frame)?;
+        if maximum != IC7300_SCOPE_DIVISIONS {
+            self.reset();
+            return None;
+        }
+
+        if division == 1 {
+            if self.collecting {
+                self.dropped_sweeps = self.dropped_sweeps.wrapping_add(1);
+            }
+            self.collecting = true;
+            self.next_division = 2;
+            self.bins.clear();
+            return None;
+        }
+
+        if !self.collecting || division != self.next_division {
+            if self.collecting {
+                self.dropped_sweeps = self.dropped_sweeps.wrapping_add(1);
+            }
+            self.reset();
+            return None;
+        }
+
+        let expected_bins = if division == IC7300_SCOPE_DIVISIONS {
+            IC7300_SCOPE_LAST_CHUNK_BINS
+        } else {
+            IC7300_SCOPE_FULL_CHUNK_BINS
+        };
+        if bins.len() != expected_bins || bins.iter().any(|value| *value > 160) {
+            self.reset();
+            return None;
+        }
+
+        self.bins.extend_from_slice(&bins);
+        self.next_division += 1;
+        if division == IC7300_SCOPE_DIVISIONS {
+            self.collecting = false;
+            self.next_division = 0;
+            if self.bins.len() == IC7300_SCOPE_BINS {
+                return Some(std::mem::take(&mut self.bins));
+            }
+            self.bins.clear();
+        }
+        None
+    }
+
+    fn reset(&mut self) {
+        self.collecting = false;
+        self.next_division = 0;
+        self.bins.clear();
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mode {
@@ -285,6 +390,7 @@ pub struct IcomCiVRadio {
     controller_address: u8,
     radio_address: u8,
     serial_port: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
+    scope_stream_reader: Arc<Mutex<ScopeStreamReader>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -402,6 +508,7 @@ impl IcomCiVRadio {
             controller_address: address,
             radio_address: 0x94,
             serial_port: Arc::new(Mutex::new(None)),
+            scope_stream_reader: Arc::new(Mutex::new(ScopeStreamReader::default())),
         }
     }
 
@@ -499,6 +606,8 @@ impl IcomCiVRadio {
         let port = guard
             .as_mut()
             .context("radio serial port slot unavailable")?;
+        port.set_timeout(timeout)
+            .context("failed to update radio serial timeout")?;
         operation(port)
     }
 
@@ -542,12 +651,14 @@ impl IcomCiVRadio {
         if let Ok(mut guard) = self.serial_port.lock() {
             *guard = None;
         }
+        if let Ok(mut reader) = self.scope_stream_reader.lock() {
+            *reader = ScopeStreamReader::default();
+        }
     }
 
     fn write_frame(&self, port: &mut Box<dyn SerialPort>, frame: &[u8]) -> Result<()> {
         port.write_all(frame)
             .context("failed to write CI-V frame")?;
-        thread::sleep(Duration::from_millis(120));
         Ok(())
     }
 
@@ -567,6 +678,15 @@ impl IcomCiVRadio {
         while Instant::now() < deadline {
             match port.read(&mut buf) {
                 Ok(bytes) if bytes > 0 => {
+                    // CI-V scope frames are unsolicited and can be interleaved
+                    // with command replies. Feed every byte through the
+                    // persistent scope parser before matching the requested
+                    // response, otherwise normal CAT traffic punches holes in
+                    // the waterfall and leaves the next sweep half-framed.
+                    self.scope_stream_reader
+                        .lock()
+                        .map_err(|_| anyhow!("CI-V scope stream state lock poisoned"))?
+                        .ingest_bytes(&buf[..bytes], self.radio_address, self.controller_address);
                     out.extend_from_slice(&buf[..bytes]);
                     for frame in extract_ci_v_frames(&out) {
                         if !is_radio_to_controller_frame(
@@ -595,32 +715,6 @@ impl IcomCiVRadio {
         Ok(Vec::new())
     }
 
-    fn read_any_frame(&self, port: &mut Box<dyn SerialPort>) -> Result<Vec<u8>> {
-        let mut buf = [0u8; 256];
-        let mut out = Vec::new();
-        let mut attempts = 0;
-        while attempts < 5 {
-            match port.read(&mut buf) {
-                Ok(bytes) if bytes > 0 => {
-                    out.extend_from_slice(&buf[..bytes]);
-                    if let Some(parsed) = extract_ci_v_frame(&out) {
-                        return Ok(parsed.to_vec());
-                    }
-                }
-                Ok(_) => {}
-                Err(err) if err.kind() == ErrorKind::TimedOut => {
-                    // transient serial idle; keep trying
-                }
-                Err(err) => {
-                    return Err(err).context("failed to read CI-V response");
-                }
-            }
-            attempts += 1;
-            thread::sleep(Duration::from_millis(8));
-        }
-        Ok(out)
-    }
-
     fn transact(&self, payload: &[u8], expect_data_frame: bool) -> Result<Vec<u8>> {
         let frame = self.build_frame_payload(payload);
         self.with_serial_port(Duration::from_millis(700), |port| {
@@ -631,9 +725,34 @@ impl IcomCiVRadio {
                     frame_matches_request(response, payload)
                 })
             } else {
-                self.read_any_frame(port)
+                self.read_response_matching(port, Duration::from_millis(1_200), |response| {
+                    is_ack_frame(response) || is_nak_frame(response)
+                })
             }
         })
+    }
+
+    fn transact_ack(&self, payload: &[u8]) -> Result<()> {
+        let frame = self.build_frame_payload(payload);
+        let response = self.with_serial_port(Duration::from_millis(700), |port| {
+            self.write_frame(port, &frame)?;
+            self.read_response_matching(port, Duration::from_millis(1_200), |candidate| {
+                is_ack_frame(candidate) || is_nak_frame(candidate)
+            })
+        })?;
+        if is_ack_frame(&response) {
+            Ok(())
+        } else if is_nak_frame(&response) {
+            anyhow::bail!(
+                "radio rejected CI-V scope command: {}",
+                format_hex_bytes(payload)
+            )
+        } else {
+            anyhow::bail!(
+                "radio did not acknowledge CI-V scope command: {}",
+                format_hex_bytes(payload)
+            )
+        }
     }
 
     fn set_frequency_blocking(&self, hz: u64) -> Result<()> {
@@ -758,109 +877,15 @@ impl IcomCiVRadio {
         }
     }
 
-    fn wait_for_spectrum_data_frame(
-        &self,
-        port: &mut Box<dyn SerialPort>,
-        timeout: Duration,
-    ) -> Result<(Option<Vec<u8>>, bool)> {
-        let deadline = Instant::now() + timeout;
-        let mut buf = [0u8; 1024];
-        let mut out = Vec::new();
-        let mut ack_frame: Option<Vec<u8>> = None;
-        let mut saw_nak = false;
-
-        while Instant::now() < deadline {
-            match port.read(&mut buf) {
-                Ok(bytes) if bytes > 0 => {
-                    out.extend_from_slice(&buf[..bytes]);
-                    for frame in extract_ci_v_frames(&out) {
-                        if is_spectrum_data_frame(&frame) {
-                            return Ok((Some(frame), saw_nak));
-                        }
-                        if is_nak_frame(&frame) {
-                            saw_nak = true;
-                        }
-                        if is_ack_frame(&frame) {
-                            ack_frame = Some(frame);
-                        }
-                    }
-                }
-                Ok(_) => {
-                    thread::sleep(Duration::from_millis(20));
-                }
-                Err(err) if err.kind() == ErrorKind::TimedOut => {
-                    // keep waiting until deadline
-                }
-                Err(err) => {
-                    return Err(err).context("failed while waiting for spectrum data frame");
-                }
-            }
-        }
-
-        Ok((ack_frame, saw_nak))
-    }
-
     fn enable_spectrum_stream_blocking(&self, timeout: Duration) -> Result<Vec<u8>> {
-        let mut saw_nak = false;
-
-        // Try progressively simpler/compatible bootstrap sequences across Icom variants:
-        // A) full scope enable + output + request
-        // B) output + request
-        // C) request only (works when scope is already on)
-        // D) legacy command fallback
-        let sequences: &[&[&[u8]]] = &[
-            &[
-                &[0x27, 0x10, 0x01],
-                &[0x27, 0x11, 0x01],
-                &[0x27, 0x14, 0x00],
-                &[0x27, 0x1A, 0x00],
-                &[0x27, 0x00],
-            ],
-            &[&[0x27, 0x10, 0x01], &[0x27, 0x20, 0x01], &[0x27, 0x00]],
-            &[&[0x27, 0x11, 0x01], &[0x27, 0x00]],
-            &[&[0x27, 0x20, 0x01], &[0x27, 0x00]],
-            &[&[0x27, 0x00]],
-            &[&[0x27, 0x12, 0x00]],
-        ];
-
-        for sequence in sequences {
-            let result = self.with_serial_port(Duration::from_millis(700), |port| {
-                for payload in *sequence {
-                    self.write_frame(port, &self.build_frame_payload(payload))?;
-                }
-
-                self.wait_for_spectrum_data_frame(port, timeout)
-            });
-
-            let (frame, got_nak) = match result {
-                Ok((frame, got_nak)) => (frame, got_nak),
-                Err(err) => {
-                    self.close_serial_port();
-                    return Err(err);
-                }
-            };
-            saw_nak |= got_nak;
-            if let Some(frame) = frame {
-                return Ok(frame);
-            }
-        }
-
-        if saw_nak {
-            anyhow::bail!(
-                "radio rejected one or more scope bootstrap commands (NAK). QSONaut already tried multiple CI-V scope strategies, including request-only fallback. On IC-7300, verify CI-V USB port is 'Unlink from [REMOTE]' and baud is Auto/115200"
-            )
-        } else {
-            anyhow::bail!(
-                "spectrum stream did not start within {:?} after trying scope bootstrap variants",
-                timeout
-            )
-        }
+        self.transact_ack(&[0x27, 0x10, 0x01])?;
+        self.transact_ack(&[0x27, 0x11, 0x01])?;
+        self.try_scope_waveform_bins_stream_blocking(timeout)?
+            .context("scope output enabled but no complete 475-bin sweep arrived")
     }
 
     fn disable_spectrum_stream_blocking(&self) -> Result<()> {
-        let _ = self.transact(&[0x27, 0x11, 0x00], false)?;
-        let _ = self.transact(&[0x27, 0x20, 0x00], false)?;
-        let _ = self.transact(&[0x27, 0x10, 0x00], false)?;
+        self.transact_ack(&[0x27, 0x11, 0x00])?;
         self.close_serial_port();
         Ok(())
     }
@@ -884,25 +909,43 @@ impl IcomCiVRadio {
         self.try_scope_waveform_bins_stream_blocking(timeout)
     }
 
+    pub async fn drain_scope_waveform_sweeps(&self, timeout: Duration) -> Result<Vec<Vec<u8>>> {
+        self.drain_scope_waveform_sweeps_blocking(timeout)
+    }
+
+    /// Lifetime counters for diagnosing USB CI-V scope cadence. A complete
+    /// IC-7300 USB sweep consists of exactly 11 division frames.
+    pub fn scope_stream_counters(&self) -> (u64, u64, u64) {
+        self.scope_stream_reader
+            .lock()
+            .map(|reader| {
+                (
+                    reader.division_frames,
+                    reader.completed_sweeps,
+                    reader.assembler.dropped_sweeps,
+                )
+            })
+            .unwrap_or_default()
+    }
+
     pub async fn set_scope_sweep_speed(&self, speed: u8) -> Result<()> {
-        // 0x00=FAST, 0x01=MID, 0x02=SLOW
-        let sweep = speed.min(2);
-        let _ = self.transact(&[0x27, 0x1A, sweep], false)?;
-        Ok(())
+        self.transact_ack(&scope_sweep_speed_payload(speed))
+    }
+
+    pub async fn set_scope_hold(&self, hold: bool) -> Result<()> {
+        self.transact_ack(&scope_hold_payload(hold))
+    }
+
+    pub async fn set_scope_reference_level_tenths_db(&self, tenths_db: i16) -> Result<()> {
+        self.transact_ack(&scope_reference_level_payload(tenths_db)?)
     }
 
     pub async fn set_scope_center_fixed_mode(&self, fixed_mode: bool) -> Result<()> {
-        // 0x00=Center mode, 0x01=Fixed mode
-        let value = if fixed_mode { 0x01 } else { 0x00 };
-        let _ = self.transact(&[0x27, 0x14, value], false)?;
-        Ok(())
+        self.transact_ack(&scope_mode_payload(fixed_mode))
     }
 
     pub async fn set_scope_fixed_edge_number(&self, edge_number: u8) -> Result<()> {
-        // 0x01..0x03 => edge presets 1..3.
-        let value = edge_number.clamp(1, 3);
-        let _ = self.transact(&[0x27, 0x16, value], false)?;
-        Ok(())
+        self.transact_ack(&scope_edge_number_payload(edge_number))
     }
 
     pub async fn set_scope_fixed_edge_frequencies(
@@ -911,248 +954,26 @@ impl IcomCiVRadio {
         lower_hz: u64,
         upper_hz: u64,
     ) -> Result<()> {
-        // 100 Hz and smaller digits are ignored by the radio.
-        let mut payload = Vec::with_capacity(2 + 1 + 5 + 5);
-        payload.push(0x27);
-        payload.push(0x1E);
-        payload.push(edge_number.clamp(1, 3));
-        payload.extend_from_slice(&encode_civ_frequency_bcd(lower_hz));
-        payload.extend_from_slice(&encode_civ_frequency_bcd(upper_hz));
-        let _ = self.transact(&payload, false)?;
-        Ok(())
+        self.transact_ack(&scope_fixed_edges_payload(edge_number, lower_hz, upper_hz)?)
     }
 
-    pub async fn set_scope_span_code(&self, span_code: u8) -> Result<()> {
-        // 0x00..0x07 => 2.5k,5k,10k,25k,50k,100k,250k,500k
-        let value = span_code.min(7);
-        let _ = self.transact(&[0x27, 0x15, value], false)?;
-        Ok(())
+    pub async fn set_scope_span_hz(&self, span_hz: u64) -> Result<()> {
+        self.transact_ack(&scope_span_payload(span_hz)?)
     }
 
     pub async fn set_scope_vbw_wide(&self, wide: bool) -> Result<()> {
-        // 0x00=Narrow, 0x01=Wide
-        let value = if wide { 0x01 } else { 0x00 };
-        let _ = self.transact(&[0x27, 0x1D, value], false)?;
-        Ok(())
+        self.transact_ack(&scope_vbw_payload(wide))
     }
 
     fn request_scope_waveform_bins_blocking(&self) -> Result<Vec<u8>> {
-        let frame = self.build_frame_payload(&[0x27, 0x00]);
-        let mut last_response = Vec::new();
-        let mut saw_request_nak = false;
-
-        let result = self.with_serial_port(Duration::from_millis(500), |port| {
-            // Fast path: if scope stream is already active (e.g., via 27 11/27 10),
-            // read the next incoming waveform frame directly for low-latency updates.
-            if let Some(bins) = self.read_stream_scope_bins(port, Duration::from_millis(220))? {
-                return Ok(Some(bins));
-            }
-
-            let mut fallback_bins: Option<Vec<u8>> = None;
-            let mut segmented_parts: Vec<Vec<u8>> = Vec::new();
-            let mut segmented_total: Option<usize> = None;
-
-            for _ in 0..4 {
-                self.write_frame(port, &frame)?;
-
-                // IC-7300 USB can emit scope waveform as sequential chunks (division 01..11).
-                // Read multiple frames after each request and assemble when possible.
-                for _ in 0..16 {
-                    let response = self.read_any_frame(port)?;
-                    if response.is_empty() {
-                        continue;
-                    }
-                    last_response = response.clone();
-
-                    if is_nak_frame(&response) {
-                        saw_request_nak = true;
-                        break;
-                    }
-                    if !is_spectrum_data_frame(&response) {
-                        continue;
-                    }
-
-                    if let Some((part_idx, part_total, bins)) =
-                        parse_scope_waveform_segment(&response)
-                    {
-                        if part_total > 0 {
-                            if segmented_total.is_none() {
-                                segmented_total = Some(part_total);
-                                segmented_parts = vec![Vec::new(); part_total];
-                            }
-                            if let Some(total) = segmented_total {
-                                if part_total == total && part_idx > 0 && part_idx <= total {
-                                    segmented_parts[part_idx - 1] = bins;
-                                    if segmented_parts.iter().all(|part| !part.is_empty()) {
-                                        let mut merged = Vec::new();
-                                        for part in &segmented_parts {
-                                            merged.extend_from_slice(part);
-                                        }
-                                        if !merged.is_empty() {
-                                            return Ok(Some(merged));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if let Some(bins) = parse_scope_waveform_bins(&response) {
-                        if !bins.is_empty() {
-                            fallback_bins = Some(bins);
-                        }
-                    }
-                }
-
-                if let Some(bins) = fallback_bins {
-                    return Ok(Some(bins));
-                }
-
-                if saw_request_nak {
-                    break;
-                }
-            }
-
-            if saw_request_nak {
-                let _ = self.transact(&[0x27, 0x10, 0x01], false);
-                let _ = self.transact(&[0x27, 0x11, 0x01], false);
-                let _ = self.transact(&[0x27, 0x14, 0x00], false);
-
-                let deadline = Instant::now() + Duration::from_millis(550);
-                let mut segmented_parts: Vec<Vec<u8>> = Vec::new();
-                let mut segmented_total: Option<usize> = None;
-                let mut fallback_bins: Option<Vec<u8>> = None;
-
-                while Instant::now() < deadline {
-                    let response = self.read_any_frame(port)?;
-                    if response.is_empty() || !is_spectrum_data_frame(&response) {
-                        continue;
-                    }
-
-                    if let Some((part_idx, part_total, bins)) =
-                        parse_scope_waveform_segment(&response)
-                    {
-                        if part_total > 0 {
-                            if segmented_total.is_none() {
-                                segmented_total = Some(part_total);
-                                segmented_parts = vec![Vec::new(); part_total];
-                            }
-                            if let Some(total) = segmented_total {
-                                if part_total == total && part_idx > 0 && part_idx <= total {
-                                    segmented_parts[part_idx - 1] = bins;
-                                    if segmented_parts.iter().all(|part| !part.is_empty()) {
-                                        let mut merged = Vec::new();
-                                        for part in &segmented_parts {
-                                            merged.extend_from_slice(part);
-                                        }
-                                        if !merged.is_empty() {
-                                            return Ok(Some(merged));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if let Some(bins) = parse_scope_waveform_bins(&response) {
-                        if !bins.is_empty() {
-                            fallback_bins = Some(bins);
-                        }
-                    }
-                }
-
-                if let Some(bins) = fallback_bins {
-                    return Ok(Some(bins));
-                }
-            }
-
-            Ok(None)
+        let request = self.build_frame_payload(&[0x27, 0x00]);
+        let result = self.with_serial_port(Duration::from_millis(700), |port| {
+            self.write_frame(port, &request)?;
+            self.read_stream_scope_bins(port, Duration::from_millis(1_500))
         });
-
-        let _bins: Option<Vec<u8>> = match result {
-            Ok(Some(bins)) => return Ok(bins),
-            Ok(None) => None,
-            Err(err) => {
-                self.close_serial_port();
-                return Err(err);
-            }
-        };
-
-        if saw_request_nak {
-            let _ = self.transact(&[0x27, 0x10, 0x01], false);
-            let _ = self.transact(&[0x27, 0x11, 0x01], false);
-            let _ = self.transact(&[0x27, 0x14, 0x00], false);
-
-            let deadline = Instant::now() + Duration::from_millis(550);
-            let mut segmented_parts: Vec<Vec<u8>> = Vec::new();
-            let mut segmented_total: Option<usize> = None;
-            let mut fallback_bins: Option<Vec<u8>> = None;
-
-            while Instant::now() < deadline {
-                let response = self.with_serial_port(Duration::from_millis(500), |port| {
-                    self.read_any_frame(port)
-                })?;
-                if response.is_empty() || !is_spectrum_data_frame(&response) {
-                    continue;
-                }
-
-                if let Some((part_idx, part_total, bins)) = parse_scope_waveform_segment(&response)
-                {
-                    if part_total > 0 {
-                        if segmented_total.is_none() {
-                            segmented_total = Some(part_total);
-                            segmented_parts = vec![Vec::new(); part_total];
-                        }
-                        if let Some(total) = segmented_total {
-                            if part_total == total && part_idx > 0 && part_idx <= total {
-                                segmented_parts[part_idx - 1] = bins;
-                                if segmented_parts.iter().all(|part| !part.is_empty()) {
-                                    let mut merged = Vec::new();
-                                    for part in &segmented_parts {
-                                        merged.extend_from_slice(part);
-                                    }
-                                    if !merged.is_empty() {
-                                        return Ok(merged);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if let Some(bins) = parse_scope_waveform_bins(&response) {
-                    if !bins.is_empty() {
-                        fallback_bins = Some(bins);
-                    }
-                }
-            }
-
-            if let Some(bins) = fallback_bins {
-                return Ok(bins);
-            }
-        }
-
-        anyhow::bail!(
-            "unable to parse scope waveform bins from CI-V response after repeated requests{}: {}",
-            if saw_request_nak {
-                " (including 27 11 stream fallback)"
-            } else {
-                ""
-            },
-            format_hex_bytes(&last_response)
-        )
-    }
-
-    fn try_scope_waveform_bins_stream_blocking(
-        &self,
-        timeout: Duration,
-    ) -> Result<Option<Vec<u8>>> {
-        let result = self.with_serial_port(Duration::from_millis(500), |port| {
-            self.read_stream_scope_bins(port, timeout)
-        });
-
         match result {
-            Ok(v) => Ok(v),
+            Ok(Some(bins)) => Ok(bins),
+            Ok(None) => anyhow::bail!("no complete 475-bin scope sweep arrived"),
             Err(err) => {
                 self.close_serial_port();
                 Err(err)
@@ -1160,77 +981,74 @@ impl IcomCiVRadio {
         }
     }
 
+    fn try_scope_waveform_bins_stream_blocking(
+        &self,
+        timeout: Duration,
+    ) -> Result<Option<Vec<u8>>> {
+        let result = self
+            .drain_scope_waveform_sweeps_blocking(timeout)
+            .map(|sweeps| sweeps.into_iter().next());
+        if result.is_err() {
+            self.close_serial_port();
+        }
+        result
+    }
+
+    fn drain_scope_waveform_sweeps_blocking(&self, timeout: Duration) -> Result<Vec<Vec<u8>>> {
+        let result = self.with_serial_port(Duration::from_millis(25), |port| {
+            self.read_stream_scope_sweeps(port, timeout)
+        });
+        if result.is_err() {
+            self.close_serial_port();
+        }
+        result
+    }
+
     fn read_stream_scope_bins(
         &self,
         port: &mut Box<dyn SerialPort>,
         timeout: Duration,
     ) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .read_stream_scope_sweeps(port, timeout)?
+            .into_iter()
+            .next())
+    }
+
+    fn read_stream_scope_sweeps(
+        &self,
+        port: &mut Box<dyn SerialPort>,
+        timeout: Duration,
+    ) -> Result<Vec<Vec<u8>>> {
         let deadline = Instant::now() + timeout;
-        let mut segmented_parts: Vec<Vec<u8>> = Vec::new();
-        let mut segmented_total: Option<usize> = None;
-        let mut best_fallback: Option<Vec<u8>> = None;
+        // Keep reads small enough that completed sweeps reach the UI at their
+        // native cadence instead of arriving as several-frame visual bursts.
+        let mut read_buffer = [0_u8; 512];
+        let mut sweeps = Vec::new();
+        let mut reader = self
+            .scope_stream_reader
+            .lock()
+            .map_err(|_| anyhow!("CI-V scope stream state lock poisoned"))?;
 
         while Instant::now() < deadline {
-            let response = match self.read_any_frame(port) {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-            if response.is_empty() {
-                continue;
-            }
-            if !is_spectrum_data_frame(&response) {
-                continue;
-            }
-
-            if is_nak_frame(&response) {
-                continue;
-            }
-
-            if let Some((part_idx, part_total, bins)) = parse_scope_waveform_segment(&response) {
-                if part_total > 0 {
-                    if segmented_total.is_none() {
-                        segmented_total = Some(part_total);
-                        segmented_parts = vec![Vec::new(); part_total];
-                    }
-                    if let Some(total) = segmented_total {
-                        if part_total == total && part_idx > 0 && part_idx <= total {
-                            segmented_parts[part_idx - 1] = bins.clone();
-                            if segmented_parts.iter().all(|part| !part.is_empty()) {
-                                let mut merged = Vec::new();
-                                for part in &segmented_parts {
-                                    merged.extend_from_slice(part);
-                                }
-                                if merged.len() >= MIN_SCOPE_BINS_FOR_DISPLAY {
-                                    return Ok(Some(merged));
-                                }
-                            }
-                        }
+            match port.read(&mut read_buffer) {
+                Ok(bytes) if bytes > 0 => {
+                    sweeps.extend(reader.push_bytes(
+                        &read_buffer[..bytes],
+                        self.radio_address,
+                        self.controller_address,
+                    ));
+                    if !sweeps.is_empty() {
+                        return Ok(sweeps);
                     }
                 }
-
-                if !bins.is_empty()
-                    && best_fallback
-                        .as_ref()
-                        .map(|b| bins.len() > b.len())
-                        .unwrap_or(true)
-                {
-                    best_fallback = Some(bins);
-                }
-            }
-
-            if let Some(bins) = parse_scope_waveform_bins(&response) {
-                if !bins.is_empty()
-                    && best_fallback
-                        .as_ref()
-                        .map(|b| bins.len() > b.len())
-                        .unwrap_or(true)
-                {
-                    best_fallback = Some(bins);
-                }
+                Ok(_) => {}
+                Err(err) if err.kind() == ErrorKind::TimedOut => {}
+                Err(err) => return Err(err).context("failed to read CI-V scope stream"),
             }
         }
 
-        Ok(best_fallback.filter(|b| b.len() >= MIN_SCOPE_BINS_FOR_DISPLAY))
+        Ok(sweeps)
     }
 }
 
@@ -1253,26 +1071,17 @@ fn parse_scope_waveform_segment(frame: &[u8]) -> Option<(usize, usize, Vec<u8>)>
         return None;
     }
 
-    let current = decode_scope_division_number(payload[1])
-        .or_else(|| decode_scope_division_number(payload[0]));
-    let total = decode_scope_division_number(payload[2]).or_else(|| {
-        payload
-            .get(1)
-            .and_then(|v| decode_scope_division_number(*v))
-    });
+    if payload[0] != 0x00 {
+        return None;
+    }
+    let current = decode_scope_division_number(payload[1]);
+    let total = decode_scope_division_number(payload[2]);
     let (current, total) = (current?, total?);
-
-    let data_offset = if payload.len() > 13 {
-        13
-    } else if payload.len() > 6 {
-        6
-    } else if payload.len() > 3 {
-        3
+    let bins = if current == 1 {
+        Vec::new()
     } else {
-        payload.len()
+        payload[3..].to_vec()
     };
-
-    let bins = payload[data_offset..].to_vec();
     Some((current as usize, total as usize, bins))
 }
 
@@ -1292,6 +1101,88 @@ fn decode_scope_division_number(v: u8) -> Option<u8> {
     } else {
         None
     }
+}
+
+fn scope_mode_payload(fixed_mode: bool) -> [u8; 4] {
+    [0x27, 0x14, 0x00, u8::from(fixed_mode)]
+}
+
+fn scope_edge_number_payload(edge_number: u8) -> [u8; 4] {
+    [0x27, 0x16, 0x00, edge_number.clamp(1, 4)]
+}
+
+fn scope_sweep_speed_payload(speed: u8) -> [u8; 4] {
+    [0x27, 0x1A, 0x00, speed.min(2)]
+}
+
+fn scope_hold_payload(hold: bool) -> [u8; 4] {
+    [0x27, 0x17, 0x00, u8::from(hold)]
+}
+
+fn scope_reference_level_payload(tenths_db: i16) -> Result<[u8; 6]> {
+    if !(-200..=200).contains(&tenths_db) || tenths_db % 5 != 0 {
+        anyhow::bail!("IC-7300 scope reference level must be -20.0..=20.0 dB in 0.5 dB steps");
+    }
+    let magnitude = tenths_db.unsigned_abs();
+    let whole_db = (magnitude / 10) as u8;
+    let half_db = if magnitude % 10 == 5 { 0x50 } else { 0x00 };
+    let sign = u8::from(tenths_db < 0);
+    Ok([0x27, 0x19, 0x00, decimal_to_bcd(whole_db), half_db, sign])
+}
+
+fn scope_vbw_payload(wide: bool) -> [u8; 4] {
+    [0x27, 0x1D, 0x00, u8::from(wide)]
+}
+
+fn scope_span_payload(span_hz: u64) -> Result<Vec<u8>> {
+    const ALLOWED_SPANS: &[u64] = &[
+        2_500, 5_000, 10_000, 25_000, 50_000, 100_000, 250_000, 500_000,
+    ];
+    if !ALLOWED_SPANS.contains(&span_hz) {
+        anyhow::bail!("unsupported IC-7300 center scope span: {span_hz} Hz");
+    }
+    let mut payload = vec![0x27, 0x15, 0x00];
+    payload.extend_from_slice(&encode_civ_frequency_bcd(span_hz));
+    Ok(payload)
+}
+
+fn scope_fixed_edges_payload(edge_number: u8, lower_hz: u64, upper_hz: u64) -> Result<Vec<u8>> {
+    if lower_hz >= upper_hz {
+        anyhow::bail!("scope lower edge must be below upper edge");
+    }
+    let range = scope_frequency_range(lower_hz, upper_hz).with_context(|| {
+        format!("scope edges {lower_hz}..{upper_hz} do not fit one IC-7300 frequency range")
+    })?;
+    let mut payload = vec![0x27, 0x1E, decimal_to_bcd(range), edge_number.clamp(1, 4)];
+    payload.extend_from_slice(&encode_civ_frequency_bcd(lower_hz));
+    payload.extend_from_slice(&encode_civ_frequency_bcd(upper_hz));
+    Ok(payload)
+}
+
+fn scope_frequency_range(lower_hz: u64, upper_hz: u64) -> Option<u8> {
+    const RANGES: &[(u64, u64)] = &[
+        (30_000, 1_600_000),
+        (1_600_000, 2_000_000),
+        (2_000_000, 6_000_000),
+        (6_000_000, 8_000_000),
+        (8_000_000, 11_000_000),
+        (11_000_000, 15_000_000),
+        (15_000_000, 20_000_000),
+        (20_000_000, 22_000_000),
+        (22_000_000, 26_000_000),
+        (26_000_000, 30_000_000),
+        (30_000_000, 45_000_000),
+        (45_000_000, 60_000_000),
+        (60_000_000, 74_800_000),
+    ];
+    RANGES
+        .iter()
+        .position(|&(low, high)| lower_hz >= low && upper_hz <= high)
+        .map(|index| index as u8 + 1)
+}
+
+fn decimal_to_bcd(value: u8) -> u8 {
+    ((value / 10) << 4) | (value % 10)
 }
 
 #[async_trait]
@@ -1349,7 +1240,9 @@ impl RadioHal for IcomCiVRadio {
 
         self.with_serial_port(Duration::from_millis(700), |port| {
             self.write_frame(port, request)?;
-            self.read_any_frame(port)
+            self.read_response_matching(port, Duration::from_millis(1_200), |frame| {
+                !is_spectrum_data_frame(frame)
+            })
         })
     }
 
@@ -1388,28 +1281,6 @@ pub struct RadioStatus {
     pub mode_details: Option<OperatingMode>,
 }
 
-fn extract_ci_v_frame(response: &[u8]) -> Option<&[u8]> {
-    let starts: Vec<usize> = response
-        .windows(2)
-        .enumerate()
-        .filter_map(|(idx, w)| {
-            (w[0] == CI_V_FRAME_START && w[1] == CI_V_FRAME_START).then_some(idx)
-        })
-        .collect();
-
-    for start in starts.into_iter().rev() {
-        let candidate = &response[start..];
-        let end = candidate
-            .iter()
-            .position(|&b| b == CI_V_FRAME_END)
-            .map(|idx| start + idx)?;
-        if end >= start + 5 {
-            return Some(&response[start..=end]);
-        }
-    }
-    None
-}
-
 fn extract_ci_v_frames(response: &[u8]) -> Vec<Vec<u8>> {
     let mut frames = Vec::new();
     let mut idx = 0usize;
@@ -1429,6 +1300,34 @@ fn extract_ci_v_frames(response: &[u8]) -> Vec<Vec<u8>> {
         idx += 1;
     }
 
+    frames
+}
+
+fn drain_ci_v_frames(pending: &mut Vec<u8>) -> Vec<Vec<u8>> {
+    let mut frames = Vec::new();
+    loop {
+        let Some(start) = pending
+            .windows(2)
+            .position(|window| window == [CI_V_FRAME_START, CI_V_FRAME_START])
+        else {
+            if pending.last().copied() == Some(CI_V_FRAME_START) {
+                pending.drain(..pending.len() - 1);
+            } else {
+                pending.clear();
+            }
+            break;
+        };
+        if start > 0 {
+            pending.drain(..start);
+        }
+        let Some(end) = pending.iter().position(|byte| *byte == CI_V_FRAME_END) else {
+            break;
+        };
+        let frame: Vec<u8> = pending.drain(..=end).collect();
+        if frame.len() >= 6 {
+            frames.push(frame);
+        }
+    }
     frames
 }
 
@@ -1460,41 +1359,6 @@ fn is_nak_frame(frame: &[u8]) -> bool {
         && frame.get(1).copied() == Some(CI_V_FRAME_START)
         && frame.last().copied() == Some(CI_V_FRAME_END)
         && frame[4] == 0xFA
-}
-
-fn parse_scope_waveform_bins(frame: &[u8]) -> Option<Vec<u8>> {
-    if frame.len() < 10 {
-        return None;
-    }
-    if frame.first().copied() != Some(CI_V_FRAME_START)
-        || frame.get(1).copied() != Some(CI_V_FRAME_START)
-        || frame.last().copied() != Some(CI_V_FRAME_END)
-    {
-        return None;
-    }
-    if frame[4] != 0x27 || frame[5] != 0x00 {
-        return None;
-    }
-
-    let payload = &frame[6..frame.len() - 1];
-
-    // Scope waveform frames carry metadata first, followed by FFT bins.
-    // Common IC-7300 layout:
-    //   [division][mode][center_freq:5][span:5][fft_data...]
-    // so bins typically start near offset 13.
-    let bins = if payload.len() > 13 {
-        payload[13..].to_vec()
-    } else if payload.len() > 6 {
-        payload[6..].to_vec()
-    } else {
-        Vec::new()
-    };
-
-    if bins.is_empty() {
-        None
-    } else {
-        Some(bins)
-    }
 }
 
 fn format_hex_bytes(bytes: &[u8]) -> String {
@@ -1732,17 +1596,38 @@ mod tests {
     }
 
     #[test]
-    fn encodes_fixed_scope_edge_frequencies() {
-        let mut payload = Vec::new();
-        payload.push(0x27);
-        payload.push(0x1E);
-        payload.push(0x01);
-        payload.extend_from_slice(&encode_civ_frequency_bcd(14_000_000));
-        payload.extend_from_slice(&encode_civ_frequency_bcd(14_350_000));
-
+    fn encodes_documented_scope_commands() {
+        assert_eq!(scope_mode_payload(true), [0x27, 0x14, 0x00, 0x01]);
+        assert_eq!(scope_edge_number_payload(2), [0x27, 0x16, 0x00, 0x02]);
+        assert_eq!(scope_edge_number_payload(4), [0x27, 0x16, 0x00, 0x04]);
+        assert_eq!(scope_sweep_speed_payload(0), [0x27, 0x1A, 0x00, 0x00]);
+        assert_eq!(scope_hold_payload(true), [0x27, 0x17, 0x00, 0x01]);
         assert_eq!(
-            payload,
-            vec![0x27, 0x1E, 0x01, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x35, 0x14, 0x00,]
+            scope_reference_level_payload(105).unwrap(),
+            [0x27, 0x19, 0x00, 0x10, 0x50, 0x00]
+        );
+        assert_eq!(
+            scope_reference_level_payload(-200).unwrap(),
+            [0x27, 0x19, 0x00, 0x20, 0x00, 0x01]
+        );
+        assert_eq!(scope_vbw_payload(true), [0x27, 0x1D, 0x00, 0x01]);
+        assert_eq!(
+            scope_span_payload(2_500).unwrap(),
+            vec![0x27, 0x15, 0x00, 0x00, 0x25, 0x00, 0x00, 0x00]
+        );
+        assert_eq!(
+            scope_span_payload(500_000).unwrap(),
+            vec![0x27, 0x15, 0x00, 0x00, 0x00, 0x50, 0x00, 0x00]
+        );
+        assert_eq!(
+            scope_fixed_edges_payload(1, 14_000_000, 14_350_000).unwrap(),
+            vec![
+                0x27, 0x1E, 0x06, 0x01, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x35, 0x14, 0x00,
+            ]
+        );
+        assert_eq!(
+            scope_fixed_edges_payload(1, 28_000_000, 29_700_000).unwrap()[2],
+            0x10
         );
     }
 
@@ -1835,6 +1720,17 @@ mod tests {
     }
 
     #[test]
+    fn streaming_frame_drain_preserves_a_split_preamble() {
+        let mut pending = vec![0xAA, 0xFE];
+        assert!(drain_ci_v_frames(&mut pending).is_empty());
+        assert_eq!(pending, vec![0xFE]);
+        pending.extend_from_slice(&[0xFE, 0xE0, 0x94, 0xFB, 0xFD]);
+        let frames = drain_ci_v_frames(&mut pending);
+        assert_eq!(frames, vec![vec![0xFE, 0xFE, 0xE0, 0x94, 0xFB, 0xFD]]);
+        assert!(pending.is_empty());
+    }
+
+    #[test]
     fn detects_nak_frame() {
         let nak = [0xFE, 0xFE, 0xE0, 0x94, 0xFA, 0xFD];
         assert!(is_nak_frame(&nak));
@@ -1847,19 +1743,127 @@ mod tests {
     }
 
     #[test]
-    fn parses_scope_waveform_bins() {
+    fn parses_real_ic7300_scope_chunk_layout() {
         let frame = [
-            0xFE, 0xFE, 0xE0, 0x94, 0x27, 0x00, 0x00, 0x01, 0x0B, 0x00, 0x14, 0x32, 0x20, 0x80,
-            0xFF, 0x40, 0xFD,
+            0xFE, 0xFE, 0xE0, 0x94, 0x27, 0x00, 0x00, 0x07, 0x11, 0x27, 0x13, 0x15, 0x01, 0x00,
+            0x22, 0x21, 0x09, 0x08, 0x06, 0x19, 0x0e, 0x20, 0x23, 0x25, 0x2c, 0x2d, 0x17, 0x27,
+            0x29, 0x16, 0x14, 0x1b, 0x1b, 0x21, 0x27, 0x1a, 0x18, 0x17, 0x1e, 0x21, 0x1b, 0x24,
+            0x21, 0x22, 0x23, 0x13, 0x19, 0x23, 0x2f, 0x2d, 0x25, 0x25, 0x0a, 0x0e, 0x1e, 0x20,
+            0x1f, 0x1a, 0x0c, 0xFD,
         ];
-        let bins = parse_scope_waveform_bins(&frame).expect("bins expected");
-        assert_eq!(bins, vec![0x20, 0x80, 0xFF, 0x40]);
+        let (division, maximum, bins) = parse_scope_waveform_segment(&frame).unwrap();
+        assert_eq!((division, maximum, bins.len()), (7, 11, 50));
+        assert_eq!(&bins[..4], &[0x27, 0x13, 0x15, 0x01]);
     }
 
     #[test]
-    fn rejects_non_scope_waveform_frame_for_bins() {
-        let frame = [0xFE, 0xFE, 0xE0, 0x94, 0x04, 0x01, 0x01, 0xFD];
-        assert!(parse_scope_waveform_bins(&frame).is_none());
+    fn assembles_only_one_complete_ordered_ic7300_sweep() {
+        fn frame(division: usize) -> Vec<u8> {
+            let mut frame = vec![
+                0xFE,
+                0xFE,
+                0xE0,
+                0x94,
+                0x27,
+                0x00,
+                0x00,
+                decimal_to_bcd(division as u8),
+                0x11,
+            ];
+            if division == 1 {
+                frame.extend_from_slice(&[0x00; 12]);
+            } else {
+                let count = if division == 11 { 25 } else { 50 };
+                frame.extend(std::iter::repeat_n(division as u8, count));
+            }
+            frame.push(0xFD);
+            frame
+        }
+
+        let mut assembler = ScopeSweepAssembler::default();
+        for division in 1..11 {
+            assert!(assembler.push(&frame(division)).is_none());
+        }
+        let sweep = assembler.push(&frame(11)).expect("complete sweep");
+        assert_eq!(sweep.len(), 475);
+        assert_eq!(&sweep[..50], &[2; 50]);
+        assert_eq!(&sweep[450..], &[11; 25]);
+
+        let mut assembler = ScopeSweepAssembler::default();
+        for division in [1, 2, 3, 5, 6, 7, 8, 9, 10, 11] {
+            assert!(assembler.push(&frame(division)).is_none());
+        }
+        for division in 1..11 {
+            assert!(assembler.push(&frame(division)).is_none());
+        }
+        assert_eq!(assembler.push(&frame(11)).unwrap().len(), 475);
+    }
+
+    #[test]
+    fn stream_reader_preserves_every_complete_sweep_in_one_serial_read() {
+        fn frame(division: usize, level: u8) -> Vec<u8> {
+            let mut frame = vec![
+                0xFE,
+                0xFE,
+                0xE0,
+                0x94,
+                0x27,
+                0x00,
+                0x00,
+                decimal_to_bcd(division as u8),
+                0x11,
+            ];
+            if division == 1 {
+                frame.extend_from_slice(&[0x00; 12]);
+            } else {
+                let count = if division == 11 { 25 } else { 50 };
+                frame.extend(std::iter::repeat_n(level, count));
+            }
+            frame.push(0xFD);
+            frame
+        }
+
+        let mut bytes = Vec::new();
+        for level in [20, 80] {
+            for division in 1..=11 {
+                bytes.extend(frame(division, level));
+            }
+        }
+        let sweeps = ScopeStreamReader::default().push_bytes(&bytes, 0x94, 0xE0);
+        assert_eq!(sweeps.len(), 2);
+        assert!(sweeps[0].iter().all(|value| *value == 20));
+        assert!(sweeps[1].iter().all(|value| *value == 80));
+    }
+
+    #[test]
+    fn command_reader_can_queue_a_complete_unsolicited_sweep_for_stream_drain() {
+        let mut bytes = Vec::new();
+        for division in 1..=11 {
+            bytes.extend([
+                0xFE,
+                0xFE,
+                0xE0,
+                0x94,
+                0x27,
+                0x00,
+                0x00,
+                decimal_to_bcd(division),
+                0x11,
+            ]);
+            if division == 1 {
+                bytes.extend([0x00; 12]);
+            } else {
+                let count = if division == 11 { 25 } else { 50 };
+                bytes.extend(std::iter::repeat_n(42, count));
+            }
+            bytes.push(0xFD);
+        }
+
+        let mut reader = ScopeStreamReader::default();
+        reader.ingest_bytes(&bytes, 0x94, 0xE0);
+        let queued = reader.push_bytes(&[], 0x94, 0xE0);
+        assert_eq!(queued.len(), 1);
+        assert!(queued[0].iter().all(|value| *value == 42));
     }
 
     #[test]
