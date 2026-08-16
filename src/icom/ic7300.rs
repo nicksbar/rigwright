@@ -1654,9 +1654,7 @@ mod tests {
 
     #[test]
     fn parses_extended_mode_response_after_subcommand() {
-        let frame = [
-            0xFE, 0xFE, 0xE0, 0x94, 0x26, 0x00, 0x01, 0x01, 0x03, 0xFD,
-        ];
+        let frame = [0xFE, 0xFE, 0xE0, 0x94, 0x26, 0x00, 0x01, 0x01, 0x03, 0xFD];
         let details = parse_mode_details(&frame).expect("extended mode details expected");
         assert_eq!(details.base, BaseMode::Usb);
         assert!(details.data_mode);
