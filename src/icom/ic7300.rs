@@ -847,7 +847,7 @@ impl IcomCiVRadio {
                     let response = self.transact(&[0x26, 0x00], true)?;
                     let details =
                         parse_mode_details(&response).context("unable to decode mode details")?;
-                    Ok(Some(ControlValue::U8(details.filter.unwrap_or(1))))
+                    Ok(details.filter.map(ControlValue::U8))
                 }
             };
         }
@@ -1653,6 +1653,18 @@ mod tests {
     }
 
     #[test]
+    fn parses_extended_mode_response_after_subcommand() {
+        let frame = [
+            0xFE, 0xFE, 0xE0, 0x94, 0x26, 0x00, 0x01, 0x01, 0x03, 0xFD,
+        ];
+        let details = parse_mode_details(&frame).expect("extended mode details expected");
+        assert_eq!(details.base, BaseMode::Usb);
+        assert!(details.data_mode);
+        assert_eq!(details.filter, Some(3));
+        assert_eq!(details.label(), "USB-D");
+    }
+
+    #[test]
     fn uses_configured_port_when_present() {
         let radio = IcomCiVRadio::new("/dev/ttyUSB0", 115_200, 0xE0);
         assert_eq!(radio.port, "/dev/ttyUSB0");
@@ -1919,7 +1931,15 @@ fn parse_mode_details(response: &[u8]) -> Option<OperatingMode> {
         return None;
     }
 
-    let data = &frame[5..frame.len() - 1];
+    let data = if frame[4] == 0x26 {
+        let data = &frame[5..frame.len() - 1];
+        if data.first().copied() != Some(0x00) {
+            return None;
+        }
+        &data[1..]
+    } else {
+        &frame[5..frame.len() - 1]
+    };
     let mode = *data.first()?;
     let data_on = data.get(1).copied().unwrap_or(0) != 0;
     let filter = data.get(2).copied().filter(|v| (1..=3).contains(v));
