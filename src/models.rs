@@ -149,7 +149,11 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         model: "FTDX10",
         protocol: Protocol::YaesuCat,
         support: SupportLevel::Framework,
-        capabilities: HF_SCOPE,
+        // The CAT manual documents scope configuration (`SS`), but not a
+        // spectrum sample transport or waveform frame format. Do not claim
+        // IC-7300-style spectrum streaming until that transport is captured
+        // and implemented.
+        capabilities: HF_BASE,
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Yaesu,
