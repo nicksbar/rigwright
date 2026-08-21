@@ -68,6 +68,48 @@ impl AsciiCatRadio {
     fn command(&self, command: &str, parameter: Option<&str>, response: bool) -> Result<Vec<u8>> {
         self.transact(&ascii_cat::encode(command, parameter)?, response)
     }
+
+    /// Send a documented FTDX10 CAT set command.
+    pub fn ftdx10_set(&self, command: &str, parameters: &str) -> Result<()> {
+        self.transact(
+            &crate::yaesu::ftdx10::command(command, Some(parameters))?,
+            false,
+        )?;
+        Ok(())
+    }
+
+    pub fn ftdx10_read(&self, command: &str) -> Result<Vec<u8>> {
+        self.transact(&crate::yaesu::ftdx10::read(command)?, true)
+    }
+
+    pub fn set_ftdx10_scope(&self, command: Vec<u8>) -> Result<()> {
+        self.transact(&command, false)?;
+        Ok(())
+    }
+
+    /// Read the FTDX10 RF power setting (5-100 percent).
+    pub fn get_ftdx10_power_percent(&self) -> Result<u8> {
+        let response = self.transact(crate::yaesu::ftdx10::read_power_percent(), true)?;
+        crate::yaesu::ftdx10::parse_power_percent(&response)
+    }
+
+    /// Set the FTDX10 RF power setting (5-100 percent).
+    pub fn set_ftdx10_power_percent(&self, percent: u8) -> Result<()> {
+        self.transact(&crate::yaesu::ftdx10::set_power_percent(percent)?, false)?;
+        Ok(())
+    }
+
+    /// Read the FTDX10 split state.  A quick-split response is considered on.
+    pub fn get_ftdx10_split(&self) -> Result<bool> {
+        let response = self.transact(crate::yaesu::ftdx10::read_split(), true)?;
+        crate::yaesu::ftdx10::parse_split(&response)
+    }
+
+    /// Enable or disable FTDX10 split operation.
+    pub fn set_ftdx10_split(&self, enabled: bool) -> Result<()> {
+        self.transact(&crate::yaesu::ftdx10::set_split(enabled), false)?;
+        Ok(())
+    }
 }
 
 #[async_trait]
