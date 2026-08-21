@@ -9,8 +9,10 @@ use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 
 use crate::{
+    dxlab::DxLabCommanderRadio,
     models::{find_model, Protocol},
     protocol::{ascii_cat, yaesu_legacy_cat},
+    rigctld::{NullRadio, RigctldRadio},
     Mode, RadioCapabilities, RadioHal,
 };
 
@@ -293,13 +295,30 @@ fn core_capabilities() -> RadioCapabilities {
 pub enum ConfiguredRadio {
     Icom(crate::IcomCiVRadio),
     Ascii(AsciiCatRadio),
+    DxLab(DxLabCommanderRadio),
     LegacyYaesu(LegacyYaesuRadio),
+    Rigctld(RigctldRadio),
+    Null(NullRadio),
 }
 
 impl ConfiguredRadio {
     pub fn as_icom(&self) -> Option<&crate::IcomCiVRadio> {
         match self {
             Self::Icom(radio) => Some(radio),
+            _ => None,
+        }
+    }
+
+    pub fn as_rigctld(&self) -> Option<&RigctldRadio> {
+        match self {
+            Self::Rigctld(radio) => Some(radio),
+            _ => None,
+        }
+    }
+
+    pub fn as_dxlab(&self) -> Option<&DxLabCommanderRadio> {
+        match self {
+            Self::DxLab(radio) => Some(radio),
             _ => None,
         }
     }
@@ -311,35 +330,50 @@ impl RadioHal for ConfiguredRadio {
         match self {
             Self::Icom(r) => r.get_frequency_hz().await,
             Self::Ascii(r) => r.get_frequency_hz().await,
+            Self::DxLab(r) => r.get_frequency_hz().await,
             Self::LegacyYaesu(r) => r.get_frequency_hz().await,
+            Self::Rigctld(r) => r.get_frequency_hz().await,
+            Self::Null(r) => r.get_frequency_hz().await,
         }
     }
     async fn set_frequency_hz(&self, hz: u64) -> Result<()> {
         match self {
             Self::Icom(r) => r.set_frequency_hz(hz).await,
             Self::Ascii(r) => r.set_frequency_hz(hz).await,
+            Self::DxLab(r) => r.set_frequency_hz(hz).await,
             Self::LegacyYaesu(r) => r.set_frequency_hz(hz).await,
+            Self::Rigctld(r) => r.set_frequency_hz(hz).await,
+            Self::Null(r) => r.set_frequency_hz(hz).await,
         }
     }
     async fn get_mode(&self) -> Result<Mode> {
         match self {
             Self::Icom(r) => RadioHal::get_mode(r).await,
             Self::Ascii(r) => r.get_mode().await,
+            Self::DxLab(r) => r.get_mode().await,
             Self::LegacyYaesu(r) => r.get_mode().await,
+            Self::Rigctld(r) => r.get_mode().await,
+            Self::Null(r) => r.get_mode().await,
         }
     }
     async fn set_mode(&self, mode: Mode) -> Result<()> {
         match self {
             Self::Icom(r) => RadioHal::set_mode(r, mode).await,
             Self::Ascii(r) => r.set_mode(mode).await,
+            Self::DxLab(r) => r.set_mode(mode).await,
             Self::LegacyYaesu(r) => r.set_mode(mode).await,
+            Self::Rigctld(r) => r.set_mode(mode).await,
+            Self::Null(r) => r.set_mode(mode).await,
         }
     }
     async fn set_ptt(&self, enabled: bool) -> Result<()> {
         match self {
             Self::Icom(r) => r.set_ptt(enabled).await,
             Self::Ascii(r) => r.set_ptt(enabled).await,
+            Self::DxLab(r) => r.set_ptt(enabled).await,
             Self::LegacyYaesu(r) => r.set_ptt(enabled).await,
+            Self::Rigctld(r) => r.set_ptt(enabled).await,
+            Self::Null(r) => r.set_ptt(enabled).await,
         }
     }
     async fn protocol_write_read(&self, request: &[u8]) -> Result<Vec<u8>> {
@@ -364,7 +398,10 @@ impl RadioHal for ConfiguredRadio {
         match self {
             Self::Icom(r) => r.capabilities(),
             Self::Ascii(r) => r.capabilities(),
+            Self::DxLab(r) => r.capabilities(),
             Self::LegacyYaesu(r) => r.capabilities(),
+            Self::Rigctld(r) => r.capabilities(),
+            Self::Null(r) => r.capabilities(),
         }
     }
 }
@@ -376,6 +413,22 @@ pub fn open_model(
     controller_address: u8,
 ) -> Result<ConfiguredRadio> {
     open_model_with_radio_address(model, port, baud_rate, controller_address, None)
+}
+
+pub fn open_rigctld(address: impl Into<String>) -> ConfiguredRadio {
+    ConfiguredRadio::Rigctld(RigctldRadio::new(address))
+}
+
+pub fn open_dxlab(address: impl Into<String>) -> ConfiguredRadio {
+    ConfiguredRadio::DxLab(DxLabCommanderRadio::new(address))
+}
+
+pub fn open_dxlab_localhost() -> ConfiguredRadio {
+    ConfiguredRadio::DxLab(DxLabCommanderRadio::localhost())
+}
+
+pub fn open_null() -> ConfiguredRadio {
+    ConfiguredRadio::Null(NullRadio::new())
 }
 
 pub fn open_model_with_radio_address(
@@ -443,5 +496,20 @@ mod tests {
             decode_ascii_mode(AsciiCatFlavor::Kenwood, "1").unwrap(),
             Mode::Lsb
         );
+    }
+    #[test]
+    fn rigctld_factory_wraps_tcp_driver() {
+        let radio = open_rigctld("127.0.0.1:4532");
+        assert!(radio.as_rigctld().is_some());
+    }
+    #[test]
+    fn null_factory_wraps_in_memory_driver() {
+        let radio = open_null();
+        assert!(matches!(radio, ConfiguredRadio::Null(_)));
+    }
+    #[test]
+    fn dxlab_factory_wraps_commander_driver() {
+        let radio = open_dxlab_localhost();
+        assert!(radio.as_dxlab().is_some());
     }
 }
