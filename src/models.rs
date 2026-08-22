@@ -73,6 +73,14 @@ pub enum YaesuLegacyModel {
     Ft897D,
 }
 
+/// Semicolon-terminated Kenwood PC-control radios.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KenwoodCatModel {
+    Ts590Sg,
+    Ts890S,
+    Ts2000,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IcomScopeGeometry {
     pub divisions: usize,
@@ -143,6 +151,27 @@ impl YaesuLegacyModel {
             "FT-818" | "FT818" | "FT-818ND" | "FT818ND" => Some(Self::Ft818),
             "FT-857D" | "FT857D" => Some(Self::Ft857D),
             "FT-897D" | "FT897D" | "FT-897" | "FT897" => Some(Self::Ft897D),
+            _ => None,
+        }
+    }
+}
+
+impl KenwoodCatModel {
+    pub fn model_name(self) -> &'static str {
+        match self {
+            Self::Ts590Sg => "TS-590SG",
+            Self::Ts890S => "TS-890S",
+            Self::Ts2000 => "TS-2000",
+        }
+    }
+
+    pub fn from_model_name(model: &str) -> Option<Self> {
+        match model.to_ascii_uppercase().as_str() {
+            "TS-590SG" | "TS590SG" => Some(Self::Ts590Sg),
+            "TS-890S" | "TS890S" => Some(Self::Ts890S),
+            "TS-2000" | "TS2000" | "TS-2000X" | "TS2000X" | "TS-B2000" | "TSB2000" => {
+                Some(Self::Ts2000)
+            }
             _ => None,
         }
     }
@@ -390,6 +419,23 @@ mod tests {
             assert_eq!(
                 catalog.model,
                 crate::yaesu::legacy_profile::profile_for_model(model)
+                    .model
+                    .model_name()
+            );
+        }
+    }
+
+    #[test]
+    fn kenwood_catalog_models_have_driver_profiles() {
+        for catalog in POPULAR_RADIOS
+            .iter()
+            .filter(|profile| profile.protocol == Protocol::KenwoodCat)
+        {
+            let model =
+                KenwoodCatModel::from_model_name(catalog.model).expect("known Kenwood model");
+            assert_eq!(
+                catalog.model,
+                crate::kenwood::profile::profile_for_model(model)
                     .model
                     .model_name()
             );

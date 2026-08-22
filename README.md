@@ -19,8 +19,9 @@ Only the IC-7300 is regularly hardware-tested. Other profiles are not yet
 claimed as hardware validated. Modern Yaesu models use a profile-driven ASCII
 CAT engine with model IDs, ranges, mode maps, readable PTT, RF power, and split
 gating. Classic Yaesu models use a separate profile-driven five-byte 8N2 engine
-with readable PTT, split, meters, and status. Kenwood support remains an
-experimental common CAT layer. Hamlib `rigctld`, DX Lab
+with readable PTT, split, meters, and status. Kenwood models use a
+profile-driven persistent PC-control engine with exact IDs, command families,
+ranges, modes, power, split, and meter layouts. Hamlib `rigctld`, DX Lab
 Commander, and an in-memory mock backend are also available.
 
 The source tree follows the public API: protocol-neutral types live in
@@ -108,6 +109,19 @@ cargo run --example classic_yaesu_probe -- FT-857D /dev/ttyUSB0 4800
 The classic protocol has no identification command, so this probe can confirm
 responses but cannot prove that the configured model name is correct.
 
+Kenwood TS-590SG, TS-890S, and TS-2000 use the same model-backed factory path.
+Match the radio's PC-control baud menu; the driver automatically uses two stop
+bits at 4800 baud and one stop bit at higher rates. A read-only identity and
+status probe is:
+
+```text
+cargo run --example kenwood_probe -- TS-590SG /dev/ttyUSB0 115200
+```
+
+The probe never sends `TX`. TS-590SG and TS-2000 PTT state is read from `IF`;
+TS-890S does not advertise readable PTT because its documented `TX` command is
+set/auto-information only.
+
 ## Design rules
 
 - Keep the app-facing HAL protocol-neutral.
@@ -126,6 +140,8 @@ See [`docs/adding-icom-model.md`](docs/adding-icom-model.md) or
 [`docs/adding-yaesu-model.md`](docs/adding-yaesu-model.md) before adding a modern
 profile. Classic five-byte models use
 [`docs/adding-classic-yaesu-model.md`](docs/adding-classic-yaesu-model.md).
+Kenwood profiles use
+[`docs/adding-kenwood-model.md`](docs/adding-kenwood-model.md).
 
 ## License
 

@@ -68,3 +68,23 @@ behavior.
 These remain framework-level. In particular, the available FT-897 manual is a
 family reference rather than proof of FT-897D hardware behavior, and classic
 CAT has no model ID query with which to detect an incorrect operator selection.
+
+## Kenwood manual audit
+
+Kenwood profiles share semicolon framing and persistent serial transport, not
+one assumed command set. Official instruction manuals in the workspace were
+cross-referenced with Kenwood's separate official command references for the
+newer radios.
+
+| Model | Manual/reference used | Profile details checked |
+|---|---|---|
+| TS-590SG | `B5A-0180-20.pdf`; `ts590_g_pc_command_en_rev3.pdf`, Jan. 2019 | ID `023`; `FA`/`FB` 11-digit frequency; `FR`/`FT`; `MD` plus `DA`; `IF` RX/TX field; `PC` 5-100 W broad range (AM max 25 W); `SM0` 0-30; 4800-115200 baud |
+| TS-890S | `B5A-4695-00.pdf`; `ts890_pc_command_en_rev1.pdf`, Jan. 2019 | ID `024`; `FA`/`FB`; `OM` with PSK and data variants; direct `TB` split; `PC`; `SM` 0-70; no pollable PTT query; COM/USB baud differences |
+| TS-2000 | `B62-1221-70.pdf`, PC Control Command Tables | ID `019`; `FA`/`FB`; `FR`/`FT`; `MD`; `IF` RX/TX field; HF/VHF/UHF/1.2 GHz receive segments; 4800 baud requires two stop bits |
+
+The shared driver verifies `ID`, follows the selected receiver VFO for
+frequency reads/writes, exposes exact watts and normalized HAL power, handles
+model-specific modes and split commands, reads the documented meter layout,
+and matches responses around interleaved Auto Information frames. PTT writes
+are verified on the two models with pollable `IF` status. All three remain
+framework-level until exercised against physical radios.

@@ -12,7 +12,10 @@ use crate::hal::{Mode, NullRadio, Radio, RadioCapabilities};
 use crate::{
     dxlab::DxLabCommanderRadio,
     icom::civ_radio::IcomCiVRadio,
-    models::{find_model, IcomCivModel, Protocol, YaesuCatModel, YaesuLegacyModel},
+    kenwood::KenwoodCatRadio,
+    models::{
+        find_model, IcomCivModel, KenwoodCatModel, Protocol, YaesuCatModel, YaesuLegacyModel,
+    },
     protocol::ascii_cat,
     rigctld::RigctldRadio,
     yaesu::YaesuCatRadio,
@@ -34,8 +37,7 @@ pub enum AsciiCatFlavor {
 #[derive(Debug, Clone)]
 /// Original minimal ASCII CAT driver retained for source compatibility.
 ///
-/// It remains the current Kenwood backend. Modern Yaesu model selection uses
-/// the profile-backed `YaesuCatRadio` instead.
+/// Model-factory selection uses profile-backed vendor drivers instead.
 pub struct AsciiCatRadio {
     port: String,
     baud_rate: u32,
@@ -240,6 +242,7 @@ fn core_capabilities() -> RadioCapabilities {
 pub enum ConfiguredRadio {
     Icom(IcomCiVRadio),
     Yaesu(YaesuCatRadio),
+    Kenwood(KenwoodCatRadio),
     Ascii(AsciiCatRadio),
     DxLab(DxLabCommanderRadio),
     LegacyYaesu(LegacyYaesuRadio),
@@ -266,6 +269,12 @@ impl ConfiguredRadio {
             _ => None,
         }
     }
+    pub fn as_kenwood(&self) -> Option<&KenwoodCatRadio> {
+        match self {
+            Self::Kenwood(radio) => Some(radio),
+            _ => None,
+        }
+    }
     pub fn as_rigctld(&self) -> Option<&RigctldRadio> {
         match self {
             Self::Rigctld(radio) => Some(radio),
@@ -287,6 +296,7 @@ impl Radio for ConfiguredRadio {
         match self {
             Self::Icom(r) => r.get_frequency_hz().await,
             Self::Yaesu(r) => r.get_frequency_hz().await,
+            Self::Kenwood(r) => r.get_frequency_hz().await,
             Self::Ascii(r) => r.get_frequency_hz().await,
             Self::DxLab(r) => r.get_frequency_hz().await,
             Self::LegacyYaesu(r) => r.get_frequency_hz().await,
@@ -298,6 +308,7 @@ impl Radio for ConfiguredRadio {
         match self {
             Self::Icom(r) => r.set_frequency_hz(hz).await,
             Self::Yaesu(r) => r.set_frequency_hz(hz).await,
+            Self::Kenwood(r) => r.set_frequency_hz(hz).await,
             Self::Ascii(r) => r.set_frequency_hz(hz).await,
             Self::DxLab(r) => r.set_frequency_hz(hz).await,
             Self::LegacyYaesu(r) => r.set_frequency_hz(hz).await,
@@ -309,6 +320,7 @@ impl Radio for ConfiguredRadio {
         match self {
             Self::Icom(r) => Radio::get_mode(r).await,
             Self::Yaesu(r) => r.get_mode().await,
+            Self::Kenwood(r) => r.get_mode().await,
             Self::Ascii(r) => r.get_mode().await,
             Self::DxLab(r) => r.get_mode().await,
             Self::LegacyYaesu(r) => r.get_mode().await,
@@ -320,6 +332,7 @@ impl Radio for ConfiguredRadio {
         match self {
             Self::Icom(r) => Radio::set_mode(r, mode).await,
             Self::Yaesu(r) => r.set_mode(mode).await,
+            Self::Kenwood(r) => r.set_mode(mode).await,
             Self::Ascii(r) => r.set_mode(mode).await,
             Self::DxLab(r) => r.set_mode(mode).await,
             Self::LegacyYaesu(r) => r.set_mode(mode).await,
@@ -331,6 +344,7 @@ impl Radio for ConfiguredRadio {
         match self {
             Self::Icom(r) => r.set_ptt(enabled).await,
             Self::Yaesu(r) => r.set_ptt(enabled).await,
+            Self::Kenwood(r) => r.set_ptt(enabled).await,
             Self::Ascii(r) => r.set_ptt(enabled).await,
             Self::DxLab(r) => r.set_ptt(enabled).await,
             Self::LegacyYaesu(r) => r.set_ptt(enabled).await,
@@ -342,6 +356,7 @@ impl Radio for ConfiguredRadio {
         match self {
             Self::Icom(r) => r.get_ptt().await,
             Self::Yaesu(r) => r.get_ptt().await,
+            Self::Kenwood(r) => r.get_ptt().await,
             Self::Ascii(r) => r.get_ptt().await,
             Self::DxLab(r) => r.get_ptt().await,
             Self::LegacyYaesu(r) => r.get_ptt().await,
@@ -353,6 +368,8 @@ impl Radio for ConfiguredRadio {
         match self {
             Self::Icom(r) => r.protocol_write_read(request).await,
             Self::Yaesu(r) => r.protocol_write_read(request).await,
+            Self::Kenwood(r) => r.protocol_write_read(request).await,
+            Self::LegacyYaesu(r) => r.protocol_write_read(request).await,
             _ => bail!("raw protocol access is not available for this driver"),
         }
     }
@@ -360,6 +377,8 @@ impl Radio for ConfiguredRadio {
         match self {
             Self::Icom(r) => r.get_control(id).await,
             Self::Yaesu(r) => r.get_control(id).await,
+            Self::Kenwood(r) => r.get_control(id).await,
+            Self::LegacyYaesu(r) => r.get_control(id).await,
             _ => Ok(None),
         }
     }
@@ -367,6 +386,8 @@ impl Radio for ConfiguredRadio {
         match self {
             Self::Icom(r) => r.set_control(id, value).await,
             Self::Yaesu(r) => r.set_control(id, value).await,
+            Self::Kenwood(r) => r.set_control(id, value).await,
+            Self::LegacyYaesu(r) => r.set_control(id, value).await,
             _ => bail!("control {id:?} is not available for this driver"),
         }
     }
@@ -374,6 +395,7 @@ impl Radio for ConfiguredRadio {
         match self {
             Self::Icom(r) => r.capabilities(),
             Self::Yaesu(r) => r.capabilities(),
+            Self::Kenwood(r) => r.capabilities(),
             Self::Ascii(r) => r.capabilities(),
             Self::DxLab(r) => r.capabilities(),
             Self::LegacyYaesu(r) => r.capabilities(),
@@ -436,7 +458,9 @@ pub fn open_model_with_radio_address(
             ConfiguredRadio::Yaesu(YaesuCatRadio::new_for_model(model, port, baud_rate)?)
         }
         Protocol::KenwoodCat => {
-            ConfiguredRadio::Ascii(AsciiCatRadio::new(port, baud_rate, AsciiCatFlavor::Kenwood))
+            let model = KenwoodCatModel::from_model_name(profile.model)
+                .with_context(|| format!("unsupported Kenwood CAT model: {}", profile.model))?;
+            ConfiguredRadio::Kenwood(KenwoodCatRadio::new_for_model(model, port, baud_rate)?)
         }
         Protocol::YaesuLegacyCat => {
             let model = YaesuLegacyModel::from_model_name(profile.model).with_context(|| {
@@ -462,7 +486,7 @@ mod tests {
         ));
         assert!(matches!(
             open_model("TS-590SG", "/dev/null", 115_200, 0xE0).unwrap(),
-            ConfiguredRadio::Ascii(_)
+            ConfiguredRadio::Kenwood(_)
         ));
     }
     #[test]
@@ -492,6 +516,16 @@ mod tests {
             Some(YaesuLegacyModel::Ft857D)
         );
         assert!(open_model("FT-857D", "/dev/null", 19_200, 0xE0).is_err());
+    }
+    #[test]
+    fn factory_selects_the_exact_kenwood_profile_and_validates_baud() {
+        let radio = open_model("TS-890S", "/dev/null", 115_200, 0xE0).unwrap();
+        assert_eq!(
+            radio.as_kenwood().and_then(KenwoodCatRadio::model),
+            Some(KenwoodCatModel::Ts890S)
+        );
+        assert!(open_model("TS-2000", "/dev/null", 115_200, 0xE0).is_err());
+        assert!(open_model("TS-2000X", "/dev/null", 9_600, 0xE0).is_err());
     }
     #[test]
     fn decodes_common_ascii_modes() {

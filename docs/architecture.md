@@ -32,7 +32,8 @@ mutex or another latency-sensitive application lock.
   `yaesu/profile.rs` and model modules contain documented differences.
 - `yaesu/legacy_radio.rs` and `yaesu/legacy_profile.rs` implement classic Yaesu
   five-byte binary CAT as a separate profiled backend.
-- `kenwood/` contains Kenwood CAT implementations.
+- `kenwood/cat_radio.rs` is the persistent, model-neutral Kenwood PC-control
+  transport; `kenwood/profile.rs` owns per-model command differences.
 - `rigctld.rs` contains the Hamlib TCP backend.
 - `dxlab.rs` contains the DX Lab Suite Commander TCP backend.
 - `NullRadio` is an in-memory backend for tests and offline UI work.
@@ -69,6 +70,24 @@ split and PTT are on when their bits are zero. Classic radios provide no model
 identification command, so model selection is operator-supplied profile data.
 Because set commands have no acknowledgement, the HAL follows every PTT change
 with an `F7` status read and rejects a state mismatch.
+
+Kenwood framing is shared, but command semantics vary by generation. The
+TS-590SG and TS-2000 profiles use `MD` and represent split through differing
+`FR`/`FT` VFO selections. TS-590SG adds the separate `DA` data-mode flag. The
+TS-890S uses `OM` modes (including explicit data variants) and direct `TB`
+split control. The driver queries the selected receive VFO before using
+`FA`/`FB`, instead of assuming VFO A is always active.
+
+Kenwood set commands generally do not acknowledge success. TS-590SG and
+TS-2000 expose RX/TX state in the fixed-layout `IF` response, so PTT writes are
+followed by a status verification. The TS-890S `TX` response is available only
+through Auto Information and is not a pollable status command; the profile
+therefore reports `can_get_ptt = false`. Unsolicited Auto Information frames
+are tolerated and cannot satisfy an unrelated query.
+
+At 4800 baud the profiled Kenwood serial transport uses 8N2. At higher rates it
+uses 8N1. TS-890S 4800-baud operation is COM-only; its USB virtual COM port
+starts at 9600 baud.
 
 `IcomCivProfile` is declarative. A control stores an arbitrary-length command
 prefix followed by a typed value. This matters because CI-V does not have one
@@ -115,7 +134,8 @@ claims.
 
 See [`adding-icom-model.md`](adding-icom-model.md) and
 [`adding-yaesu-model.md`](adding-yaesu-model.md) or
-[`adding-classic-yaesu-model.md`](adding-classic-yaesu-model.md) for extension
-checklists, and
+[`adding-classic-yaesu-model.md`](adding-classic-yaesu-model.md), plus
+[`adding-kenwood-model.md`](adding-kenwood-model.md) for extension checklists,
+and
 [`supported-radios.md`](supported-radios.md) for exact manual editions and the
 boundary between implementation and validation.

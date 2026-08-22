@@ -18,7 +18,8 @@ pub use icom::civ_radio::{
     enumerate_serial_port_descriptors, enumerate_serial_ports, IcomCiVRadio, IcomReceiver, IcomVfo,
     SerialPortDescriptor,
 };
-pub use models::{IcomCivModel, YaesuCatModel, YaesuLegacyModel};
+pub use kenwood::KenwoodCatRadio;
+pub use models::{IcomCivModel, KenwoodCatModel, YaesuCatModel, YaesuLegacyModel};
 pub use protocol::yaesu_legacy_cat::{
     FrequencyModeStatus as YaesuLegacyFrequencyModeStatus, LegacyMode as YaesuLegacyMode,
     RxStatus as YaesuLegacyRxStatus, TxStatus as YaesuLegacyTxStatus,
