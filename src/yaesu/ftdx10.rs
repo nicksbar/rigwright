@@ -14,7 +14,7 @@ pub const MAX_FREQUENCY_HZ: u64 = 75_000_000;
 
 /// Build a documented FTDX10 CAT command. This is the escape hatch for the
 /// complete model command table, including commands not yet represented by a
-/// protocol-neutral `RadioHal` control.
+/// protocol-neutral `Radio` control.
 pub fn command(command: &str, parameters: Option<&str>) -> Result<Vec<u8>> {
     if command.len() != 2 || !command.bytes().all(|b| b.is_ascii_alphabetic()) {
         bail!("FTDX10 CAT command must contain exactly two letters");

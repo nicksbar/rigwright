@@ -8,12 +8,13 @@ use std::{
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 
+use crate::hal::{Mode, NullRadio, Radio, RadioCapabilities};
 use crate::{
     dxlab::DxLabCommanderRadio,
-    models::{find_model, Protocol},
+    icom::civ_radio::IcomCiVRadio,
+    models::{find_model, IcomCivModel, Protocol},
     protocol::{ascii_cat, yaesu_legacy_cat},
-    rigctld::{NullRadio, RigctldRadio},
-    Mode, RadioCapabilities, RadioHal,
+    rigctld::RigctldRadio,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,7 +116,7 @@ impl AsciiCatRadio {
 }
 
 #[async_trait]
-impl RadioHal for AsciiCatRadio {
+impl Radio for AsciiCatRadio {
     async fn get_frequency_hz(&self) -> Result<u64> {
         let response = self.command("FA", None, true)?;
         let text = std::str::from_utf8(&response).context("CAT frequency response is not ASCII")?;
@@ -155,6 +156,22 @@ impl RadioHal for AsciiCatRadio {
             (AsciiCatFlavor::Kenwood, Mode::Lsb) => "1",
             (AsciiCatFlavor::Kenwood, Mode::Usb | Mode::Data) => "2",
             (AsciiCatFlavor::Kenwood, Mode::Cw) => "3",
+            (AsciiCatFlavor::Yaesu, Mode::Am) => "05",
+            (AsciiCatFlavor::Yaesu, Mode::Fm) => "04",
+            (AsciiCatFlavor::Yaesu, Mode::Wfm) => {
+                bail!("WFM has no common Yaesu CAT mode mapping")
+            }
+            (AsciiCatFlavor::Yaesu, Mode::Rtty) => "06",
+            (AsciiCatFlavor::Yaesu, Mode::CwReverse) => "07",
+            (AsciiCatFlavor::Yaesu, Mode::RttyReverse) => "09",
+            (AsciiCatFlavor::Kenwood, Mode::Am) => "5",
+            (AsciiCatFlavor::Kenwood, Mode::Fm) => "4",
+            (AsciiCatFlavor::Kenwood, Mode::Wfm) => {
+                bail!("WFM has no common Kenwood CAT mode mapping")
+            }
+            (AsciiCatFlavor::Kenwood, Mode::Rtty) => "6",
+            (AsciiCatFlavor::Kenwood, Mode::CwReverse) => "7",
+            (AsciiCatFlavor::Kenwood, Mode::RttyReverse) => "9",
         };
         self.command("MD", Some(value), false)?;
         Ok(())
@@ -171,7 +188,6 @@ impl RadioHal for AsciiCatRadio {
         }
         Ok(())
     }
-
     fn capabilities(&self) -> RadioCapabilities {
         core_capabilities()
     }
@@ -188,15 +204,24 @@ fn decode_ascii_mode(flavor: AsciiCatFlavor, raw: &str) -> Result<Mode> {
         AsciiCatFlavor::Yaesu => match code {
             '1' => Mode::Lsb,
             '2' => Mode::Usb,
-            '3' | '7' => Mode::Cw,
-            '6' | '8' | '9' | 'A' | 'C' | 'E' | 'F' => Mode::Data,
+            '3' => Mode::Cw,
+            '4' => Mode::Fm,
+            '5' => Mode::Am,
+            '6' => Mode::Rtty,
+            '7' => Mode::CwReverse,
+            '9' => Mode::RttyReverse,
+            '8' | 'A' | 'C' | 'E' | 'F' => Mode::Data,
             _ => bail!("unsupported Yaesu CAT mode: {raw}"),
         },
         AsciiCatFlavor::Kenwood => match code {
             '1' => Mode::Lsb,
             '2' => Mode::Usb,
-            '3' | '7' => Mode::Cw,
-            '6' | '9' => Mode::Data,
+            '3' => Mode::Cw,
+            '4' => Mode::Fm,
+            '5' => Mode::Am,
+            '6' => Mode::Rtty,
+            '7' => Mode::CwReverse,
+            '9' => Mode::RttyReverse,
             _ => bail!("unsupported Kenwood CAT mode: {raw}"),
         },
     };
@@ -237,7 +262,7 @@ impl LegacyYaesuRadio {
 }
 
 #[async_trait]
-impl RadioHal for LegacyYaesuRadio {
+impl Radio for LegacyYaesuRadio {
     async fn get_frequency_hz(&self) -> Result<u64> {
         Ok(yaesu_legacy_cat::decode_frequency_and_mode(
             &self.transact(yaesu_legacy_cat::read_frequency_and_mode(), 5)?,
@@ -266,6 +291,12 @@ impl RadioHal for LegacyYaesuRadio {
             Mode::Usb => yaesu_legacy_cat::LegacyMode::Usb,
             Mode::Cw => yaesu_legacy_cat::LegacyMode::Cw,
             Mode::Data => yaesu_legacy_cat::LegacyMode::Digital,
+            Mode::Am => yaesu_legacy_cat::LegacyMode::Am,
+            Mode::Fm => yaesu_legacy_cat::LegacyMode::Fm,
+            Mode::Wfm => bail!("WFM is not supported by legacy Yaesu CAT"),
+            Mode::Rtty => yaesu_legacy_cat::LegacyMode::Digital,
+            Mode::CwReverse => yaesu_legacy_cat::LegacyMode::CwReverse,
+            Mode::RttyReverse => yaesu_legacy_cat::LegacyMode::Digital,
         };
         self.transact(yaesu_legacy_cat::set_mode(mode), 0)?;
         Ok(())
@@ -293,7 +324,7 @@ fn core_capabilities() -> RadioCapabilities {
 
 #[derive(Clone)]
 pub enum ConfiguredRadio {
-    Icom(crate::IcomCiVRadio),
+    Icom(IcomCiVRadio),
     Ascii(AsciiCatRadio),
     DxLab(DxLabCommanderRadio),
     LegacyYaesu(LegacyYaesuRadio),
@@ -302,13 +333,12 @@ pub enum ConfiguredRadio {
 }
 
 impl ConfiguredRadio {
-    pub fn as_icom(&self) -> Option<&crate::IcomCiVRadio> {
+    pub fn as_icom(&self) -> Option<&IcomCiVRadio> {
         match self {
             Self::Icom(radio) => Some(radio),
             _ => None,
         }
     }
-
     pub fn as_rigctld(&self) -> Option<&RigctldRadio> {
         match self {
             Self::Rigctld(radio) => Some(radio),
@@ -325,7 +355,7 @@ impl ConfiguredRadio {
 }
 
 #[async_trait]
-impl RadioHal for ConfiguredRadio {
+impl Radio for ConfiguredRadio {
     async fn get_frequency_hz(&self) -> Result<u64> {
         match self {
             Self::Icom(r) => r.get_frequency_hz().await,
@@ -348,7 +378,7 @@ impl RadioHal for ConfiguredRadio {
     }
     async fn get_mode(&self) -> Result<Mode> {
         match self {
-            Self::Icom(r) => RadioHal::get_mode(r).await,
+            Self::Icom(r) => Radio::get_mode(r).await,
             Self::Ascii(r) => r.get_mode().await,
             Self::DxLab(r) => r.get_mode().await,
             Self::LegacyYaesu(r) => r.get_mode().await,
@@ -358,7 +388,7 @@ impl RadioHal for ConfiguredRadio {
     }
     async fn set_mode(&self, mode: Mode) -> Result<()> {
         match self {
-            Self::Icom(r) => RadioHal::set_mode(r, mode).await,
+            Self::Icom(r) => Radio::set_mode(r, mode).await,
             Self::Ascii(r) => r.set_mode(mode).await,
             Self::DxLab(r) => r.set_mode(mode).await,
             Self::LegacyYaesu(r) => r.set_mode(mode).await,
@@ -374,6 +404,16 @@ impl RadioHal for ConfiguredRadio {
             Self::LegacyYaesu(r) => r.set_ptt(enabled).await,
             Self::Rigctld(r) => r.set_ptt(enabled).await,
             Self::Null(r) => r.set_ptt(enabled).await,
+        }
+    }
+    async fn get_ptt(&self) -> Result<bool> {
+        match self {
+            Self::Icom(r) => r.get_ptt().await,
+            Self::Ascii(r) => r.get_ptt().await,
+            Self::DxLab(r) => r.get_ptt().await,
+            Self::LegacyYaesu(r) => r.get_ptt().await,
+            Self::Rigctld(r) => r.get_ptt().await,
+            Self::Null(r) => r.get_ptt().await,
         }
     }
     async fn protocol_write_read(&self, request: &[u8]) -> Result<Vec<u8>> {
@@ -441,10 +481,17 @@ pub fn open_model_with_radio_address(
     let profile = find_model(model).with_context(|| format!("unknown radio model: {model}"))?;
     let port = port.into();
     Ok(match profile.protocol {
-        Protocol::IcomCiV { default_address } => ConfiguredRadio::Icom(
-            crate::IcomCiVRadio::new(port, baud_rate, controller_address)
-                .with_radio_address(radio_address.unwrap_or(default_address)),
-        ),
+        Protocol::IcomCiV { default_address } => {
+            let model = IcomCivModel::from_model_name(profile.model)
+                .with_context(|| format!("unsupported Icom CI-V model: {}", profile.model))?;
+            ConfiguredRadio::Icom(IcomCiVRadio::new_for_model(
+                model,
+                port,
+                baud_rate,
+                controller_address,
+                radio_address.unwrap_or(default_address),
+            ))
+        }
         Protocol::YaesuCat => {
             ConfiguredRadio::Ascii(AsciiCatRadio::new(port, baud_rate, AsciiCatFlavor::Yaesu))
         }
@@ -480,7 +527,9 @@ mod tests {
         let radio =
             open_model_with_radio_address("IC-7300", "/dev/null", 115_200, 0xE0, Some(0x95))
                 .unwrap();
-        assert!(radio.as_icom().is_some());
+        let icom = radio.as_icom().expect("Icom driver");
+        assert_eq!(icom.controller_address(), 0xE0);
+        assert_eq!(icom.radio_address(), 0x95);
     }
     #[test]
     fn decodes_common_ascii_modes() {
@@ -491,6 +540,10 @@ mod tests {
         assert_eq!(
             decode_ascii_mode(AsciiCatFlavor::Yaesu, "0C").unwrap(),
             Mode::Data
+        );
+        assert_eq!(
+            decode_ascii_mode(AsciiCatFlavor::Yaesu, "06").unwrap(),
+            Mode::Rtty
         );
         assert_eq!(
             decode_ascii_mode(AsciiCatFlavor::Kenwood, "1").unwrap(),

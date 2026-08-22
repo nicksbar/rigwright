@@ -43,6 +43,45 @@ pub struct RadioModelProfile {
     pub capabilities: ModelCapabilities,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IcomCivModel {
+    Ic705,
+    Ic7300,
+    Ic7610,
+    Ic9700,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IcomScopeGeometry {
+    pub divisions: usize,
+    pub bins: usize,
+    pub full_chunk_bins: usize,
+    pub last_chunk_bins: usize,
+    pub bin_max: u8,
+    pub supports_main_sub_scope: bool,
+}
+
+impl IcomCivModel {
+    pub fn model_name(self) -> &'static str {
+        match self {
+            Self::Ic705 => "IC-705",
+            Self::Ic7300 => "IC-7300",
+            Self::Ic7610 => "IC-7610",
+            Self::Ic9700 => "IC-9700",
+        }
+    }
+
+    pub fn from_model_name(model: &str) -> Option<Self> {
+        match model.to_ascii_uppercase().as_str() {
+            "IC-705" => Some(Self::Ic705),
+            "IC-7300" => Some(Self::Ic7300),
+            "IC-7610" => Some(Self::Ic7610),
+            "IC-9700" => Some(Self::Ic9700),
+            _ => None,
+        }
+    }
+}
+
 const HF_BASE: ModelCapabilities = ModelCapabilities {
     hf: true,
     vhf_uhf: false,
@@ -142,7 +181,7 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         model: "FT-710",
         protocol: Protocol::YaesuCat,
         support: SupportLevel::Framework,
-        capabilities: HF_SCOPE,
+        capabilities: HF_BASE,
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Yaesu,
@@ -160,21 +199,21 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         model: "FTDX101D",
         protocol: Protocol::YaesuCat,
         support: SupportLevel::Framework,
-        capabilities: HF_SCOPE,
+        capabilities: HF_BASE,
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Yaesu,
         model: "FTDX101MP",
         protocol: Protocol::YaesuCat,
         support: SupportLevel::Framework,
-        capabilities: HF_SCOPE,
+        capabilities: HF_BASE,
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Yaesu,
         model: "FT-991A",
         protocol: Protocol::YaesuCat,
         support: SupportLevel::Framework,
-        capabilities: ALL_MODE_SCOPE,
+        capabilities: ALL_MODE_BASE,
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Kenwood,
@@ -188,14 +227,14 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         model: "TS-890S",
         protocol: Protocol::KenwoodCat,
         support: SupportLevel::Framework,
-        capabilities: HF_SCOPE,
+        capabilities: HF_BASE,
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Kenwood,
         model: "TS-2000",
         protocol: Protocol::KenwoodCat,
         support: SupportLevel::Framework,
-        capabilities: ALL_MODE_SCOPE,
+        capabilities: ALL_MODE_BASE,
     },
 ];
 
@@ -242,5 +281,32 @@ mod tests {
             assert_eq!(profile.support, SupportLevel::Framework);
             assert!(!profile.capabilities.spectrum);
         }
+    }
+
+    #[test]
+    fn icom_catalog_addresses_match_driver_profiles() {
+        for catalog in POPULAR_RADIOS
+            .iter()
+            .filter(|profile| profile.manufacturer == Manufacturer::Icom)
+        {
+            let model = IcomCivModel::from_model_name(catalog.model).expect("known Icom model");
+            let Protocol::IcomCiV { default_address } = catalog.protocol else {
+                panic!("Icom model must use CI-V")
+            };
+            assert_eq!(
+                default_address,
+                crate::icom::profile::profile_for_model(model).default_address
+            );
+        }
+    }
+
+    #[test]
+    fn spectrum_capability_means_a_waveform_transport_is_implemented() {
+        let spectrum_models: Vec<_> = POPULAR_RADIOS
+            .iter()
+            .filter(|profile| profile.capabilities.spectrum)
+            .map(|profile| profile.model)
+            .collect();
+        assert_eq!(spectrum_models, ["IC-7300", "IC-705", "IC-7610", "IC-9700"]);
     }
 }

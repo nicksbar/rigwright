@@ -14,7 +14,7 @@ use std::{
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 
-use crate::{Mode, RadioCapabilities, RadioHal};
+use crate::hal::{Mode, Radio, RadioCapabilities};
 
 const DEFAULT_ADDRESS: &str = "127.0.0.1:52002";
 const DEFAULT_TIMEOUT: Duration = Duration::from_millis(1_500);
@@ -104,7 +104,7 @@ impl DxLabCommanderRadio {
 }
 
 #[async_trait]
-impl RadioHal for DxLabCommanderRadio {
+impl Radio for DxLabCommanderRadio {
     async fn get_frequency_hz(&self) -> Result<u64> {
         let reply = self.query("<command:10>CmdGetFreq<parameters:0>")?;
         let value = response_value(&reply, "CmdFreq")?;
@@ -200,15 +200,27 @@ fn encode_commander_mode(mode: Mode) -> &'static str {
         Mode::Usb => "USB",
         Mode::Cw => "CW",
         Mode::Data => "DATA-U",
+        Mode::Am => "AM",
+        Mode::Fm => "FM",
+        Mode::Wfm => "WFM",
+        Mode::Rtty => "RTTY",
+        Mode::CwReverse => "CW-R",
+        Mode::RttyReverse => "RTTY-R",
     }
 }
 
 fn decode_commander_mode(value: &str) -> Result<Mode> {
     match value.trim().to_ascii_uppercase().as_str() {
         "LSB" => Ok(Mode::Lsb),
-        "USB" | "DATA-U" | "DIGU" | "PKT-R" => Ok(Mode::Usb),
-        "CW" | "CW-R" => Ok(Mode::Cw),
-        "AM" | "FM" | "WBFM" | "RTTY" | "RTTY-R" | "DATA-L" | "DIGL" | "PKT" => Ok(Mode::Data),
+        "USB" => Ok(Mode::Usb),
+        "DATA-U" | "DIGU" | "PKT-R" | "DATA-L" | "DIGL" | "PKT" => Ok(Mode::Data),
+        "CW" => Ok(Mode::Cw),
+        "CW-R" => Ok(Mode::CwReverse),
+        "AM" => Ok(Mode::Am),
+        "FM" => Ok(Mode::Fm),
+        "WBFM" | "WFM" => Ok(Mode::Wfm),
+        "RTTY" => Ok(Mode::Rtty),
+        "RTTY-R" => Ok(Mode::RttyReverse),
         other => bail!("unsupported DX Lab Commander mode: {other}"),
     }
 }
@@ -240,8 +252,9 @@ mod tests {
     fn maps_documented_commander_modes() {
         assert_eq!(decode_commander_mode("LSB").unwrap(), Mode::Lsb);
         assert_eq!(decode_commander_mode("USB").unwrap(), Mode::Usb);
-        assert_eq!(decode_commander_mode("CW-R").unwrap(), Mode::Cw);
+        assert_eq!(decode_commander_mode("CW-R").unwrap(), Mode::CwReverse);
         assert_eq!(decode_commander_mode("DATA-L").unwrap(), Mode::Data);
+        assert_eq!(decode_commander_mode("WBFM").unwrap(), Mode::Wfm);
     }
 
     #[test]
