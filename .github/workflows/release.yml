@@ -31,4 +31,29 @@ jobs:
               --verify-tag \
               --generate-notes \
               --title "Rigwright $RELEASE_TAG"
+
+  publish:
+    name: Publish to crates.io
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Verify tag matches package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGE_VERSION="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "rigwright") | .version')"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$PACKAGE_VERSION" != "$TAG_VERSION" ]]; then
+            echo "Tag $TAG_VERSION does not match package version $PACKAGE_VERSION"
+            exit 1
+          fi
+
+      - name: Publish crate
+        run: cargo publish --token "${{ secrets.CRATES_TOKEN }}"
           fi

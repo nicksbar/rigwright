@@ -1,6 +1,6 @@
 [package]
 name = "rigwright"
-version = "0.1.0"
+version = "0.1.8"
 edition = "2021"
 license = "MIT"
 authors = ["Rigwright Contributors"]
@@ -9,7 +9,7 @@ repository = "https://github.com/nicksbar/rigwright"
 readme = "README.md"
 keywords = ["amateur-radio", "ham-radio", "radio", "icom", "civ"]
 categories = ["hardware-support"]
-publish = false
+publish = true
 
 [dependencies]
 anyhow = "1"
