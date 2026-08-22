@@ -41,6 +41,26 @@ mutex or another latency-sensitive application lock.
 `ConfiguredRadio` is the factory/dispatch enum that forwards the root HAL to
 the selected backend.
 
+## Application-facing model catalog
+
+`models::POPULAR_RADIOS` is the source of truth applications should use for
+native model selection. Each `RadioModelProfile` supplies the canonical model
+name, manufacturer, protocol, validation maturity, broad band/spectrum
+metadata, and helpers for the selected driver's behavior:
+
+- `preferred_baud_rate()` derives a safe starting choice from the vendor
+  profile. It does not override the baud configured on the physical radio.
+- `driver_capabilities()` reports the root frequency/mode/PTT/raw operations.
+- `supports_control(ControlId)` reports only typed controls implemented for
+  that exact profile.
+
+Applications should group and label models from this catalog instead of
+maintaining vendor lists or inferring a manufacturer from a model-name prefix.
+Connection backends such as `rigctld`, DX Lab, and an offline mock remain
+application choices rather than radio manufacturers. When a model is added,
+updating its vendor profile and catalog row makes it available to consumers
+without adding model branches to their UI or business logic.
+
 ## Profiles and overrides
 
 Model files define defaults and documented differences:
