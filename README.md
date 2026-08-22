@@ -15,10 +15,12 @@ evolve independently and be embedded in other amateur-radio applications.
   complete 475-bin sweep, with documented center-span and fixed-edge controls.
 - Captured-frame unit tests and a direct CI-V probe example.
 
-Only the IC-7300 is regularly hardware-tested. Other Icom models may respond to
-parts of the driver but are not yet claimed as validated. Common frequency,
-mode, and PTT drivers exist for the cataloged Yaesu and Kenwood radios and
-remain experimental pending physical-radio testing. Hamlib `rigctld`, DX Lab
+Only the IC-7300 is regularly hardware-tested. Other profiles are not yet
+claimed as hardware validated. Modern Yaesu models use a profile-driven ASCII
+CAT engine with model IDs, ranges, mode maps, readable PTT, RF power, and split
+gating. Classic Yaesu models use a separate profile-driven five-byte 8N2 engine
+with readable PTT, split, meters, and status. Kenwood support remains an
+experimental common CAT layer. Hamlib `rigctld`, DX Lab
 Commander, and an in-memory mock backend are also available.
 
 The source tree follows the public API: protocol-neutral types live in
@@ -69,6 +71,43 @@ Use `new_for_model` when the operator changed the radio's CI-V address. The
 model-neutral constructor intentionally cannot expose profile-only controls or
 decode a model-specific spectrum stream.
 
+Modern Yaesu radios follow the same profile-backed pattern:
+
+```rust,no_run
+use rigwright::{Radio, YaesuCatModel, YaesuCatRadio};
+
+# async fn example() -> anyhow::Result<()> {
+let radio = YaesuCatRadio::new_for_model(
+    YaesuCatModel::Ftdx10,
+    "/dev/ttyUSB0",
+    38_400,
+)?;
+radio.verify_model()?;
+radio.set_frequency_hz(14_074_000).await?;
+radio.set_ptt(false).await?;
+# Ok(())
+# }
+```
+
+Use the Enhanced virtual COM port for FTDX10 CAT. The Standard port is for
+PTT/keying/digital-mode signals, not frequency and mode CAT commands.
+
+For a read-only identity/frequency/mode/PTT check, run
+`cargo run --example yaesu_probe -- FTDX10 /dev/ttyUSB0 38400`. Match the baud
+rate and one-stop-bit setting in the radio's CAT menu. No example command keys
+the transmitter.
+
+For an older FT-817ND, FT-818, FT-857D, or FT-897D, set the radio's CAT menu to
+4800, 9600, or 38400 baud and use the documented CT-62-compatible serial
+interface. The driver configures 8N2 automatically. A read-only check is:
+
+```text
+cargo run --example classic_yaesu_probe -- FT-857D /dev/ttyUSB0 4800
+```
+
+The classic protocol has no identification command, so this probe can confirm
+responses but cannot prove that the configured model name is correct.
+
 ## Design rules
 
 - Keep the app-facing HAL protocol-neutral.
@@ -83,9 +122,10 @@ decode a model-specific spectrum stream.
 - Keep scope, waveform, I/Q, satellite, and dual-receiver features optional
   until their wire formats are implemented and tested.
 
-See [`docs/adding-icom-model.md`](docs/adding-icom-model.md) before adding an
-Icom profile. It lists every catalog, profile, test, documentation, and live
-validation surface that must move together.
+See [`docs/adding-icom-model.md`](docs/adding-icom-model.md) or
+[`docs/adding-yaesu-model.md`](docs/adding-yaesu-model.md) before adding a modern
+profile. Classic five-byte models use
+[`docs/adding-classic-yaesu-model.md`](docs/adding-classic-yaesu-model.md).
 
 ## License
 

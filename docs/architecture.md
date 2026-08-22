@@ -13,6 +13,10 @@ The root API lives in `src/hal.rs` and `src/controls.rs`:
 
 A generic control identifier does not imply universal hardware support. Each
 selected driver validates support, value type, range, and command encoding.
+Gain-like `ControlValue::U8` controls, including `RfPower`, use the normalized
+0-255 HAL range. A vendor API may additionally expose exact native units; for
+example, modern Yaesu `get_power_watts`/`set_power_watts` map the manual's `PC`
+field without pretending that watts are percent.
 The older `frequency`, `set_frequency`, `mode`, and `ptt` method spellings are
 compatibility wrappers; new code should use the explicit `*_hz`, `get_*`, and
 `set_*` methods.
@@ -24,7 +28,10 @@ mutex or another latency-sensitive application lock.
 ## Backends
 
 - `icom/` contains the shared Icom CI-V implementation and model profiles.
-- `yaesu/` contains Yaesu ASCII and legacy CAT implementations.
+- `yaesu/cat_radio.rs` is the model-neutral modern Yaesu ASCII CAT transport;
+  `yaesu/profile.rs` and model modules contain documented differences.
+- `yaesu/legacy_radio.rs` and `yaesu/legacy_profile.rs` implement classic Yaesu
+  five-byte binary CAT as a separate profiled backend.
 - `kenwood/` contains Kenwood CAT implementations.
 - `rigctld.rs` contains the Hamlib TCP backend.
 - `dxlab.rs` contains the DX Lab Suite Commander TCP backend.
@@ -42,6 +49,26 @@ Model files define defaults and documented differences:
 - Mode mappings
 - Control mappings and ranges
 - Optional scope/IQ/receiver capabilities
+
+Modern Yaesu profiles additionally own the `ID;` value, accepted CAT baud
+rates, receiver-qualified `MD` mappings, `PC` range in watts, and optional
+command families. `YaesuCatRadio` reuses one serial connection and matches
+semicolon-terminated replies by command so unsolicited auto-information frames
+cannot be mistaken for a requested reply. Modern ASCII CAT and legacy binary
+CAT are intentionally separate engines.
+
+Yaesu `TX;` distinguishes idle (`0`), CAT-requested transmit (`1`), and
+radio/front-panel transmit (`2`). The protocol-neutral PTT state treats both
+non-zero values as transmitting; `set_ptt(false)` sends `TX0;`.
+
+Classic Yaesu CAT is not an earlier framing option for the modern engine. It
+uses exactly five binary bytes, no terminator, 8N2 serial framing, and no set
+acknowledgements. `E7`, `F7`, and `03` return RX status, TX status, and
+frequency/mode respectively. Several status bits use active-low polarity:
+split and PTT are on when their bits are zero. Classic radios provide no model
+identification command, so model selection is operator-supplied profile data.
+Because set commands have no acknowledgement, the HAL follows every PTT change
+with an `F7` status read and rejects a state mismatch.
 
 `IcomCivProfile` is declarative. A control stores an arbitrary-length command
 prefix followed by a typed value. This matters because CI-V does not have one
@@ -86,6 +113,9 @@ available official command references until tested against physical hardware.
 Captured protocol fixtures and parser tests are preferred over compatibility
 claims.
 
-See [`adding-icom-model.md`](adding-icom-model.md) for the extension checklist
-and [`supported-radios.md`](supported-radios.md) for exact manual editions and
-the boundary between implementation and validation.
+See [`adding-icom-model.md`](adding-icom-model.md) and
+[`adding-yaesu-model.md`](adding-yaesu-model.md) or
+[`adding-classic-yaesu-model.md`](adding-classic-yaesu-model.md) for extension
+checklists, and
+[`supported-radios.md`](supported-radios.md) for exact manual editions and the
+boundary between implementation and validation.

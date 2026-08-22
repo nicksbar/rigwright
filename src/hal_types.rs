@@ -68,6 +68,9 @@ pub enum ControlId {
     AfGain,
     RfGain,
     Squelch,
+    /// Normalized output-power level (`ControlValue::U8`, 0-255). Vendor
+    /// drivers convert this to their native unit; use a vendor-specific watts
+    /// method when an exact power setting is required.
     RfPower,
     Preamp,
     Attenuator,

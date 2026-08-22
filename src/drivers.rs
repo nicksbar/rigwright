@@ -12,18 +12,30 @@ use crate::hal::{Mode, NullRadio, Radio, RadioCapabilities};
 use crate::{
     dxlab::DxLabCommanderRadio,
     icom::civ_radio::IcomCiVRadio,
-    models::{find_model, IcomCivModel, Protocol},
-    protocol::{ascii_cat, yaesu_legacy_cat},
+    models::{find_model, IcomCivModel, Protocol, YaesuCatModel, YaesuLegacyModel},
+    protocol::ascii_cat,
     rigctld::RigctldRadio,
+    yaesu::YaesuCatRadio,
 };
 
+pub use crate::yaesu::LegacyYaesuRadio;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Compatibility selector for the original shared ASCII driver.
+///
+/// New Yaesu integrations should use `YaesuCatRadio`; the model factory does
+/// so automatically. This type remains because existing Kenwood and external
+/// callers still use the original API.
 pub enum AsciiCatFlavor {
     Yaesu,
     Kenwood,
 }
 
 #[derive(Debug, Clone)]
+/// Original minimal ASCII CAT driver retained for source compatibility.
+///
+/// It remains the current Kenwood backend. Modern Yaesu model selection uses
+/// the profile-backed `YaesuCatRadio` instead.
 pub struct AsciiCatRadio {
     port: String,
     baud_rate: u32,
@@ -71,48 +83,6 @@ impl AsciiCatRadio {
     fn command(&self, command: &str, parameter: Option<&str>, response: bool) -> Result<Vec<u8>> {
         self.transact(&ascii_cat::encode(command, parameter)?, response)
     }
-
-    /// Send a documented FTDX10 CAT set command.
-    pub fn ftdx10_set(&self, command: &str, parameters: &str) -> Result<()> {
-        self.transact(
-            &crate::yaesu::ftdx10::command(command, Some(parameters))?,
-            false,
-        )?;
-        Ok(())
-    }
-
-    pub fn ftdx10_read(&self, command: &str) -> Result<Vec<u8>> {
-        self.transact(&crate::yaesu::ftdx10::read(command)?, true)
-    }
-
-    pub fn set_ftdx10_scope(&self, command: Vec<u8>) -> Result<()> {
-        self.transact(&command, false)?;
-        Ok(())
-    }
-
-    /// Read the FTDX10 RF power setting (5-100 percent).
-    pub fn get_ftdx10_power_percent(&self) -> Result<u8> {
-        let response = self.transact(crate::yaesu::ftdx10::read_power_percent(), true)?;
-        crate::yaesu::ftdx10::parse_power_percent(&response)
-    }
-
-    /// Set the FTDX10 RF power setting (5-100 percent).
-    pub fn set_ftdx10_power_percent(&self, percent: u8) -> Result<()> {
-        self.transact(&crate::yaesu::ftdx10::set_power_percent(percent)?, false)?;
-        Ok(())
-    }
-
-    /// Read the FTDX10 split state.  A quick-split response is considered on.
-    pub fn get_ftdx10_split(&self) -> Result<bool> {
-        let response = self.transact(crate::yaesu::ftdx10::read_split(), true)?;
-        crate::yaesu::ftdx10::parse_split(&response)
-    }
-
-    /// Enable or disable FTDX10 split operation.
-    pub fn set_ftdx10_split(&self, enabled: bool) -> Result<()> {
-        self.transact(&crate::yaesu::ftdx10::set_split(enabled), false)?;
-        Ok(())
-    }
 }
 
 #[async_trait]
@@ -138,7 +108,11 @@ impl Radio for AsciiCatRadio {
     }
 
     async fn get_mode(&self) -> Result<Mode> {
-        let response = self.command("MD", None, true)?;
+        let response = self.command(
+            "MD",
+            (self.flavor == AsciiCatFlavor::Yaesu).then_some("0"),
+            true,
+        )?;
         let text = std::str::from_utf8(&response).context("CAT mode response is not ASCII")?;
         let raw = text
             .strip_prefix("MD")
@@ -188,8 +162,30 @@ impl Radio for AsciiCatRadio {
         }
         Ok(())
     }
+    async fn get_ptt(&self) -> Result<bool> {
+        match self.flavor {
+            AsciiCatFlavor::Yaesu => {
+                let response = self.command("TX", None, true)?;
+                match std::str::from_utf8(&response)
+                    .context("CAT PTT response is not ASCII")?
+                    .strip_prefix("TX")
+                    .and_then(|value| value.strip_suffix(';'))
+                {
+                    Some("0") => Ok(false),
+                    Some("1" | "2") => Ok(true),
+                    _ => bail!("unexpected Yaesu CAT PTT response"),
+                }
+            }
+            AsciiCatFlavor::Kenwood => {
+                bail!("reading PTT is not implemented for generic Kenwood CAT")
+            }
+        }
+    }
     fn capabilities(&self) -> RadioCapabilities {
-        core_capabilities()
+        RadioCapabilities {
+            can_get_ptt: self.flavor == AsciiCatFlavor::Yaesu,
+            ..core_capabilities()
+        }
     }
 }
 
@@ -228,88 +224,6 @@ fn decode_ascii_mode(flavor: AsciiCatFlavor, raw: &str) -> Result<Mode> {
     Ok(mode)
 }
 
-#[derive(Debug, Clone)]
-pub struct LegacyYaesuRadio {
-    port: String,
-    baud_rate: u32,
-}
-
-impl LegacyYaesuRadio {
-    pub fn new(port: impl Into<String>, baud_rate: u32) -> Self {
-        Self {
-            port: port.into(),
-            baud_rate,
-        }
-    }
-    fn transact(&self, frame: [u8; 5], response_len: usize) -> Result<Vec<u8>> {
-        if self.port.trim().is_empty() {
-            bail!("a serial port is required for legacy Yaesu CAT");
-        }
-        let mut port = serialport::new(&self.port, self.baud_rate)
-            .timeout(Duration::from_millis(750))
-            .open()
-            .with_context(|| format!("failed to open legacy CAT serial port {}", self.port))?;
-        port.write_all(&frame)
-            .context("failed to write legacy CAT command")?;
-        port.flush().context("failed to flush legacy CAT command")?;
-        let mut response = vec![0_u8; response_len];
-        if response_len > 0 {
-            port.read_exact(&mut response)
-                .context("failed to read legacy CAT response")?;
-        }
-        Ok(response)
-    }
-}
-
-#[async_trait]
-impl Radio for LegacyYaesuRadio {
-    async fn get_frequency_hz(&self) -> Result<u64> {
-        Ok(yaesu_legacy_cat::decode_frequency_and_mode(
-            &self.transact(yaesu_legacy_cat::read_frequency_and_mode(), 5)?,
-        )?
-        .frequency_hz)
-    }
-    async fn set_frequency_hz(&self, hz: u64) -> Result<()> {
-        self.transact(yaesu_legacy_cat::set_frequency(hz)?, 0)?;
-        Ok(())
-    }
-    async fn get_mode(&self) -> Result<Mode> {
-        let mode = yaesu_legacy_cat::decode_frequency_and_mode(
-            &self.transact(yaesu_legacy_cat::read_frequency_and_mode(), 5)?,
-        )?
-        .mode;
-        Ok(match mode {
-            yaesu_legacy_cat::LegacyMode::Lsb => Mode::Lsb,
-            yaesu_legacy_cat::LegacyMode::Usb => Mode::Usb,
-            yaesu_legacy_cat::LegacyMode::Cw | yaesu_legacy_cat::LegacyMode::CwReverse => Mode::Cw,
-            _ => Mode::Data,
-        })
-    }
-    async fn set_mode(&self, mode: Mode) -> Result<()> {
-        let mode = match mode {
-            Mode::Lsb => yaesu_legacy_cat::LegacyMode::Lsb,
-            Mode::Usb => yaesu_legacy_cat::LegacyMode::Usb,
-            Mode::Cw => yaesu_legacy_cat::LegacyMode::Cw,
-            Mode::Data => yaesu_legacy_cat::LegacyMode::Digital,
-            Mode::Am => yaesu_legacy_cat::LegacyMode::Am,
-            Mode::Fm => yaesu_legacy_cat::LegacyMode::Fm,
-            Mode::Wfm => bail!("WFM is not supported by legacy Yaesu CAT"),
-            Mode::Rtty => yaesu_legacy_cat::LegacyMode::Digital,
-            Mode::CwReverse => yaesu_legacy_cat::LegacyMode::CwReverse,
-            Mode::RttyReverse => yaesu_legacy_cat::LegacyMode::Digital,
-        };
-        self.transact(yaesu_legacy_cat::set_mode(mode), 0)?;
-        Ok(())
-    }
-    async fn set_ptt(&self, enabled: bool) -> Result<()> {
-        self.transact(yaesu_legacy_cat::set_ptt(enabled), 0)?;
-        Ok(())
-    }
-    fn capabilities(&self) -> RadioCapabilities {
-        core_capabilities()
-    }
-}
-
 fn core_capabilities() -> RadioCapabilities {
     RadioCapabilities {
         can_get_frequency: true,
@@ -325,6 +239,7 @@ fn core_capabilities() -> RadioCapabilities {
 #[derive(Clone)]
 pub enum ConfiguredRadio {
     Icom(IcomCiVRadio),
+    Yaesu(YaesuCatRadio),
     Ascii(AsciiCatRadio),
     DxLab(DxLabCommanderRadio),
     LegacyYaesu(LegacyYaesuRadio),
@@ -336,6 +251,18 @@ impl ConfiguredRadio {
     pub fn as_icom(&self) -> Option<&IcomCiVRadio> {
         match self {
             Self::Icom(radio) => Some(radio),
+            _ => None,
+        }
+    }
+    pub fn as_yaesu(&self) -> Option<&YaesuCatRadio> {
+        match self {
+            Self::Yaesu(radio) => Some(radio),
+            _ => None,
+        }
+    }
+    pub fn as_legacy_yaesu(&self) -> Option<&LegacyYaesuRadio> {
+        match self {
+            Self::LegacyYaesu(radio) => Some(radio),
             _ => None,
         }
     }
@@ -359,6 +286,7 @@ impl Radio for ConfiguredRadio {
     async fn get_frequency_hz(&self) -> Result<u64> {
         match self {
             Self::Icom(r) => r.get_frequency_hz().await,
+            Self::Yaesu(r) => r.get_frequency_hz().await,
             Self::Ascii(r) => r.get_frequency_hz().await,
             Self::DxLab(r) => r.get_frequency_hz().await,
             Self::LegacyYaesu(r) => r.get_frequency_hz().await,
@@ -369,6 +297,7 @@ impl Radio for ConfiguredRadio {
     async fn set_frequency_hz(&self, hz: u64) -> Result<()> {
         match self {
             Self::Icom(r) => r.set_frequency_hz(hz).await,
+            Self::Yaesu(r) => r.set_frequency_hz(hz).await,
             Self::Ascii(r) => r.set_frequency_hz(hz).await,
             Self::DxLab(r) => r.set_frequency_hz(hz).await,
             Self::LegacyYaesu(r) => r.set_frequency_hz(hz).await,
@@ -379,6 +308,7 @@ impl Radio for ConfiguredRadio {
     async fn get_mode(&self) -> Result<Mode> {
         match self {
             Self::Icom(r) => Radio::get_mode(r).await,
+            Self::Yaesu(r) => r.get_mode().await,
             Self::Ascii(r) => r.get_mode().await,
             Self::DxLab(r) => r.get_mode().await,
             Self::LegacyYaesu(r) => r.get_mode().await,
@@ -389,6 +319,7 @@ impl Radio for ConfiguredRadio {
     async fn set_mode(&self, mode: Mode) -> Result<()> {
         match self {
             Self::Icom(r) => Radio::set_mode(r, mode).await,
+            Self::Yaesu(r) => r.set_mode(mode).await,
             Self::Ascii(r) => r.set_mode(mode).await,
             Self::DxLab(r) => r.set_mode(mode).await,
             Self::LegacyYaesu(r) => r.set_mode(mode).await,
@@ -399,6 +330,7 @@ impl Radio for ConfiguredRadio {
     async fn set_ptt(&self, enabled: bool) -> Result<()> {
         match self {
             Self::Icom(r) => r.set_ptt(enabled).await,
+            Self::Yaesu(r) => r.set_ptt(enabled).await,
             Self::Ascii(r) => r.set_ptt(enabled).await,
             Self::DxLab(r) => r.set_ptt(enabled).await,
             Self::LegacyYaesu(r) => r.set_ptt(enabled).await,
@@ -409,6 +341,7 @@ impl Radio for ConfiguredRadio {
     async fn get_ptt(&self) -> Result<bool> {
         match self {
             Self::Icom(r) => r.get_ptt().await,
+            Self::Yaesu(r) => r.get_ptt().await,
             Self::Ascii(r) => r.get_ptt().await,
             Self::DxLab(r) => r.get_ptt().await,
             Self::LegacyYaesu(r) => r.get_ptt().await,
@@ -419,24 +352,28 @@ impl Radio for ConfiguredRadio {
     async fn protocol_write_read(&self, request: &[u8]) -> Result<Vec<u8>> {
         match self {
             Self::Icom(r) => r.protocol_write_read(request).await,
+            Self::Yaesu(r) => r.protocol_write_read(request).await,
             _ => bail!("raw protocol access is not available for this driver"),
         }
     }
     async fn get_control(&self, id: crate::ControlId) -> Result<Option<crate::ControlValue>> {
         match self {
             Self::Icom(r) => r.get_control(id).await,
+            Self::Yaesu(r) => r.get_control(id).await,
             _ => Ok(None),
         }
     }
     async fn set_control(&self, id: crate::ControlId, value: crate::ControlValue) -> Result<()> {
         match self {
             Self::Icom(r) => r.set_control(id, value).await,
+            Self::Yaesu(r) => r.set_control(id, value).await,
             _ => bail!("control {id:?} is not available for this driver"),
         }
     }
     fn capabilities(&self) -> RadioCapabilities {
         match self {
             Self::Icom(r) => r.capabilities(),
+            Self::Yaesu(r) => r.capabilities(),
             Self::Ascii(r) => r.capabilities(),
             Self::DxLab(r) => r.capabilities(),
             Self::LegacyYaesu(r) => r.capabilities(),
@@ -493,13 +430,19 @@ pub fn open_model_with_radio_address(
             ))
         }
         Protocol::YaesuCat => {
-            ConfiguredRadio::Ascii(AsciiCatRadio::new(port, baud_rate, AsciiCatFlavor::Yaesu))
+            let model = YaesuCatModel::from_model_name(profile.model).with_context(|| {
+                format!("unsupported modern Yaesu CAT model: {}", profile.model)
+            })?;
+            ConfiguredRadio::Yaesu(YaesuCatRadio::new_for_model(model, port, baud_rate)?)
         }
         Protocol::KenwoodCat => {
             ConfiguredRadio::Ascii(AsciiCatRadio::new(port, baud_rate, AsciiCatFlavor::Kenwood))
         }
         Protocol::YaesuLegacyCat => {
-            ConfiguredRadio::LegacyYaesu(LegacyYaesuRadio::new(port, baud_rate))
+            let model = YaesuLegacyModel::from_model_name(profile.model).with_context(|| {
+                format!("unsupported classic Yaesu CAT model: {}", profile.model)
+            })?;
+            ConfiguredRadio::LegacyYaesu(LegacyYaesuRadio::new_for_model(model, port, baud_rate)?)
         }
     })
 }
@@ -515,7 +458,7 @@ mod tests {
         ));
         assert!(matches!(
             open_model("FTDX101D", "/dev/null", 38_400, 0xE0).unwrap(),
-            ConfiguredRadio::Ascii(_)
+            ConfiguredRadio::Yaesu(_)
         ));
         assert!(matches!(
             open_model("TS-590SG", "/dev/null", 115_200, 0xE0).unwrap(),
@@ -530,6 +473,25 @@ mod tests {
         let icom = radio.as_icom().expect("Icom driver");
         assert_eq!(icom.controller_address(), 0xE0);
         assert_eq!(icom.radio_address(), 0x95);
+    }
+    #[test]
+    fn factory_selects_the_exact_yaesu_profile_and_validates_baud() {
+        let radio = open_model("FTDX10", "/dev/null", 38_400, 0xE0).unwrap();
+        assert_eq!(
+            radio.as_yaesu().and_then(YaesuCatRadio::model),
+            Some(YaesuCatModel::Ftdx10)
+        );
+        assert!(open_model("FTDX10", "/dev/null", 115_200, 0xE0).is_err());
+        assert!(open_model("FT-710", "/dev/null", 115_200, 0xE0).is_ok());
+    }
+    #[test]
+    fn factory_selects_the_exact_classic_yaesu_profile() {
+        let radio = open_model("FT-857D", "/dev/null", 9_600, 0xE0).unwrap();
+        assert_eq!(
+            radio.as_legacy_yaesu().and_then(LegacyYaesuRadio::model),
+            Some(YaesuLegacyModel::Ft857D)
+        );
+        assert!(open_model("FT-857D", "/dev/null", 19_200, 0xE0).is_err());
     }
     #[test]
     fn decodes_common_ascii_modes() {

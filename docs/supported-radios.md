@@ -31,11 +31,40 @@ documented command/scope ranges. They are not a promise that every frequency is
 transmittable, nor a substitute for region, band-plan, license, or radio
 configuration checks.
 
-The shared Yaesu and Kenwood codec only guarantees safe framing. Each model
-still needs captured-response fixtures, mode mapping, capability gating, serial
-integration, and physical-radio validation before promotion to supported.
+## Modern Yaesu manual audit
 
-Legacy Yaesu models use a separate five-byte binary protocol. Rigwright
-currently implements frequency, mode, PTT, split, and frequency/mode status
-frames for that family. Model-specific serial integration and hardware fixtures
-remain pending.
+Modern Yaesu profiles were checked against the official CAT manuals in the
+workspace. All remain framework-level until exercised against physical radios.
+
+| Model | Manual edition used | Profile details checked |
+|---|---|---|
+| FT-710 | `FT-710_CAT_OM_ENG_2306-C.pdf`, Jun. 2023 | ID `0800`; `FA` 9-digit 0.03-75 MHz range; receiver-qualified `MD`; `TX`; `PC` 5-100 W; `ST`; CAT-1/CAT-2 rates through 115200 |
+| FTDX10 | `FTDX10_CAT_OM_ENG_2308-F.pdf`, Aug. 2023 | ID `0761`; `FA` 9-digit 0.03-75 MHz range; `MD0`; `TX0/1/2`; `PC` 5-100 W; `ST0/1/2`; 4800-38400 baud |
+| FTDX101D | `FTDX101MP_D_CAT_OM_ENG_2308-L.pdf`, Aug. 2023 | ID `0681`; `FA` 9-digit 0.03-75 MHz range; `MD`; `TX`; `PC` 5-100 W; `ST`; 4800-38400 baud |
+| FTDX101MP | `FTDX101MP_D_CAT_OM_ENG_2308-L.pdf`, Aug. 2023 | ID `0682`; common modern commands; distinct `PC` 5-200 W maximum |
+| FT-991A | `FT-991A_CAT_OM_ENG_1711-D.pdf`, Nov. 2017 | ID `0670`; `FA` 9-digit 0.03-470 MHz range; model-specific `MD` table including C4FM; `TX`; `PC` 5-100 W; no `ST` profile; 4800-38400 baud |
+
+The shared modern driver implements persistent serial transport, response
+matching in the presence of auto-information frames, frequency, mode, readable
+PTT, raw queries, RF power, and profile-gated split. The profile mode table
+chooses DATA-U for the protocol-neutral `Mode::Data`; other DATA variants still
+decode as data because the root HAL intentionally has a coarser mode type.
+
+## Classic Yaesu manual audit
+
+Classic Yaesu models use a separate five-byte binary protocol. The profiled
+driver implements persistent 8N2 serial transport, documented frequency ranges
+and writable modes, frequency/mode status, readable and writable PTT, split,
+RX/TX meters and flags, raw commands, PTT state verification, and reconnect
+behavior.
+
+| Model | Manual used | Profile details checked |
+|---|---|---|
+| FT-817ND | `FT-817ND_OM_ENG_E13771011.pdf` | 17-opcode table; 8N2; 4800/9600/38400 baud; model receive ranges; mode/status codes; `E7`, `F7`, `03`; active-low PTT/split; power commands intentionally not exposed |
+| FT-818 | `FT-818ND_OM_ENG_E13772004_2003u-ES-1.pdf` | Same five-byte family; distinct 0.1-56 MHz low receive range; status layouts; baud rates; power commands intentionally not exposed |
+| FT-857D | `FT-857D_OM_ENG_EH007M108.pdf` | CAT/LINEAR jack; 8N2; segmented receive ranges; FM-N write code; WFM/CW-N status codes; RX/TX bit layouts |
+| FT-897D | `FT-897_OpMan.pdf` | Available FT-897 family manual; CAT/LINEAR menu; segmented receive ranges; FM-N and WFM codes; RX/TX bit layouts |
+
+These remain framework-level. In particular, the available FT-897 manual is a
+family reference rather than proof of FT-897D hardware behavior, and classic
+CAT has no model ID query with which to detect an incorrect operator selection.

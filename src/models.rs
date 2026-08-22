@@ -51,6 +51,28 @@ pub enum IcomCivModel {
     Ic9700,
 }
 
+/// Modern, semicolon-terminated Yaesu ASCII CAT models.
+///
+/// Older five-byte binary CAT radios deliberately do not appear here; their
+/// framing and command semantics are handled by `YaesuLegacyCat`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum YaesuCatModel {
+    Ft710,
+    Ft991A,
+    Ftdx10,
+    Ftdx101D,
+    Ftdx101Mp,
+}
+
+/// Classic Yaesu radios using fixed five-byte binary CAT commands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum YaesuLegacyModel {
+    Ft817Nd,
+    Ft818,
+    Ft857D,
+    Ft897D,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IcomScopeGeometry {
     pub divisions: usize,
@@ -77,6 +99,50 @@ impl IcomCivModel {
             "IC-7300" => Some(Self::Ic7300),
             "IC-7610" => Some(Self::Ic7610),
             "IC-9700" => Some(Self::Ic9700),
+            _ => None,
+        }
+    }
+}
+
+impl YaesuCatModel {
+    pub fn model_name(self) -> &'static str {
+        match self {
+            Self::Ft710 => "FT-710",
+            Self::Ft991A => "FT-991A",
+            Self::Ftdx10 => "FTDX10",
+            Self::Ftdx101D => "FTDX101D",
+            Self::Ftdx101Mp => "FTDX101MP",
+        }
+    }
+
+    pub fn from_model_name(model: &str) -> Option<Self> {
+        match model.to_ascii_uppercase().as_str() {
+            "FT-710" | "FT710" => Some(Self::Ft710),
+            "FT-991A" | "FT991A" => Some(Self::Ft991A),
+            "FTDX10" | "FT-DX10" => Some(Self::Ftdx10),
+            "FTDX101D" | "FT-DX101D" => Some(Self::Ftdx101D),
+            "FTDX101MP" | "FT-DX101MP" => Some(Self::Ftdx101Mp),
+            _ => None,
+        }
+    }
+}
+
+impl YaesuLegacyModel {
+    pub fn model_name(self) -> &'static str {
+        match self {
+            Self::Ft817Nd => "FT-817ND",
+            Self::Ft818 => "FT-818",
+            Self::Ft857D => "FT-857D",
+            Self::Ft897D => "FT-897D",
+        }
+    }
+
+    pub fn from_model_name(model: &str) -> Option<Self> {
+        match model.to_ascii_uppercase().as_str() {
+            "FT-817ND" | "FT817ND" => Some(Self::Ft817Nd),
+            "FT-818" | "FT818" | "FT-818ND" | "FT818ND" => Some(Self::Ft818),
+            "FT-857D" | "FT857D" => Some(Self::Ft857D),
+            "FT-897D" | "FT897D" | "FT-897" | "FT897" => Some(Self::Ft897D),
             _ => None,
         }
     }
@@ -188,10 +254,6 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         model: "FTDX10",
         protocol: Protocol::YaesuCat,
         support: SupportLevel::Framework,
-        // The CAT manual documents scope configuration (`SS`), but not a
-        // spectrum sample transport or waveform frame format. Do not claim
-        // IC-7300-style spectrum streaming until that transport is captured
-        // and implemented.
         capabilities: HF_BASE,
     },
     RadioModelProfile {
@@ -296,6 +358,40 @@ mod tests {
             assert_eq!(
                 default_address,
                 crate::icom::profile::profile_for_model(model).default_address
+            );
+        }
+    }
+
+    #[test]
+    fn modern_yaesu_catalog_models_have_driver_profiles() {
+        for catalog in POPULAR_RADIOS
+            .iter()
+            .filter(|profile| profile.protocol == Protocol::YaesuCat)
+        {
+            let model =
+                YaesuCatModel::from_model_name(catalog.model).expect("known modern Yaesu model");
+            assert_eq!(
+                catalog.model,
+                crate::yaesu::profile::profile_for_model(model)
+                    .model
+                    .model_name()
+            );
+        }
+    }
+
+    #[test]
+    fn classic_yaesu_catalog_models_have_driver_profiles() {
+        for catalog in POPULAR_RADIOS
+            .iter()
+            .filter(|profile| profile.protocol == Protocol::YaesuLegacyCat)
+        {
+            let model = YaesuLegacyModel::from_model_name(catalog.model)
+                .expect("known classic Yaesu model");
+            assert_eq!(
+                catalog.model,
+                crate::yaesu::legacy_profile::profile_for_model(model)
+                    .model
+                    .model_name()
             );
         }
     }
