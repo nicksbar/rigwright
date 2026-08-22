@@ -6,8 +6,8 @@ evolve independently and be embedded in other amateur-radio applications.
 
 ## What works today
 
-- A small async `Radio` interface for frequency, mode, and PTT.
-- An extensible `RadioHal` interface with typed controls and capability discovery.
+- One async, protocol-neutral `Radio` interface for frequency, mode, PTT,
+  typed controls, raw-protocol access, and capability discovery.
 - Native Icom CI-V over serial, developed and exercised with the IC-7300.
 - Serial-port discovery, CI-V framing and parsing, spectrum-scope data, and raw
   protocol access.
@@ -15,15 +15,20 @@ evolve independently and be embedded in other amateur-radio applications.
   complete 475-bin sweep, with documented center-span and fixed-edge controls.
 - Captured-frame unit tests and a direct CI-V probe example.
 
-Only the IC-7300 is regularly hardware-tested. Other Icom models may respond to
-parts of the driver but are not yet claimed as validated. Common frequency,
-mode, and PTT drivers exist for the cataloged Yaesu and Kenwood radios and
-remain experimental pending physical-radio testing. Hamlib, network transports,
-and a mock transport are future work.
+Only the IC-7300 is regularly hardware-tested. Other profiles are not yet
+claimed as hardware validated. Modern Yaesu models use a profile-driven ASCII
+CAT engine with model IDs, ranges, mode maps, readable PTT, RF power, and split
+gating. Classic Yaesu models use a separate profile-driven five-byte 8N2 engine
+with readable PTT, split, meters, and status. Kenwood models use a
+profile-driven persistent PC-control engine with exact IDs, command families,
+ranges, modes, power, split, and meter layouts. Hamlib `rigctld`, DX Lab
+Commander, and an in-memory mock backend are also available.
 
 The source tree follows the public API: protocol-neutral types live in
 `hal.rs`, `controls.rs`, and `models.rs`; shared framing lives under `protocol/`;
 and vendor/model profiles live under `icom/`, `yaesu/`, and `kenwood/`. See
+[`docs/architecture.md`](docs/architecture.md) for the profile-driven design,
+override rules, and validation policy. See
 [`docs/supported-radios.md`](docs/supported-radios.md) for maturity labels and
 official command-manual sources.
 
@@ -38,9 +43,9 @@ rigwright = { git = "https://github.com/nicksbar/rigwright" }
 use rigwright::{IcomCiVRadio, Radio};
 
 # async fn example() -> anyhow::Result<()> {
-let radio = IcomCiVRadio::new("/dev/ttyUSB0", 115_200, 0xE0);
-radio.set_frequency(14_074_000).await?;
-radio.ptt(false).await?;
+let radio = IcomCiVRadio::new_generic("/dev/ttyUSB0", 115_200, 0xE0, 0x94);
+radio.set_frequency_hz(14_074_000).await?;
+radio.set_ptt(false).await?;
 # Ok(())
 # }
 ```
@@ -48,12 +53,95 @@ radio.ptt(false).await?;
 Run the hardware probe with `cargo run --example ci_v_probe`. It currently uses
 `/dev/ttyUSB0` at 115200 baud; inspect the example before transmitting commands.
 
+When the model is known, prefer a profile-backed constructor so Rigwright can
+validate documented ranges, modes, controls, and scope geometry:
+
+```rust,no_run
+use rigwright::{models::IcomCivModel, IcomCiVRadio};
+
+let radio = IcomCiVRadio::new_for_model_default_address(
+    IcomCivModel::Ic7300,
+    "/dev/ttyUSB0",
+    115_200,
+    0xE0,
+);
+assert_eq!(radio.radio_address(), 0x94);
+```
+
+Use `new_for_model` when the operator changed the radio's CI-V address. The
+model-neutral constructor intentionally cannot expose profile-only controls or
+decode a model-specific spectrum stream.
+
+Modern Yaesu radios follow the same profile-backed pattern:
+
+```rust,no_run
+use rigwright::{Radio, YaesuCatModel, YaesuCatRadio};
+
+# async fn example() -> anyhow::Result<()> {
+let radio = YaesuCatRadio::new_for_model(
+    YaesuCatModel::Ftdx10,
+    "/dev/ttyUSB0",
+    38_400,
+)?;
+radio.verify_model()?;
+radio.set_frequency_hz(14_074_000).await?;
+radio.set_ptt(false).await?;
+# Ok(())
+# }
+```
+
+Use the Enhanced virtual COM port for FTDX10 CAT. The Standard port is for
+PTT/keying/digital-mode signals, not frequency and mode CAT commands.
+
+For a read-only identity/frequency/mode/PTT check, run
+`cargo run --example yaesu_probe -- FTDX10 /dev/ttyUSB0 38400`. Match the baud
+rate and one-stop-bit setting in the radio's CAT menu. No example command keys
+the transmitter.
+
+For an older FT-817ND, FT-818, FT-857D, or FT-897D, set the radio's CAT menu to
+4800, 9600, or 38400 baud and use the documented CT-62-compatible serial
+interface. The driver configures 8N2 automatically. A read-only check is:
+
+```text
+cargo run --example classic_yaesu_probe -- FT-857D /dev/ttyUSB0 4800
+```
+
+The classic protocol has no identification command, so this probe can confirm
+responses but cannot prove that the configured model name is correct.
+
+Kenwood TS-590SG, TS-890S, and TS-2000 use the same model-backed factory path.
+Match the radio's PC-control baud menu; the driver automatically uses two stop
+bits at 4800 baud and one stop bit at higher rates. A read-only identity and
+status probe is:
+
+```text
+cargo run --example kenwood_probe -- TS-590SG /dev/ttyUSB0 115200
+```
+
+The probe never sends `TX`. TS-590SG and TS-2000 PTT state is read from `IF`;
+TS-890S does not advertise readable PTT because its documented `TX` command is
+set/auto-information only.
+
 ## Design rules
 
 - Keep the app-facing HAL protocol-neutral.
 - Offer typed common controls plus explicit vendor-protocol escape hatches.
 - Back claimed protocol behavior with captured-frame tests.
 - Never infer broad radio compatibility from one tested model.
+- Keep protocol-neutral HAL types independent of vendor drivers.
+- Put model defaults and documented differences in model profiles; generic
+  protocol drivers execute those profiles.
+- Treat CI-V addresses as configurable values with model defaults, never as
+  immutable application constants.
+- Keep scope, waveform, I/Q, satellite, and dual-receiver features optional
+  until their wire formats are implemented and tested.
+
+See [`docs/adding-icom-model.md`](docs/adding-icom-model.md) or
+[`docs/adding-yaesu-model.md`](docs/adding-yaesu-model.md) before adding a modern
+profile. Classic five-byte models use
+[`docs/adding-classic-yaesu-model.md`](docs/adding-classic-yaesu-model.md).
+Kenwood profiles use
+[`docs/adding-kenwood-model.md`](docs/adding-kenwood-model.md).
 
 ## License
 

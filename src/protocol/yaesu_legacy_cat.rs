@@ -12,6 +12,12 @@ pub enum LegacyMode {
     Fm,
     Digital,
     Packet,
+    /// Receive-status code documented for broadcast FM.
+    Wfm,
+    /// Narrow FM, documented by FT-857D/FT-897D.
+    FmNarrow,
+    /// Narrow CW receive-status code documented by FT-857D.
+    CwNarrow,
 }
 
 impl LegacyMode {
@@ -25,6 +31,9 @@ impl LegacyMode {
             Self::Fm => 0x08,
             Self::Digital => 0x0A,
             Self::Packet => 0x0C,
+            Self::Wfm => 0x06,
+            Self::FmNarrow => 0x88,
+            Self::CwNarrow => 0x82,
         }
     }
 
@@ -38,6 +47,9 @@ impl LegacyMode {
             0x08 => Self::Fm,
             0x0A => Self::Digital,
             0x0C => Self::Packet,
+            0x06 => Self::Wfm,
+            0x88 => Self::FmNarrow,
+            0x82 => Self::CwNarrow,
             _ => return None,
         })
     }
@@ -49,8 +61,34 @@ pub struct FrequencyModeStatus {
     pub mode: LegacyMode,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RxStatus {
+    /// Four-bit S-meter value reported by the radio.
+    pub s_meter: u8,
+    pub discriminator_centered: bool,
+    pub tone_code_matched: bool,
+    pub squelch_open: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TxStatus {
+    /// Four-bit power-meter value reported by the radio.
+    pub power_meter: u8,
+    pub split_enabled: bool,
+    pub high_swr: bool,
+    pub transmitting: bool,
+}
+
 pub const fn read_frequency_and_mode() -> [u8; 5] {
     [0, 0, 0, 0, 0x03]
+}
+
+pub const fn read_rx_status() -> [u8; 5] {
+    [0, 0, 0, 0, 0xE7]
+}
+
+pub const fn read_tx_status() -> [u8; 5] {
+    [0, 0, 0, 0, 0xF7]
 }
 
 pub fn set_frequency(hz: u64) -> Result<[u8; 5]> {
@@ -107,6 +145,33 @@ pub fn decode_frequency_and_mode(response: &[u8]) -> Result<FrequencyModeStatus>
     })
 }
 
+pub fn decode_rx_status(response: &[u8]) -> Result<RxStatus> {
+    let value = one_byte_status(response, "RX")?;
+    Ok(RxStatus {
+        s_meter: value & 0x0F,
+        discriminator_centered: value & 0x20 == 0,
+        tone_code_matched: value & 0x40 == 0,
+        squelch_open: value & 0x80 == 0,
+    })
+}
+
+pub fn decode_tx_status(response: &[u8]) -> Result<TxStatus> {
+    let value = one_byte_status(response, "TX")?;
+    Ok(TxStatus {
+        power_meter: value & 0x0F,
+        split_enabled: value & 0x20 == 0,
+        high_swr: value & 0x40 != 0,
+        transmitting: value & 0x80 == 0,
+    })
+}
+
+fn one_byte_status(response: &[u8], name: &str) -> Result<u8> {
+    if response.len() != 1 {
+        bail!("legacy Yaesu {name} status response must contain one byte");
+    }
+    Ok(response[0])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,6 +191,8 @@ mod tests {
         assert_eq!(set_ptt(false), [0, 0, 0, 0, 0x88]);
         assert_eq!(set_split(true), [0, 0, 0, 0, 0x02]);
         assert_eq!(set_split(false), [0, 0, 0, 0, 0x82]);
+        assert_eq!(read_rx_status(), [0, 0, 0, 0, 0xE7]);
+        assert_eq!(read_tx_status(), [0, 0, 0, 0, 0xF7]);
     }
 
     #[test]
@@ -139,5 +206,37 @@ mod tests {
     fn rejects_lossy_frequency_and_invalid_bcd() {
         assert!(set_frequency(14_074_005).is_err());
         assert!(decode_frequency_and_mode(&[0x01, 0x4A, 0x74, 0x00, 0x01]).is_err());
+    }
+
+    #[test]
+    fn decodes_documented_rx_and_tx_status_bits() {
+        let rx = decode_rx_status(&[0b0000_1011]).unwrap();
+        assert_eq!(rx.s_meter, 11);
+        assert!(rx.discriminator_centered);
+        assert!(rx.tone_code_matched);
+        assert!(rx.squelch_open);
+
+        let tx = decode_tx_status(&[0b0100_0110]).unwrap();
+        assert_eq!(tx.power_meter, 6);
+        assert!(tx.split_enabled);
+        assert!(tx.high_swr);
+        assert!(tx.transmitting);
+
+        let idle_split_off = decode_tx_status(&[0b1010_0000]).unwrap();
+        assert!(!idle_split_off.transmitting);
+        assert!(!idle_split_off.split_enabled);
+        assert!(decode_tx_status(&[]).is_err());
+    }
+
+    #[test]
+    fn decodes_read_only_and_narrow_mode_codes() {
+        assert_eq!(
+            decode_frequency_and_mode(&[0, 0, 0, 0, 0x06]).unwrap().mode,
+            LegacyMode::Wfm
+        );
+        assert_eq!(
+            decode_frequency_and_mode(&[0, 0, 0, 0, 0x88]).unwrap().mode,
+            LegacyMode::FmNarrow
+        );
     }
 }

@@ -1,12 +1,19 @@
-//! Kenwood PC-control framing and common commands.
+//! Kenwood PC-control support.
+//!
+//! [`KenwoodCatRadio`] owns the common persistent transport. Declarative
+//! profiles describe command-family differences between individual models.
 
 use anyhow::Result;
 
 use crate::protocol::ascii_cat;
 
+pub mod cat_radio;
+pub mod profile;
 pub mod ts2000;
 pub mod ts590sg;
 pub mod ts890s;
+
+pub use cat_radio::KenwoodCatRadio;
 
 pub fn read_frequency_a() -> Result<Vec<u8>> {
     ascii_cat::encode("FA", None)

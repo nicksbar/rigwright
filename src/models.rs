@@ -7,12 +7,35 @@ pub enum Manufacturer {
     Kenwood,
 }
 
+impl Manufacturer {
+    pub const ALL: [Self; 3] = [Self::Icom, Self::Yaesu, Self::Kenwood];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Icom => "Icom",
+            Self::Yaesu => "Yaesu",
+            Self::Kenwood => "Kenwood",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Protocol {
     IcomCiV { default_address: u8 },
     YaesuCat,
     YaesuLegacyCat,
     KenwoodCat,
+}
+
+impl Protocol {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::IcomCiV { .. } => "Icom CI-V",
+            Self::YaesuCat => "Yaesu CAT",
+            Self::YaesuLegacyCat => "Classic Yaesu CAT",
+            Self::KenwoodCat => "Kenwood PC control",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +46,26 @@ pub enum SupportLevel {
     Framework,
 }
 
+impl SupportLevel {
+    pub const fn short_label(self) -> &'static str {
+        match self {
+            Self::HardwareValidated => "hardware validated",
+            Self::Framework => "experimental",
+        }
+    }
+
+    pub const fn detail_label(self) -> &'static str {
+        match self {
+            Self::HardwareValidated => "hardware validated",
+            Self::Framework => "experimental - hardware validation pending",
+        }
+    }
+}
+
+/// Broad hardware/category metadata for catalog filtering.
+///
+/// Use [`RadioModelProfile::driver_capabilities`] and
+/// [`RadioModelProfile::supports_control`] for exact implemented HAL behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModelCapabilities {
     pub hf: bool,
@@ -41,6 +84,223 @@ pub struct RadioModelProfile {
     pub protocol: Protocol,
     pub support: SupportLevel,
     pub capabilities: ModelCapabilities,
+}
+
+impl RadioModelProfile {
+    /// Root-HAL operations implemented by the selected driver profile.
+    pub fn driver_capabilities(self) -> crate::RadioCapabilities {
+        let can_get_ptt = match self.protocol {
+            Protocol::KenwoodCat => KenwoodCatModel::from_model_name(self.model)
+                .map(crate::kenwood::profile::profile_for_model)
+                .is_some_and(|profile| profile.supports_if_status),
+            _ => true,
+        };
+        crate::RadioCapabilities {
+            can_get_frequency: true,
+            can_set_frequency: true,
+            can_get_mode: true,
+            can_set_mode: true,
+            can_get_ptt,
+            can_set_ptt: true,
+            can_raw_protocol: true,
+        }
+    }
+
+    /// Preferred starting baud derived from the selected driver profile.
+    /// Operators must still match the value configured on the radio.
+    pub fn preferred_baud_rate(self) -> u32 {
+        match self.protocol {
+            Protocol::IcomCiV { .. } => 115_200,
+            Protocol::YaesuCat => YaesuCatModel::from_model_name(self.model)
+                .map(crate::yaesu::profile::profile_for_model)
+                .and_then(|profile| profile.baud_rates.last().copied())
+                .unwrap_or(38_400),
+            Protocol::YaesuLegacyCat => YaesuLegacyModel::from_model_name(self.model)
+                .map(crate::yaesu::legacy_profile::profile_for_model)
+                .and_then(|profile| profile.baud_rates.first().copied())
+                .unwrap_or(4_800),
+            Protocol::KenwoodCat => KenwoodCatModel::from_model_name(self.model)
+                .map(crate::kenwood::profile::profile_for_model)
+                .and_then(|profile| profile.baud_rates.last().copied())
+                .unwrap_or(9_600),
+        }
+    }
+
+    /// Whether the selected model's implemented driver exposes a typed HAL
+    /// control. This describes Rigwright behavior, not every manual feature.
+    pub fn supports_control(self, id: crate::ControlId) -> bool {
+        use crate::ControlId;
+
+        match self.protocol {
+            Protocol::IcomCiV { .. } => {
+                let Some(model) = IcomCivModel::from_model_name(self.model) else {
+                    return false;
+                };
+                let profile = crate::icom::profile::profile_for_model(model);
+                profile.control(id).is_some()
+                    || matches!(
+                        id,
+                        ControlId::DataMode
+                            | ControlId::Filter
+                            | ControlId::RawCiV
+                            | ControlId::Vfo
+                    )
+                    || (id == ControlId::MainSub && profile.main_sub.is_some())
+                    || (id == ControlId::ExternalPreamp && profile.external_preamp.is_some())
+            }
+            Protocol::YaesuCat => {
+                let Some(model) = YaesuCatModel::from_model_name(self.model) else {
+                    return false;
+                };
+                let profile = crate::yaesu::profile::profile_for_model(model);
+                matches!(id, ControlId::RfPower) && profile.power_range_watts.is_some()
+                    || id == ControlId::Split && profile.supports_split
+            }
+            Protocol::YaesuLegacyCat => id == ControlId::Split,
+            Protocol::KenwoodCat => {
+                let Some(model) = KenwoodCatModel::from_model_name(self.model) else {
+                    return false;
+                };
+                let profile = crate::kenwood::profile::profile_for_model(model);
+                matches!(id, ControlId::RfPower) && profile.power_range_watts.is_some()
+                    || id == ControlId::Split
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IcomCivModel {
+    Ic705,
+    Ic7300,
+    Ic7610,
+    Ic9700,
+}
+
+/// Modern, semicolon-terminated Yaesu ASCII CAT models.
+///
+/// Older five-byte binary CAT radios deliberately do not appear here; their
+/// framing and command semantics are handled by `YaesuLegacyCat`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum YaesuCatModel {
+    Ft710,
+    Ft991A,
+    Ftdx10,
+    Ftdx101D,
+    Ftdx101Mp,
+}
+
+/// Classic Yaesu radios using fixed five-byte binary CAT commands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum YaesuLegacyModel {
+    Ft817Nd,
+    Ft818,
+    Ft857D,
+    Ft897D,
+}
+
+/// Semicolon-terminated Kenwood PC-control radios.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KenwoodCatModel {
+    Ts590Sg,
+    Ts890S,
+    Ts2000,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IcomScopeGeometry {
+    pub divisions: usize,
+    pub bins: usize,
+    pub full_chunk_bins: usize,
+    pub last_chunk_bins: usize,
+    pub bin_max: u8,
+    pub supports_main_sub_scope: bool,
+}
+
+impl IcomCivModel {
+    pub fn model_name(self) -> &'static str {
+        match self {
+            Self::Ic705 => "IC-705",
+            Self::Ic7300 => "IC-7300",
+            Self::Ic7610 => "IC-7610",
+            Self::Ic9700 => "IC-9700",
+        }
+    }
+
+    pub fn from_model_name(model: &str) -> Option<Self> {
+        match model.to_ascii_uppercase().as_str() {
+            "IC-705" => Some(Self::Ic705),
+            "IC-7300" => Some(Self::Ic7300),
+            "IC-7610" => Some(Self::Ic7610),
+            "IC-9700" => Some(Self::Ic9700),
+            _ => None,
+        }
+    }
+}
+
+impl YaesuCatModel {
+    pub fn model_name(self) -> &'static str {
+        match self {
+            Self::Ft710 => "FT-710",
+            Self::Ft991A => "FT-991A",
+            Self::Ftdx10 => "FTDX10",
+            Self::Ftdx101D => "FTDX101D",
+            Self::Ftdx101Mp => "FTDX101MP",
+        }
+    }
+
+    pub fn from_model_name(model: &str) -> Option<Self> {
+        match model.to_ascii_uppercase().as_str() {
+            "FT-710" | "FT710" => Some(Self::Ft710),
+            "FT-991A" | "FT991A" => Some(Self::Ft991A),
+            "FTDX10" | "FT-DX10" => Some(Self::Ftdx10),
+            "FTDX101D" | "FT-DX101D" => Some(Self::Ftdx101D),
+            "FTDX101MP" | "FT-DX101MP" => Some(Self::Ftdx101Mp),
+            _ => None,
+        }
+    }
+}
+
+impl YaesuLegacyModel {
+    pub fn model_name(self) -> &'static str {
+        match self {
+            Self::Ft817Nd => "FT-817ND",
+            Self::Ft818 => "FT-818",
+            Self::Ft857D => "FT-857D",
+            Self::Ft897D => "FT-897D",
+        }
+    }
+
+    pub fn from_model_name(model: &str) -> Option<Self> {
+        match model.to_ascii_uppercase().as_str() {
+            "FT-817ND" | "FT817ND" => Some(Self::Ft817Nd),
+            "FT-818" | "FT818" | "FT-818ND" | "FT818ND" => Some(Self::Ft818),
+            "FT-857D" | "FT857D" => Some(Self::Ft857D),
+            "FT-897D" | "FT897D" | "FT-897" | "FT897" => Some(Self::Ft897D),
+            _ => None,
+        }
+    }
+}
+
+impl KenwoodCatModel {
+    pub fn model_name(self) -> &'static str {
+        match self {
+            Self::Ts590Sg => "TS-590SG",
+            Self::Ts890S => "TS-890S",
+            Self::Ts2000 => "TS-2000",
+        }
+    }
+
+    pub fn from_model_name(model: &str) -> Option<Self> {
+        match model.to_ascii_uppercase().as_str() {
+            "TS-590SG" | "TS590SG" => Some(Self::Ts590Sg),
+            "TS-890S" | "TS890S" => Some(Self::Ts890S),
+            "TS-2000" | "TS2000" | "TS-2000X" | "TS2000X" | "TS-B2000" | "TSB2000" => {
+                Some(Self::Ts2000)
+            }
+            _ => None,
+        }
+    }
 }
 
 const HF_BASE: ModelCapabilities = ModelCapabilities {
@@ -142,17 +402,13 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         model: "FT-710",
         protocol: Protocol::YaesuCat,
         support: SupportLevel::Framework,
-        capabilities: HF_SCOPE,
+        capabilities: HF_BASE,
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Yaesu,
         model: "FTDX10",
         protocol: Protocol::YaesuCat,
         support: SupportLevel::Framework,
-        // The CAT manual documents scope configuration (`SS`), but not a
-        // spectrum sample transport or waveform frame format. Do not claim
-        // IC-7300-style spectrum streaming until that transport is captured
-        // and implemented.
         capabilities: HF_BASE,
     },
     RadioModelProfile {
@@ -160,21 +416,21 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         model: "FTDX101D",
         protocol: Protocol::YaesuCat,
         support: SupportLevel::Framework,
-        capabilities: HF_SCOPE,
+        capabilities: HF_BASE,
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Yaesu,
         model: "FTDX101MP",
         protocol: Protocol::YaesuCat,
         support: SupportLevel::Framework,
-        capabilities: HF_SCOPE,
+        capabilities: HF_BASE,
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Yaesu,
         model: "FT-991A",
         protocol: Protocol::YaesuCat,
         support: SupportLevel::Framework,
-        capabilities: ALL_MODE_SCOPE,
+        capabilities: ALL_MODE_BASE,
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Kenwood,
@@ -188,14 +444,14 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         model: "TS-890S",
         protocol: Protocol::KenwoodCat,
         support: SupportLevel::Framework,
-        capabilities: HF_SCOPE,
+        capabilities: HF_BASE,
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Kenwood,
         model: "TS-2000",
         protocol: Protocol::KenwoodCat,
         support: SupportLevel::Framework,
-        capabilities: ALL_MODE_SCOPE,
+        capabilities: ALL_MODE_BASE,
     },
 ];
 
@@ -242,5 +498,116 @@ mod tests {
             assert_eq!(profile.support, SupportLevel::Framework);
             assert!(!profile.capabilities.spectrum);
         }
+    }
+
+    #[test]
+    fn icom_catalog_addresses_match_driver_profiles() {
+        for catalog in POPULAR_RADIOS
+            .iter()
+            .filter(|profile| profile.manufacturer == Manufacturer::Icom)
+        {
+            let model = IcomCivModel::from_model_name(catalog.model).expect("known Icom model");
+            let Protocol::IcomCiV { default_address } = catalog.protocol else {
+                panic!("Icom model must use CI-V")
+            };
+            assert_eq!(
+                default_address,
+                crate::icom::profile::profile_for_model(model).default_address
+            );
+        }
+    }
+
+    #[test]
+    fn modern_yaesu_catalog_models_have_driver_profiles() {
+        for catalog in POPULAR_RADIOS
+            .iter()
+            .filter(|profile| profile.protocol == Protocol::YaesuCat)
+        {
+            let model =
+                YaesuCatModel::from_model_name(catalog.model).expect("known modern Yaesu model");
+            assert_eq!(
+                catalog.model,
+                crate::yaesu::profile::profile_for_model(model)
+                    .model
+                    .model_name()
+            );
+        }
+    }
+
+    #[test]
+    fn classic_yaesu_catalog_models_have_driver_profiles() {
+        for catalog in POPULAR_RADIOS
+            .iter()
+            .filter(|profile| profile.protocol == Protocol::YaesuLegacyCat)
+        {
+            let model = YaesuLegacyModel::from_model_name(catalog.model)
+                .expect("known classic Yaesu model");
+            assert_eq!(
+                catalog.model,
+                crate::yaesu::legacy_profile::profile_for_model(model)
+                    .model
+                    .model_name()
+            );
+        }
+    }
+
+    #[test]
+    fn kenwood_catalog_models_have_driver_profiles() {
+        for catalog in POPULAR_RADIOS
+            .iter()
+            .filter(|profile| profile.protocol == Protocol::KenwoodCat)
+        {
+            let model =
+                KenwoodCatModel::from_model_name(catalog.model).expect("known Kenwood model");
+            assert_eq!(
+                catalog.model,
+                crate::kenwood::profile::profile_for_model(model)
+                    .model
+                    .model_name()
+            );
+        }
+    }
+
+    #[test]
+    fn spectrum_capability_means_a_waveform_transport_is_implemented() {
+        let spectrum_models: Vec<_> = POPULAR_RADIOS
+            .iter()
+            .filter(|profile| profile.capabilities.spectrum)
+            .map(|profile| profile.model)
+            .collect();
+        assert_eq!(spectrum_models, ["IC-7300", "IC-705", "IC-7610", "IC-9700"]);
+    }
+
+    #[test]
+    fn public_labels_and_defaults_come_from_catalog_metadata() {
+        assert_eq!(
+            Manufacturer::ALL.map(Manufacturer::label),
+            ["Icom", "Yaesu", "Kenwood"]
+        );
+        assert_eq!(find_model("FTDX10").unwrap().preferred_baud_rate(), 38_400);
+        assert_eq!(find_model("FT-857D").unwrap().preferred_baud_rate(), 4_800);
+        assert_eq!(find_model("TS-2000").unwrap().preferred_baud_rate(), 57_600);
+        assert_eq!(Protocol::KenwoodCat.label(), "Kenwood PC control");
+    }
+
+    #[test]
+    fn typed_control_support_matches_driver_profiles() {
+        let ic7300 = *find_model("IC-7300").unwrap();
+        let ftdx10 = *find_model("FTDX10").unwrap();
+        let ft991a = *find_model("FT-991A").unwrap();
+        let ts890s = *find_model("TS-890S").unwrap();
+        assert!(ic7300.supports_control(crate::ControlId::AfGain));
+        assert!(ic7300.supports_control(crate::ControlId::Filter));
+        assert!(ftdx10.supports_control(crate::ControlId::Split));
+        assert!(!ft991a.supports_control(crate::ControlId::Split));
+        assert!(ts890s.supports_control(crate::ControlId::RfPower));
+        assert!(!ts890s.supports_control(crate::ControlId::AfGain));
+        assert!(!ts890s.driver_capabilities().can_get_ptt);
+        assert!(
+            find_model("TS-590SG")
+                .unwrap()
+                .driver_capabilities()
+                .can_get_ptt
+        );
     }
 }

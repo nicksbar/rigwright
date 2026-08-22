@@ -3,24 +3,21 @@
 //! `rigctld` exposes a simple line-oriented protocol on TCP (default
 //! `127.0.0.1:4532`).  Commands are single ASCII letters terminated by a
 //! newline; responses are also newline-terminated.  This module implements a
-//! [`RadioHal`] over that protocol so Rigwright can drive any radio that
+//! [`Radio`] over that protocol so Rigwright can drive any radio that
 //! Hamlib supports without a local serial port.
-//!
-//! Also includes a small [`NullRadio`] helper for headless / offline testing.
 //!
 //! Reference: <https://hamlib.sourceforge.net/html/rigctld.1.html>
 
 use std::{
     io::{BufRead, BufReader, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
-    sync::{Arc, Mutex},
     time::Duration,
 };
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 
-use crate::{Mode, RadioCapabilities, RadioHal};
+use crate::hal::{Mode, Radio, RadioCapabilities};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_millis(1_500);
 
@@ -118,7 +115,7 @@ impl RigctldRadio {
 }
 
 #[async_trait]
-impl RadioHal for RigctldRadio {
+impl Radio for RigctldRadio {
     async fn get_frequency_hz(&self) -> Result<u64> {
         let text = self.get("f")?;
         text.parse()
@@ -157,117 +154,18 @@ impl RadioHal for RigctldRadio {
     }
 }
 
-/// An in-memory radio for offline testing and headless operation.
-///
-/// `NullRadio` stores frequency, mode, and PTT state in memory.  It never
-/// touches hardware or the network, so it is useful for CI, UI development,
-/// and applications that need a predictable radio stand-in.
-#[derive(Debug, Clone)]
-pub struct NullRadio {
-    state: Arc<Mutex<NullRadioState>>,
-}
-
-#[derive(Debug, Default)]
-struct NullRadioState {
-    frequency_hz: u64,
-    mode: Mode,
-    ptt: bool,
-}
-
-impl NullRadio {
-    /// Create a null radio tuned to 14.074 MHz USB with PTT off.
-    pub fn new() -> Self {
-        Self {
-            state: Arc::new(Mutex::new(NullRadioState {
-                frequency_hz: 14_074_000,
-                mode: Mode::Usb,
-                ptt: false,
-            })),
-        }
-    }
-
-    /// Create a null radio with a specific initial frequency and mode.
-    pub fn with_frequency_mode(frequency_hz: u64, mode: Mode) -> Self {
-        Self {
-            state: Arc::new(Mutex::new(NullRadioState {
-                frequency_hz,
-                mode,
-                ptt: false,
-            })),
-        }
-    }
-}
-
-impl Default for NullRadio {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl RadioHal for NullRadio {
-    async fn get_frequency_hz(&self) -> Result<u64> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| anyhow::anyhow!("null radio state lock poisoned"))?;
-        Ok(state.frequency_hz)
-    }
-
-    async fn set_frequency_hz(&self, hz: u64) -> Result<()> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| anyhow::anyhow!("null radio state lock poisoned"))?;
-        state.frequency_hz = hz;
-        Ok(())
-    }
-
-    async fn get_mode(&self) -> Result<Mode> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| anyhow::anyhow!("null radio state lock poisoned"))?;
-        Ok(state.mode)
-    }
-
-    async fn set_mode(&self, mode: Mode) -> Result<()> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| anyhow::anyhow!("null radio state lock poisoned"))?;
-        state.mode = mode;
-        Ok(())
-    }
-
-    async fn set_ptt(&self, enabled: bool) -> Result<()> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| anyhow::anyhow!("null radio state lock poisoned"))?;
-        state.ptt = enabled;
-        Ok(())
-    }
-
-    fn capabilities(&self) -> RadioCapabilities {
-        RadioCapabilities {
-            can_get_frequency: true,
-            can_set_frequency: true,
-            can_get_mode: true,
-            can_set_mode: true,
-            can_get_ptt: true,
-            can_set_ptt: true,
-            can_raw_protocol: false,
-        }
-    }
-}
-
 fn encode_rigctld_mode(mode: Mode) -> &'static str {
     match mode {
         Mode::Lsb => "LSB",
         Mode::Usb => "USB",
         Mode::Cw => "CW",
         Mode::Data => "PKTUSB",
+        Mode::Am => "AM",
+        Mode::Fm => "FM",
+        Mode::Wfm => "WFM",
+        Mode::Rtty => "RTTY",
+        Mode::CwReverse => "CWR",
+        Mode::RttyReverse => "RTTYR",
     }
 }
 
@@ -275,9 +173,15 @@ fn decode_rigctld_mode(token: &str) -> Result<Mode> {
     let normalized = token.to_ascii_uppercase();
     match normalized.as_str() {
         "LSB" => Ok(Mode::Lsb),
-        "USB" | "PKTUSB" | "PKTLSB" | "DATA-U" | "DATA-L" => Ok(Mode::Usb),
-        "CW" | "CWR" => Ok(Mode::Cw),
-        "FM" | "AM" | "WFM" | "RTTY" | "RTTYR" | "PKTFM" | "DATA-FM" => Ok(Mode::Data),
+        "USB" => Ok(Mode::Usb),
+        "PKTUSB" | "PKTLSB" | "DATA-U" | "DATA-L" | "PKTFM" | "DATA-FM" => Ok(Mode::Data),
+        "CW" => Ok(Mode::Cw),
+        "CWR" => Ok(Mode::CwReverse),
+        "FM" => Ok(Mode::Fm),
+        "AM" => Ok(Mode::Am),
+        "WFM" => Ok(Mode::Wfm),
+        "RTTY" => Ok(Mode::Rtty),
+        "RTTYR" => Ok(Mode::RttyReverse),
         _ => bail!("unsupported rigctld mode: {token}"),
     }
 }
@@ -285,6 +189,7 @@ fn decode_rigctld_mode(token: &str) -> Result<Mode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hal::NullRadio;
 
     #[test]
     fn encodes_common_modes() {
@@ -299,11 +204,11 @@ mod tests {
         assert_eq!(decode_rigctld_mode("LSB").unwrap(), Mode::Lsb);
         assert_eq!(decode_rigctld_mode("USB").unwrap(), Mode::Usb);
         assert_eq!(decode_rigctld_mode("CW").unwrap(), Mode::Cw);
-        assert_eq!(decode_rigctld_mode("CWR").unwrap(), Mode::Cw);
-        assert_eq!(decode_rigctld_mode("PKTUSB").unwrap(), Mode::Usb);
-        assert_eq!(decode_rigctld_mode("DATA-U").unwrap(), Mode::Usb);
-        assert_eq!(decode_rigctld_mode("FM").unwrap(), Mode::Data);
-        assert_eq!(decode_rigctld_mode("AM").unwrap(), Mode::Data);
+        assert_eq!(decode_rigctld_mode("CWR").unwrap(), Mode::CwReverse);
+        assert_eq!(decode_rigctld_mode("PKTUSB").unwrap(), Mode::Data);
+        assert_eq!(decode_rigctld_mode("DATA-U").unwrap(), Mode::Data);
+        assert_eq!(decode_rigctld_mode("FM").unwrap(), Mode::Fm);
+        assert_eq!(decode_rigctld_mode("AM").unwrap(), Mode::Am);
     }
 
     #[test]
