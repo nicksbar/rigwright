@@ -31,6 +31,7 @@ jobs:
               --verify-tag \
               --generate-notes \
               --title "Rigwright $RELEASE_TAG"
+          fi
 
   publish:
     name: Publish to crates.io
@@ -56,4 +57,3 @@ jobs:
 
       - name: Publish crate
         run: cargo publish --token "${{ secrets.CRATES_TOKEN }}"
-          fi
