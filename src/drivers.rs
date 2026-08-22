@@ -15,6 +15,8 @@ use crate::{
     kenwood::KenwoodCatRadio,
     models::{
         find_model, IcomCivModel, KenwoodCatModel, Protocol, YaesuCatModel, YaesuLegacyModel,
+        GENERIC_ICOM_MODEL, GENERIC_KENWOOD_MODEL, GENERIC_YAESU_CLASSIC_MODEL,
+        GENERIC_YAESU_MODEL,
     },
     protocol::ascii_cat,
     rigctld::RigctldRadio,
@@ -440,6 +442,14 @@ pub fn open_model_with_radio_address(
     let profile = find_model(model).with_context(|| format!("unknown radio model: {model}"))?;
     let port = port.into();
     Ok(match profile.protocol {
+        Protocol::IcomCiV { default_address } if profile.model == GENERIC_ICOM_MODEL => {
+            ConfiguredRadio::Icom(IcomCiVRadio::new_generic(
+                port,
+                baud_rate,
+                controller_address,
+                radio_address.unwrap_or(default_address),
+            ))
+        }
         Protocol::IcomCiV { default_address } => {
             let model = IcomCivModel::from_model_name(profile.model)
                 .with_context(|| format!("unsupported Icom CI-V model: {}", profile.model))?;
@@ -451,16 +461,25 @@ pub fn open_model_with_radio_address(
                 radio_address.unwrap_or(default_address),
             ))
         }
+        Protocol::YaesuCat if profile.model == GENERIC_YAESU_MODEL => {
+            ConfiguredRadio::Yaesu(YaesuCatRadio::new_generic(port, baud_rate))
+        }
         Protocol::YaesuCat => {
             let model = YaesuCatModel::from_model_name(profile.model).with_context(|| {
                 format!("unsupported modern Yaesu CAT model: {}", profile.model)
             })?;
             ConfiguredRadio::Yaesu(YaesuCatRadio::new_for_model(model, port, baud_rate)?)
         }
+        Protocol::KenwoodCat if profile.model == GENERIC_KENWOOD_MODEL => {
+            ConfiguredRadio::Kenwood(KenwoodCatRadio::new_generic(port, baud_rate))
+        }
         Protocol::KenwoodCat => {
             let model = KenwoodCatModel::from_model_name(profile.model)
                 .with_context(|| format!("unsupported Kenwood CAT model: {}", profile.model))?;
             ConfiguredRadio::Kenwood(KenwoodCatRadio::new_for_model(model, port, baud_rate)?)
+        }
+        Protocol::YaesuLegacyCat if profile.model == GENERIC_YAESU_CLASSIC_MODEL => {
+            ConfiguredRadio::LegacyYaesu(LegacyYaesuRadio::new_generic(port, baud_rate))
         }
         Protocol::YaesuLegacyCat => {
             let model = YaesuLegacyModel::from_model_name(profile.model).with_context(|| {
@@ -497,6 +516,24 @@ mod tests {
         let icom = radio.as_icom().expect("Icom driver");
         assert_eq!(icom.controller_address(), 0xE0);
         assert_eq!(icom.radio_address(), 0x95);
+    }
+    #[test]
+    fn factory_selects_protocol_only_generic_profiles() {
+        let icom = open_model(GENERIC_ICOM_MODEL, "/dev/null", 115_200, 0xE0).unwrap();
+        assert!(icom.as_icom().is_some());
+        assert!(icom.as_icom().unwrap().model().is_none());
+
+        let yaesu = open_model(GENERIC_YAESU_MODEL, "/dev/null", 38_400, 0xE0).unwrap();
+        assert!(yaesu.as_yaesu().is_some());
+        assert!(yaesu.as_yaesu().unwrap().model().is_none());
+
+        let classic = open_model(GENERIC_YAESU_CLASSIC_MODEL, "/dev/null", 4_800, 0xE0).unwrap();
+        assert!(classic.as_legacy_yaesu().is_some());
+        assert!(classic.as_legacy_yaesu().unwrap().model().is_none());
+
+        let kenwood = open_model(GENERIC_KENWOOD_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
+        assert!(kenwood.as_kenwood().is_some());
+        assert!(kenwood.as_kenwood().unwrap().model().is_none());
     }
     #[test]
     fn factory_selects_the_exact_yaesu_profile_and_validates_baud() {

@@ -86,6 +86,14 @@ pub struct RadioModelProfile {
     pub capabilities: ModelCapabilities,
 }
 
+/// Catalog identifiers for protocol-only drivers. These entries intentionally
+/// expose only the controls guaranteed by the generic HAL; model-specific
+/// commands remain unavailable until a concrete profile is selected.
+pub const GENERIC_ICOM_MODEL: &str = "CI-V (generic)";
+pub const GENERIC_YAESU_MODEL: &str = "CAT (generic)";
+pub const GENERIC_YAESU_CLASSIC_MODEL: &str = "classic CAT (generic)";
+pub const GENERIC_KENWOOD_MODEL: &str = "PC control (generic)";
+
 impl RadioModelProfile {
     /// Root-HAL operations implemented by the selected driver profile.
     pub fn driver_capabilities(self) -> crate::RadioCapabilities {
@@ -331,6 +339,15 @@ const ALL_MODE_SCOPE: ModelCapabilities = ModelCapabilities {
 pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
     RadioModelProfile {
         manufacturer: Manufacturer::Icom,
+        model: GENERIC_ICOM_MODEL,
+        protocol: Protocol::IcomCiV {
+            default_address: 0x94,
+        },
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Icom,
         model: "IC-7300",
         protocol: Protocol::IcomCiV {
             default_address: 0x94,
@@ -371,6 +388,13 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Yaesu,
+        model: GENERIC_YAESU_CLASSIC_MODEL,
+        protocol: Protocol::YaesuLegacyCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Yaesu,
         model: "FT-817ND",
         protocol: Protocol::YaesuLegacyCat,
         support: SupportLevel::Framework,
@@ -396,6 +420,13 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         protocol: Protocol::YaesuLegacyCat,
         support: SupportLevel::Framework,
         capabilities: ALL_MODE_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Yaesu,
+        model: GENERIC_YAESU_MODEL,
+        protocol: Protocol::YaesuCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Yaesu,
@@ -431,6 +462,13 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         protocol: Protocol::YaesuCat,
         support: SupportLevel::Framework,
         capabilities: ALL_MODE_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Kenwood,
+        model: GENERIC_KENWOOD_MODEL,
+        protocol: Protocol::KenwoodCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Kenwood,
@@ -502,10 +540,9 @@ mod tests {
 
     #[test]
     fn icom_catalog_addresses_match_driver_profiles() {
-        for catalog in POPULAR_RADIOS
-            .iter()
-            .filter(|profile| profile.manufacturer == Manufacturer::Icom)
-        {
+        for catalog in POPULAR_RADIOS.iter().filter(|profile| {
+            profile.manufacturer == Manufacturer::Icom && profile.model != GENERIC_ICOM_MODEL
+        }) {
             let model = IcomCivModel::from_model_name(catalog.model).expect("known Icom model");
             let Protocol::IcomCiV { default_address } = catalog.protocol else {
                 panic!("Icom model must use CI-V")
@@ -519,10 +556,9 @@ mod tests {
 
     #[test]
     fn modern_yaesu_catalog_models_have_driver_profiles() {
-        for catalog in POPULAR_RADIOS
-            .iter()
-            .filter(|profile| profile.protocol == Protocol::YaesuCat)
-        {
+        for catalog in POPULAR_RADIOS.iter().filter(|profile| {
+            profile.protocol == Protocol::YaesuCat && profile.model != GENERIC_YAESU_MODEL
+        }) {
             let model =
                 YaesuCatModel::from_model_name(catalog.model).expect("known modern Yaesu model");
             assert_eq!(
@@ -536,10 +572,10 @@ mod tests {
 
     #[test]
     fn classic_yaesu_catalog_models_have_driver_profiles() {
-        for catalog in POPULAR_RADIOS
-            .iter()
-            .filter(|profile| profile.protocol == Protocol::YaesuLegacyCat)
-        {
+        for catalog in POPULAR_RADIOS.iter().filter(|profile| {
+            profile.protocol == Protocol::YaesuLegacyCat
+                && profile.model != GENERIC_YAESU_CLASSIC_MODEL
+        }) {
             let model = YaesuLegacyModel::from_model_name(catalog.model)
                 .expect("known classic Yaesu model");
             assert_eq!(
@@ -553,10 +589,9 @@ mod tests {
 
     #[test]
     fn kenwood_catalog_models_have_driver_profiles() {
-        for catalog in POPULAR_RADIOS
-            .iter()
-            .filter(|profile| profile.protocol == Protocol::KenwoodCat)
-        {
+        for catalog in POPULAR_RADIOS.iter().filter(|profile| {
+            profile.protocol == Protocol::KenwoodCat && profile.model != GENERIC_KENWOOD_MODEL
+        }) {
             let model =
                 KenwoodCatModel::from_model_name(catalog.model).expect("known Kenwood model");
             assert_eq!(
