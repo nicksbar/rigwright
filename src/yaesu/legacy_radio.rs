@@ -270,6 +270,10 @@ impl Radio for LegacyYaesuRadio {
         }
     }
 
+    fn supports_control(&self, id: ControlId) -> bool {
+        self.model().is_some() && id == ControlId::Split
+    }
+
     fn capabilities(&self) -> RadioCapabilities {
         RadioCapabilities {
             can_get_frequency: true,

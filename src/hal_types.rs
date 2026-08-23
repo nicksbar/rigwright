@@ -137,6 +137,9 @@ mod meter_tests {
         assert_eq!(normalize_meter_level(0, 30), Some(0));
         assert_eq!(normalize_meter_level(15, 30), Some(128));
         assert_eq!(normalize_meter_level(30, 30), Some(255));
+        assert_eq!(normalize_meter_level(1, 3), Some(85));
+        assert_eq!(normalize_meter_level(2, 3), Some(170));
+        assert_eq!(normalize_meter_level(255, 255), Some(255));
         assert_eq!(normalize_meter_level(31, 30), None);
         assert_eq!(normalize_meter_level(0, 0), None);
     }

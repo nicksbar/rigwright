@@ -433,7 +433,7 @@ impl Radio for ConfiguredRadio {
     }
     fn supports_meter(&self, id: crate::MeterId) -> bool {
         match self {
-            Self::Icom(_) => matches!(id, crate::MeterId::Swr),
+            Self::Icom(r) => r.supports_meter(id),
             Self::Yaesu(r) => r.model().is_some() && !matches!(id, crate::MeterId::Temperature),
             Self::Kenwood(r) => {
                 r.model().is_some() && matches!(id, crate::MeterId::Signal | crate::MeterId::Swr)
@@ -446,6 +446,7 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.supports_control(id),
             Self::Yaesu(r) => r.supports_control(id),
             Self::Kenwood(r) => r.supports_control(id),
+            Self::LegacyYaesu(r) => r.supports_control(id),
             _ => false,
         }
     }
@@ -640,6 +641,10 @@ mod tests {
         assert!(icom.supports_meter(crate::MeterId::Swr));
         assert!(!icom.supports_meter(crate::MeterId::Power));
 
+        let ic9700 = open_model("IC-9700", "/dev/null", 115_200, 0xE0).unwrap();
+        assert!(ic9700.supports_control(crate::ControlId::MainSub));
+        assert!(ic9700.supports_control(crate::ControlId::ExternalPreamp));
+
         let yaesu = open_model("FTDX10", "/dev/null", 38_400, 0xE0).unwrap();
         assert!(yaesu.supports_control(crate::ControlId::Agc));
         assert!(yaesu.supports_control(crate::ControlId::NoiseReductionLevel));
@@ -655,6 +660,22 @@ mod tests {
         let generic = open_model(GENERIC_KENWOOD_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
         assert!(!generic.supports_control(crate::ControlId::RfPower));
         assert!(!generic.supports_meter(crate::MeterId::Signal));
+
+        let generic_icom = open_model(GENERIC_ICOM_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
+        assert!(!generic_icom.supports_control(crate::ControlId::IpPlus));
+        assert!(!generic_icom.supports_meter(crate::MeterId::Swr));
+
+        let generic_yaesu = open_model(GENERIC_YAESU_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
+        assert!(!generic_yaesu.supports_control(crate::ControlId::Agc));
+        assert!(!generic_yaesu.supports_meter(crate::MeterId::Swr));
+
+        let legacy = open_model("FT-857D", "/dev/null", 9_600, 0xE0).unwrap();
+        assert!(legacy.supports_control(crate::ControlId::Split));
+        assert!(!legacy.supports_control(crate::ControlId::RfPower));
+
+        let generic_legacy =
+            open_model(GENERIC_YAESU_CLASSIC_MODEL, "/dev/null", 4_800, 0xE0).unwrap();
+        assert!(!generic_legacy.supports_control(crate::ControlId::Split));
     }
     #[test]
     fn decodes_common_ascii_modes() {

@@ -634,13 +634,20 @@ mod tests {
     #[test]
     fn typed_control_support_matches_driver_profiles() {
         let ic7300 = *find_model("IC-7300").unwrap();
+        let ic7610 = *find_model("IC-7610").unwrap();
+        let ic9700 = *find_model("IC-9700").unwrap();
         let ftdx10 = *find_model("FTDX10").unwrap();
         let ft991a = *find_model("FT-991A").unwrap();
+        let ft857d = *find_model("FT-857D").unwrap();
         let ts890s = *find_model("TS-890S").unwrap();
         assert!(ic7300.supports_control(crate::ControlId::AfGain));
         assert!(ic7300.supports_control(crate::ControlId::Filter));
+        assert!(!ic7610.supports_control(crate::ControlId::Agc));
+        assert!(ic9700.supports_control(crate::ControlId::MainSub));
+        assert!(ic9700.supports_control(crate::ControlId::ExternalPreamp));
         assert!(ftdx10.supports_control(crate::ControlId::Split));
         assert!(!ft991a.supports_control(crate::ControlId::Split));
+        assert!(ft857d.supports_control(crate::ControlId::Split));
         assert!(ts890s.supports_control(crate::ControlId::RfPower));
         assert!(!ts890s.supports_control(crate::ControlId::AfGain));
         assert!(!ts890s.driver_capabilities().can_get_ptt);
