@@ -110,6 +110,8 @@ impl RadioModelProfile {
             can_set_mode: true,
             can_get_ptt,
             can_set_ptt: true,
+            can_get_power: matches!(self.protocol, Protocol::YaesuCat | Protocol::KenwoodCat),
+            can_set_power: !matches!(self.protocol, Protocol::YaesuLegacyCat),
             can_raw_protocol: true,
         }
     }

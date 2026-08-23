@@ -17,6 +17,8 @@ pub struct RadioCapabilities {
     pub can_set_mode: bool,
     pub can_get_ptt: bool,
     pub can_set_ptt: bool,
+    pub can_get_power: bool,
+    pub can_set_power: bool,
     pub can_raw_protocol: bool,
 }
 
@@ -35,6 +37,12 @@ pub trait Radio: Send + Sync {
     async fn set_ptt(&self, enabled: bool) -> Result<()>;
     async fn get_ptt(&self) -> Result<bool> {
         anyhow::bail!("reading PTT state is not supported by this radio")
+    }
+    async fn get_power(&self) -> Result<bool> {
+        anyhow::bail!("reading radio power state is not supported by this radio")
+    }
+    async fn set_power(&self, _enabled: bool) -> Result<()> {
+        anyhow::bail!("setting radio power state is not supported by this radio")
     }
     async fn protocol_write_read(&self, _request: &[u8]) -> Result<Vec<u8>> {
         Ok(Vec::new())
@@ -64,9 +72,6 @@ pub trait Radio: Send + Sync {
         self.set_ptt(enabled).await
     }
 }
-
-/// Backward-compatible name for the protocol-neutral HAL trait.
-pub use Radio as RadioHal;
 
 #[derive(Debug, Clone, Default)]
 pub struct RadioStatus {
@@ -153,6 +158,8 @@ impl Radio for NullRadio {
             can_set_mode: true,
             can_get_ptt: true,
             can_set_ptt: true,
+            can_get_power: false,
+            can_set_power: false,
             can_raw_protocol: false,
         }
     }

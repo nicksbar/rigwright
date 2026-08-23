@@ -719,6 +719,27 @@ impl IcomCiVRadio {
         Ok(())
     }
 
+    fn set_power_blocking(&self, enabled: bool) -> Result<()> {
+        if !enabled {
+            let _ = self.transact(&[0x18, 0x00], false)?;
+            return Ok(());
+        }
+
+        // Icom requires a stream of FE preamble bytes before the power-on
+        // command when the radio is already off. The documented counts are
+        // time-based examples: 15 at 4800, 30 at 9600, and 60 at 19200.
+        // Preserve that preamble duration at faster configured baud rates.
+        let preamble_count = (self.baud_rate / 320).max(15) as usize;
+        let frame = self.build_frame_payload(&[0x18, 0x01]);
+        self.with_serial_port(Duration::from_millis(700), |port| {
+            port.write_all(&vec![0xFE; preamble_count])
+                .context("failed to write CI-V power-on preamble")?;
+            self.write_frame(port, &frame)?;
+            port.flush()
+                .context("failed to flush CI-V power-on command")
+        })
+    }
+
     fn get_frequency_blocking(&self) -> Result<u64> {
         let response = self.transact(&[0x03], true)?;
         parse_frequency(&response).context("frequency not present in CI-V response")
@@ -1207,6 +1228,14 @@ impl Radio for IcomCiVRadio {
         self.get_ptt_blocking()
     }
 
+    async fn get_power(&self) -> Result<bool> {
+        anyhow::bail!("Icom CI-V power state is write-only")
+    }
+
+    async fn set_power(&self, enabled: bool) -> Result<()> {
+        self.set_power_blocking(enabled)
+    }
+
     async fn protocol_write_read(&self, request: &[u8]) -> Result<Vec<u8>> {
         if request.first().copied() != Some(CI_V_FRAME_START)
             || request.get(1).copied() != Some(CI_V_FRAME_START)
@@ -1246,6 +1275,8 @@ impl Radio for IcomCiVRadio {
             can_set_mode: true,
             can_get_ptt: true,
             can_set_ptt: true,
+            can_get_power: false,
+            can_set_power: true,
             can_raw_protocol: true,
         }
     }

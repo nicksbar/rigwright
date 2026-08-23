@@ -158,6 +158,18 @@ impl YaesuCatRadio {
         self.send_set("PC", &format!("{watts:03}"))
     }
 
+    pub fn get_power_state(&self) -> Result<bool> {
+        match parse_payload(&self.query("PS", None, 1)?, "PS")? {
+            "0" => Ok(false),
+            "1" => Ok(true),
+            value => bail!("invalid Yaesu PS response: {value}"),
+        }
+    }
+
+    pub fn set_power_state(&self, enabled: bool) -> Result<()> {
+        self.send_set("PS", if enabled { "1" } else { "0" })
+    }
+
     pub fn get_split(&self) -> Result<bool> {
         if !self.selected_profile()?.supports_split {
             bail!("split control is not profiled for this Yaesu model");
@@ -350,6 +362,14 @@ impl Radio for YaesuCatRadio {
         }
     }
 
+    async fn get_power(&self) -> Result<bool> {
+        self.get_power_state()
+    }
+
+    async fn set_power(&self, enabled: bool) -> Result<()> {
+        self.set_power_state(enabled)
+    }
+
     async fn protocol_write_read(&self, request: &[u8]) -> Result<Vec<u8>> {
         validate_complete_command(request)?;
         let command = std::str::from_utf8(&request[..2]).context("CAT command is not ASCII")?;
@@ -385,6 +405,8 @@ impl Radio for YaesuCatRadio {
             can_set_mode: true,
             can_get_ptt: true,
             can_set_ptt: true,
+            can_get_power: true,
+            can_set_power: true,
             can_raw_protocol: true,
         }
     }

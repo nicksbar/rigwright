@@ -151,6 +151,8 @@ impl Radio for DxLabCommanderRadio {
             can_set_mode: true,
             can_get_ptt: false,
             can_set_ptt: true,
+            can_get_power: false,
+            can_set_power: false,
             can_raw_protocol: false,
         }
     }

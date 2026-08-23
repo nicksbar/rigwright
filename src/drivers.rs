@@ -236,6 +236,8 @@ fn core_capabilities() -> RadioCapabilities {
         can_set_mode: true,
         can_get_ptt: false,
         can_set_ptt: true,
+        can_get_power: false,
+        can_set_power: false,
         can_raw_protocol: false,
     }
 }
@@ -364,6 +366,30 @@ impl Radio for ConfiguredRadio {
             Self::LegacyYaesu(r) => r.get_ptt().await,
             Self::Rigctld(r) => r.get_ptt().await,
             Self::Null(r) => r.get_ptt().await,
+        }
+    }
+    async fn get_power(&self) -> Result<bool> {
+        match self {
+            Self::Icom(r) => r.get_power().await,
+            Self::Yaesu(r) => r.get_power().await,
+            Self::Kenwood(r) => r.get_power().await,
+            Self::Ascii(r) => r.get_power().await,
+            Self::DxLab(r) => r.get_power().await,
+            Self::LegacyYaesu(r) => r.get_power().await,
+            Self::Rigctld(r) => r.get_power().await,
+            Self::Null(r) => r.get_power().await,
+        }
+    }
+    async fn set_power(&self, enabled: bool) -> Result<()> {
+        match self {
+            Self::Icom(r) => r.set_power(enabled).await,
+            Self::Yaesu(r) => r.set_power(enabled).await,
+            Self::Kenwood(r) => r.set_power(enabled).await,
+            Self::Ascii(r) => r.set_power(enabled).await,
+            Self::DxLab(r) => r.set_power(enabled).await,
+            Self::LegacyYaesu(r) => r.set_power(enabled).await,
+            Self::Rigctld(r) => r.set_power(enabled).await,
+            Self::Null(r) => r.set_power(enabled).await,
         }
     }
     async fn protocol_write_read(&self, request: &[u8]) -> Result<Vec<u8>> {

@@ -154,6 +154,18 @@ impl KenwoodCatRadio {
         self.send_set("PC", &format!("{watts:03}"))
     }
 
+    pub fn get_power_state(&self) -> Result<bool> {
+        match parse_payload(&self.query("PS", None, Some(1))?, "PS")? {
+            "0" => Ok(false),
+            "1" => Ok(true),
+            value => bail!("invalid Kenwood PS response: {value}"),
+        }
+    }
+
+    pub fn set_power_state(&self, enabled: bool) -> Result<()> {
+        self.send_set("PS", if enabled { "1" } else { "0" })
+    }
+
     pub fn get_meter(&self) -> Result<u16> {
         let profile = self.selected_profile()?;
         let (parameters, payload_len) = match profile.model {
@@ -468,6 +480,14 @@ impl Radio for KenwoodCatRadio {
         Ok(self.get_if_status()?.transmitting)
     }
 
+    async fn get_power(&self) -> Result<bool> {
+        self.get_power_state()
+    }
+
+    async fn set_power(&self, enabled: bool) -> Result<()> {
+        self.set_power_state(enabled)
+    }
+
     async fn protocol_write_read(&self, request: &[u8]) -> Result<Vec<u8>> {
         validate_complete_command(request)?;
         let command = std::str::from_utf8(&request[..2]).context("CAT command is not ASCII")?;
@@ -504,6 +524,8 @@ impl Radio for KenwoodCatRadio {
                 .profile()
                 .is_some_and(|profile| profile.supports_if_status),
             can_set_ptt: true,
+            can_get_power: true,
+            can_set_power: true,
             can_raw_protocol: true,
         }
     }
