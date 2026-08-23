@@ -13,7 +13,7 @@ use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
 
 use crate::{
     hal::{Mode, Radio, RadioCapabilities},
-    hal_types::{ControlId, ControlValue},
+    hal_types::{ControlId, ControlValue, MeterId},
     models::YaesuCatModel,
     protocol::ascii_cat,
 };
@@ -156,6 +156,18 @@ impl YaesuCatRadio {
     pub fn set_power_watts(&self, watts: u16) -> Result<()> {
         self.selected_profile()?.validate_power(watts)?;
         self.send_set("PC", &format!("{watts:03}"))
+    }
+
+    pub fn get_power_state(&self) -> Result<bool> {
+        match parse_payload(&self.query("PS", None, 1)?, "PS")? {
+            "0" => Ok(false),
+            "1" => Ok(true),
+            value => bail!("invalid Yaesu PS response: {value}"),
+        }
+    }
+
+    pub fn set_power_state(&self, enabled: bool) -> Result<()> {
+        self.send_set("PS", if enabled { "1" } else { "0" })
     }
 
     pub fn get_split(&self) -> Result<bool> {
@@ -350,6 +362,14 @@ impl Radio for YaesuCatRadio {
         }
     }
 
+    async fn get_power(&self) -> Result<bool> {
+        self.get_power_state()
+    }
+
+    async fn set_power(&self, enabled: bool) -> Result<()> {
+        self.set_power_state(enabled)
+    }
+
     async fn protocol_write_read(&self, request: &[u8]) -> Result<Vec<u8>> {
         validate_complete_command(request)?;
         let command = std::str::from_utf8(&request[..2]).context("CAT command is not ASCII")?;
@@ -363,7 +383,53 @@ impl Radio for YaesuCatRadio {
                 Ok(Some(ControlValue::U8(self.watts_to_normalized(watts)?)))
             }
             ControlId::Split => Ok(Some(ControlValue::Bool(self.get_split()?))),
+            ControlId::Agc => {
+                let response = self.query("GT", None, 2)?;
+                let payload = parse_payload(&response, "GT")?;
+                let value = payload
+                    .strip_prefix('0')
+                    .context("invalid Yaesu GT response")?
+                    .parse::<u8>()?;
+                if value > 4 {
+                    bail!("invalid Yaesu AGC response: {value}");
+                }
+                Ok(Some(ControlValue::U8(value)))
+            }
+            ControlId::NoiseReduction => {
+                let response = self.query("NR", None, 2)?;
+                let payload = parse_payload(&response, "NR")?;
+                match payload {
+                    "00" => Ok(Some(ControlValue::Bool(false))),
+                    "01" => Ok(Some(ControlValue::Bool(true))),
+                    value => bail!("invalid Yaesu NR response: {value}"),
+                }
+            }
+            ControlId::NoiseReductionLevel => {
+                let response = self.query("RL", None, 3)?;
+                let payload = parse_payload(&response, "RL")?;
+                let value = payload
+                    .strip_prefix('0')
+                    .context("invalid Yaesu RL response")?
+                    .parse::<u8>()?;
+                if !(1..=15).contains(&value) {
+                    bail!("invalid Yaesu NR level response: {value}");
+                }
+                Ok(Some(ControlValue::U8(value)))
+            }
             _ => Ok(None),
+        }
+    }
+
+    async fn get_meter(&self, id: MeterId) -> Result<Option<u8>> {
+        match id {
+            MeterId::Signal => Ok(Some(self.get_yaesu_meter(1)?)),
+            MeterId::Compression => Ok(Some(self.get_yaesu_meter(3)?)),
+            MeterId::Alc => Ok(Some(self.get_yaesu_meter(4)?)),
+            MeterId::Power => Ok(Some(self.get_yaesu_meter(5)?)),
+            MeterId::Swr => Ok(Some(self.get_yaesu_meter(6)?)),
+            MeterId::Current => Ok(Some(self.get_yaesu_meter(7)?)),
+            MeterId::Voltage => Ok(Some(self.get_yaesu_meter(8)?)),
+            MeterId::Temperature => bail!("Yaesu CAT temperature meter is not profiled"),
         }
     }
 
@@ -373,8 +439,34 @@ impl Radio for YaesuCatRadio {
                 self.set_power_watts(self.normalized_to_watts(level)?)
             }
             (ControlId::Split, ControlValue::Bool(enabled)) => self.set_split(enabled),
+            (ControlId::Agc, ControlValue::U8(value)) if value <= 4 => {
+                self.send_set("GT", &format!("0{value}"))
+            }
+            (ControlId::NoiseReduction, ControlValue::Bool(enabled)) => {
+                self.send_set("NR", if enabled { "01" } else { "00" })
+            }
+            (ControlId::NoiseReductionLevel, ControlValue::U8(value))
+                if (1..=15).contains(&value) =>
+            {
+                self.send_set("RL", &format!("0{value:02}"))
+            }
             (_, value) => bail!("unsupported Yaesu CAT control/value: {id:?} = {value:?}"),
         }
+    }
+
+    fn supports_meter(&self, id: MeterId) -> bool {
+        self.model().is_some() && !matches!(id, MeterId::Temperature)
+    }
+
+    fn supports_control(&self, id: ControlId) -> bool {
+        self.profile().is_some_and(|profile| {
+            (id == ControlId::RfPower && profile.power_range_watts.is_some())
+                || (id == ControlId::Split && profile.supports_split)
+                || matches!(
+                    id,
+                    ControlId::Agc | ControlId::NoiseReduction | ControlId::NoiseReductionLevel
+                )
+        })
     }
 
     fn capabilities(&self) -> RadioCapabilities {
@@ -385,12 +477,39 @@ impl Radio for YaesuCatRadio {
             can_set_mode: true,
             can_get_ptt: true,
             can_set_ptt: true,
+            can_get_power: true,
+            can_set_power: true,
             can_raw_protocol: true,
         }
     }
 }
 
 impl YaesuCatRadio {
+    fn get_yaesu_meter(&self, selector: u8) -> Result<u8> {
+        let response = self.query("RM", Some(&selector.to_string()), 10)?;
+        let payload = parse_payload(&response, "RM")?;
+        let response_selector = payload
+            .chars()
+            .next()
+            .context("missing Yaesu RM meter selector")?
+            .to_digit(10)
+            .context("invalid Yaesu RM meter selector")? as u8;
+        if response_selector != selector {
+            bail!(
+                "Yaesu RM response selector {response_selector} did not match requested {selector}"
+            );
+        }
+        let value = payload
+            .get(1..4)
+            .context("invalid Yaesu RM meter response")?
+            .parse::<u16>()
+            .context("invalid Yaesu RM meter value")?;
+        if value > 255 {
+            bail!("Yaesu RM meter value exceeds 255: {value}");
+        }
+        Ok(value as u8)
+    }
+
     fn watts_to_normalized(&self, watts: u16) -> Result<u8> {
         let (minimum, maximum) = self
             .selected_profile()?

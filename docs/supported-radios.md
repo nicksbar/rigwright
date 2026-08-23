@@ -1,5 +1,8 @@
 # Radio support and manual sources
 
+For the complete control, meter, manual-surface, and QSONaut-consumption
+inventory, see [`radio-capability-matrix.md`](radio-capability-matrix.md).
+
 Support labels are intentionally conservative. **Hardware validated** means the
 driver is exercised against a physical radio. **Framework** means a model
 profile and protocol primitives exist, but Rigwright does not yet claim a
@@ -25,6 +28,19 @@ reproducible without treating a product-page compatibility claim as evidence:
 | IC-7300 | `IC-7300_Full_English v6.pdf` / `.md` | address `94`; commands `0F`, `11`, `14`, `16`, `26`, `27`; 20 dB attenuator only; FM; 11/475 scope |
 | IC-7610 | `IC-7610_ENG_CI-V_4.pdf`, Sep. 2025 | address `98`; commands `07 D0/D1/D2`, `0F`, `11`, `14`, `16`, `26`, `27`; main/sub; 15/689 scope; 0.03–60 MHz scope range |
 | IC-9700 | `IC-9700_ENG_CI-V_4.pdf`, Mar. 2023 | address `A2`; commands `07 D0/D1/D2`, `0F`, `11`, `16 02`, `26`, `27`; combined internal/external preamp; 144/430/1240 MHz bands; 11/475 scope |
+
+The shared Icom profile also exposes IP+ (`1A 07`), auto notch (`16 41`), and
+manual notch enable (`16 42`) as typed controls. SWR is read-only telemetry via
+`MeterId::Swr`, using `15 12`; the driver exposes the result on the HAL's
+normalized 0..255 meter-deflection scale. The IC-7300 manual documents raw
+values of 0 = 1.0:1, 48 = 1.5:1, 80 = 2.0:1, and 120 = 3.0:1, but those ratio
+anchors are Icom-specific and are not applied globally by the HAL.
+
+The Icom tuner surface is separate from the meter: `ControlId::Tuner` uses the
+documented tuner enable/status operation (`1C 01`), `start_tuner()` requests
+tuning (`1C 01 02`), and `get_tuner_status()` reports disabled, enabled, or
+tuning. Tuning can transmit, so applications must require an explicit operator
+action and should not start it from background SWR polling.
 
 The profile frequency ranges are conservative tune guards derived from the
 documented command/scope ranges. They are not a promise that every frequency is
@@ -88,3 +104,18 @@ model-specific modes and split commands, reads the documented meter layout,
 and matches responses around interleaved Auto Information frames. PTT writes
 are verified on the two models with pollable `IF` status. All three remain
 framework-level until exercised against physical radios.
+All normalized meters use the HAL's 0..255 meter-deflection scale. Yaesu CAT
+profiles expose signal, power, SWR, ALC, compression, current, and voltage
+through the documented `RM1` and `RM3`..`RM8` selectors, plus typed AGC,
+noise-reduction, and noise-reduction-level controls. Kenwood profiles expose
+normalized signal and profile-correct SWR. SWR telemetry uses the HAL's normalized
+0..255 meter-deflection scale. The
+Kenwood profiles query the documented `RM` SWR meter and normalize their
+model-specific 0..30 or 0..70 dot ranges. Modern Yaesu CAT profiles query
+`RM6`, whose documented response is already 0..255. This is normalized meter
+deflection, not a universal physical SWR-ratio conversion; the manuals do not
+define enough cross-vendor ratio calibration to infer one safely.
+
+The model-aware `ConfiguredRadio` wrapper forwards capability checks for Icom,
+Yaesu, and Kenwood. Generic vendor drivers intentionally report no typed
+optional meters or controls until a concrete model profile is selected.

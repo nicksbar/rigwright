@@ -96,6 +96,26 @@ const CONTROLS: &[ControlSpec] = &[
         encoding: ControlEncoding::Bool,
     },
     ControlSpec {
+        id: ControlId::IpPlus,
+        command_prefix: &[0x1A, 0x07],
+        encoding: ControlEncoding::Bool,
+    },
+    ControlSpec {
+        id: ControlId::Notch,
+        command_prefix: &[0x16, 0x41],
+        encoding: ControlEncoding::Bool,
+    },
+    ControlSpec {
+        id: ControlId::ManualNotch,
+        command_prefix: &[0x16, 0x42],
+        encoding: ControlEncoding::Bool,
+    },
+    ControlSpec {
+        id: ControlId::Tuner,
+        command_prefix: &[0x1C, 0x01],
+        encoding: ControlEncoding::Bool,
+    },
+    ControlSpec {
         id: ControlId::Split,
         command_prefix: &[0x0F],
         encoding: ControlEncoding::Bool,

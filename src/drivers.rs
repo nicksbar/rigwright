@@ -8,7 +8,7 @@ use std::{
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 
-use crate::hal::{Mode, NullRadio, Radio, RadioCapabilities};
+use crate::hal::{Mode, NullRadio, Radio, RadioCapabilities, TunerStatus};
 use crate::{
     dxlab::DxLabCommanderRadio,
     icom::civ_radio::IcomCiVRadio,
@@ -236,6 +236,8 @@ fn core_capabilities() -> RadioCapabilities {
         can_set_mode: true,
         can_get_ptt: false,
         can_set_ptt: true,
+        can_get_power: false,
+        can_set_power: false,
         can_raw_protocol: false,
     }
 }
@@ -366,6 +368,30 @@ impl Radio for ConfiguredRadio {
             Self::Null(r) => r.get_ptt().await,
         }
     }
+    async fn get_power(&self) -> Result<bool> {
+        match self {
+            Self::Icom(r) => r.get_power().await,
+            Self::Yaesu(r) => r.get_power().await,
+            Self::Kenwood(r) => r.get_power().await,
+            Self::Ascii(r) => r.get_power().await,
+            Self::DxLab(r) => r.get_power().await,
+            Self::LegacyYaesu(r) => r.get_power().await,
+            Self::Rigctld(r) => r.get_power().await,
+            Self::Null(r) => r.get_power().await,
+        }
+    }
+    async fn set_power(&self, enabled: bool) -> Result<()> {
+        match self {
+            Self::Icom(r) => r.set_power(enabled).await,
+            Self::Yaesu(r) => r.set_power(enabled).await,
+            Self::Kenwood(r) => r.set_power(enabled).await,
+            Self::Ascii(r) => r.set_power(enabled).await,
+            Self::DxLab(r) => r.set_power(enabled).await,
+            Self::LegacyYaesu(r) => r.set_power(enabled).await,
+            Self::Rigctld(r) => r.set_power(enabled).await,
+            Self::Null(r) => r.set_power(enabled).await,
+        }
+    }
     async fn protocol_write_read(&self, request: &[u8]) -> Result<Vec<u8>> {
         match self {
             Self::Icom(r) => r.protocol_write_read(request).await,
@@ -391,6 +417,49 @@ impl Radio for ConfiguredRadio {
             Self::Kenwood(r) => r.set_control(id, value).await,
             Self::LegacyYaesu(r) => r.set_control(id, value).await,
             _ => bail!("control {id:?} is not available for this driver"),
+        }
+    }
+    async fn get_meter(&self, id: crate::MeterId) -> Result<Option<u8>> {
+        match self {
+            Self::Icom(r) => r.get_meter(id).await,
+            Self::Yaesu(r) => r.get_meter(id).await,
+            Self::Kenwood(r) => match id {
+                crate::MeterId::Signal => Ok(Some(r.get_signal_meter()?)),
+                crate::MeterId::Swr => Ok(Some(r.get_swr_meter()?)),
+                _ => Ok(None),
+            },
+            _ => Ok(None),
+        }
+    }
+    fn supports_meter(&self, id: crate::MeterId) -> bool {
+        match self {
+            Self::Icom(r) => r.supports_meter(id),
+            Self::Yaesu(r) => r.model().is_some() && !matches!(id, crate::MeterId::Temperature),
+            Self::Kenwood(r) => {
+                r.model().is_some() && matches!(id, crate::MeterId::Signal | crate::MeterId::Swr)
+            }
+            _ => false,
+        }
+    }
+    fn supports_control(&self, id: crate::ControlId) -> bool {
+        match self {
+            Self::Icom(r) => r.supports_control(id),
+            Self::Yaesu(r) => r.supports_control(id),
+            Self::Kenwood(r) => r.supports_control(id),
+            Self::LegacyYaesu(r) => r.supports_control(id),
+            _ => false,
+        }
+    }
+    async fn start_tuner(&self) -> Result<()> {
+        match self {
+            Self::Icom(r) => r.start_tuner().await,
+            _ => bail!("antenna tuner control is not available for this driver"),
+        }
+    }
+    async fn get_tuner_status(&self) -> Result<Option<TunerStatus>> {
+        match self {
+            Self::Icom(r) => r.get_tuner_status().await,
+            _ => Ok(None),
         }
     }
     fn capabilities(&self) -> RadioCapabilities {
@@ -563,6 +632,50 @@ mod tests {
         );
         assert!(open_model("TS-2000", "/dev/null", 115_200, 0xE0).is_err());
         assert!(open_model("TS-2000X", "/dev/null", 9_600, 0xE0).is_err());
+    }
+    #[test]
+    fn configured_radio_reports_profiled_controls_and_meters() {
+        let icom = open_model("IC-7300", "/dev/null", 115_200, 0xE0).unwrap();
+        assert!(icom.supports_control(crate::ControlId::IpPlus));
+        assert!(icom.supports_control(crate::ControlId::NoiseReduction));
+        assert!(icom.supports_meter(crate::MeterId::Swr));
+        assert!(!icom.supports_meter(crate::MeterId::Power));
+
+        let ic9700 = open_model("IC-9700", "/dev/null", 115_200, 0xE0).unwrap();
+        assert!(ic9700.supports_control(crate::ControlId::MainSub));
+        assert!(ic9700.supports_control(crate::ControlId::ExternalPreamp));
+
+        let yaesu = open_model("FTDX10", "/dev/null", 38_400, 0xE0).unwrap();
+        assert!(yaesu.supports_control(crate::ControlId::Agc));
+        assert!(yaesu.supports_control(crate::ControlId::NoiseReductionLevel));
+        assert!(yaesu.supports_meter(crate::MeterId::Voltage));
+        assert!(!yaesu.supports_meter(crate::MeterId::Temperature));
+
+        let kenwood = open_model("TS-890S", "/dev/null", 115_200, 0xE0).unwrap();
+        assert!(kenwood.supports_control(crate::ControlId::RfPower));
+        assert!(kenwood.supports_meter(crate::MeterId::Signal));
+        assert!(kenwood.supports_meter(crate::MeterId::Swr));
+        assert!(!kenwood.supports_meter(crate::MeterId::Alc));
+
+        let generic = open_model(GENERIC_KENWOOD_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
+        assert!(!generic.supports_control(crate::ControlId::RfPower));
+        assert!(!generic.supports_meter(crate::MeterId::Signal));
+
+        let generic_icom = open_model(GENERIC_ICOM_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
+        assert!(!generic_icom.supports_control(crate::ControlId::IpPlus));
+        assert!(!generic_icom.supports_meter(crate::MeterId::Swr));
+
+        let generic_yaesu = open_model(GENERIC_YAESU_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
+        assert!(!generic_yaesu.supports_control(crate::ControlId::Agc));
+        assert!(!generic_yaesu.supports_meter(crate::MeterId::Swr));
+
+        let legacy = open_model("FT-857D", "/dev/null", 9_600, 0xE0).unwrap();
+        assert!(legacy.supports_control(crate::ControlId::Split));
+        assert!(!legacy.supports_control(crate::ControlId::RfPower));
+
+        let generic_legacy =
+            open_model(GENERIC_YAESU_CLASSIC_MODEL, "/dev/null", 4_800, 0xE0).unwrap();
+        assert!(!generic_legacy.supports_control(crate::ControlId::Split));
     }
     #[test]
     fn decodes_common_ascii_modes() {

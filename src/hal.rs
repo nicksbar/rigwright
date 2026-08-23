@@ -1,6 +1,8 @@
 //! Protocol-neutral radio hardware abstraction layer.
 
-pub use crate::hal_types::{BaseMode, ControlId, ControlValue, Mode, OperatingMode};
+pub use crate::hal_types::{
+    BaseMode, ControlId, ControlValue, MeterId, Mode, OperatingMode, TunerStatus,
+};
 use anyhow::Result;
 use async_trait::async_trait;
 
@@ -17,6 +19,8 @@ pub struct RadioCapabilities {
     pub can_set_mode: bool,
     pub can_get_ptt: bool,
     pub can_set_ptt: bool,
+    pub can_get_power: bool,
+    pub can_set_power: bool,
     pub can_raw_protocol: bool,
 }
 
@@ -36,6 +40,12 @@ pub trait Radio: Send + Sync {
     async fn get_ptt(&self) -> Result<bool> {
         anyhow::bail!("reading PTT state is not supported by this radio")
     }
+    async fn get_power(&self) -> Result<bool> {
+        anyhow::bail!("reading radio power state is not supported by this radio")
+    }
+    async fn set_power(&self, _enabled: bool) -> Result<()> {
+        anyhow::bail!("setting radio power state is not supported by this radio")
+    }
     async fn protocol_write_read(&self, _request: &[u8]) -> Result<Vec<u8>> {
         Ok(Vec::new())
     }
@@ -44,6 +54,26 @@ pub trait Radio: Send + Sync {
     }
     async fn set_control(&self, _id: ControlId, _value: ControlValue) -> Result<()> {
         Ok(())
+    }
+    /// Read a normalized meter level on the HAL's 0..=255 scale.
+    async fn get_meter(&self, _id: MeterId) -> Result<Option<u8>> {
+        Ok(None)
+    }
+    /// Report whether this driver has a documented implementation for a
+    /// particular normalized meter.
+    fn supports_meter(&self, _id: MeterId) -> bool {
+        false
+    }
+    /// Report whether this driver has a documented implementation for a
+    /// particular typed control.
+    fn supports_control(&self, _id: ControlId) -> bool {
+        false
+    }
+    async fn start_tuner(&self) -> Result<()> {
+        anyhow::bail!("antenna tuner control is not supported by this radio")
+    }
+    async fn get_tuner_status(&self) -> Result<Option<TunerStatus>> {
+        Ok(None)
     }
     fn capabilities(&self) -> RadioCapabilities;
 
@@ -64,9 +94,6 @@ pub trait Radio: Send + Sync {
         self.set_ptt(enabled).await
     }
 }
-
-/// Backward-compatible name for the protocol-neutral HAL trait.
-pub use Radio as RadioHal;
 
 #[derive(Debug, Clone, Default)]
 pub struct RadioStatus {
@@ -153,6 +180,8 @@ impl Radio for NullRadio {
             can_set_mode: true,
             can_get_ptt: true,
             can_set_ptt: true,
+            can_get_power: false,
+            can_set_power: false,
             can_raw_protocol: false,
         }
     }

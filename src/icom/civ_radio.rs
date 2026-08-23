@@ -16,7 +16,7 @@ use std::{
 use super::profile::profile_for_model;
 use super::profile::ControlEncoding;
 pub use crate::hal_types::{BaseMode, Mode, OperatingMode};
-use crate::hal_types::{ControlId, ControlValue};
+use crate::hal_types::{ControlId, ControlValue, MeterId, TunerStatus};
 
 const CI_V_FRAME_START: u8 = 0xFE;
 const CI_V_FRAME_END: u8 = 0xFD;
@@ -441,16 +441,22 @@ impl IcomCiVRadio {
         self.with_serial_port(Duration::from_millis(700), |port| {
             let freq_cmd = self.build_frame(0x03);
             self.write_frame(port, &freq_cmd)?;
-            let freq = self.read_response_matching(port, Duration::from_millis(1200), |frame| {
-                frame_matches_request(frame, &[0x03])
-            })?;
+            let freq = self.read_response_matching(
+                port,
+                Duration::from_millis(1200),
+                Some(&freq_cmd),
+                |frame| frame_matches_request(frame, &[0x03]),
+            )?;
             let freq_value = parse_frequency(&freq);
 
             let mode_cmd = self.build_frame(0x04);
             self.write_frame(port, &mode_cmd)?;
-            let mode = self.read_response_matching(port, Duration::from_millis(1200), |frame| {
-                frame_matches_request(frame, &[0x04])
-            })?;
+            let mode = self.read_response_matching(
+                port,
+                Duration::from_millis(1200),
+                Some(&mode_cmd),
+                |frame| frame_matches_request(frame, &[0x04]),
+            )?;
             let mode_details = parse_mode_details(&mode);
             let mode_value = mode_details.map(|m| m.label());
 
@@ -466,16 +472,22 @@ impl IcomCiVRadio {
         self.with_serial_port(Duration::from_millis(300), |port| {
             let freq_cmd = self.build_frame(0x03);
             self.write_frame(port, &freq_cmd)?;
-            let freq = self.read_response_matching(port, Duration::from_millis(320), |frame| {
-                frame_matches_request(frame, &[0x03])
-            })?;
+            let freq = self.read_response_matching(
+                port,
+                Duration::from_millis(320),
+                Some(&freq_cmd),
+                |frame| frame_matches_request(frame, &[0x03]),
+            )?;
             let freq_value = parse_frequency(&freq);
 
             let mode_cmd = self.build_frame(0x04);
             self.write_frame(port, &mode_cmd)?;
-            let mode = self.read_response_matching(port, Duration::from_millis(320), |frame| {
-                frame_matches_request(frame, &[0x04])
-            })?;
+            let mode = self.read_response_matching(
+                port,
+                Duration::from_millis(320),
+                Some(&mode_cmd),
+                |frame| frame_matches_request(frame, &[0x04]),
+            )?;
             let mode_details = parse_mode_details(&mode);
             let mode_value = mode_details.map(|m| m.label());
 
@@ -578,6 +590,7 @@ impl IcomCiVRadio {
         &self,
         port: &mut Box<dyn SerialPort>,
         timeout: Duration,
+        echo_frame: Option<&[u8]>,
         mut matcher: F,
     ) -> Result<Vec<u8>>
     where
@@ -607,6 +620,13 @@ impl IcomCiVRadio {
                         );
                     pending.extend_from_slice(&buf[..bytes]);
                     for frame in drain_ci_v_frames(&mut pending) {
+                        // With CI-V USB Echo Back enabled, the radio/USB
+                        // interface returns the exact outbound frame before
+                        // the real ACK or data response. It is transport
+                        // noise, not a response to match.
+                        if echo_frame.is_some_and(|echo| frame == echo) {
+                            continue;
+                        }
                         if !is_radio_to_controller_frame(
                             &frame,
                             self.radio_address,
@@ -639,13 +659,19 @@ impl IcomCiVRadio {
             self.write_frame(port, &frame)?;
 
             if expect_data_frame {
-                self.read_response_matching(port, Duration::from_millis(1500), |response| {
-                    frame_matches_request(response, payload)
-                })
+                self.read_response_matching(
+                    port,
+                    Duration::from_millis(1500),
+                    Some(&frame),
+                    |response| frame_matches_request(response, payload),
+                )
             } else {
-                self.read_response_matching(port, Duration::from_millis(1_200), |response| {
-                    is_ack_frame(response) || is_nak_frame(response)
-                })
+                self.read_response_matching(
+                    port,
+                    Duration::from_millis(1_200),
+                    Some(&frame),
+                    |response| is_ack_frame(response) || is_nak_frame(response),
+                )
             }
         })?;
         if expect_data_frame || is_ack_frame(&response) {
@@ -719,6 +745,27 @@ impl IcomCiVRadio {
         Ok(())
     }
 
+    fn set_power_blocking(&self, enabled: bool) -> Result<()> {
+        if !enabled {
+            let _ = self.transact(&[0x18, 0x00], false)?;
+            return Ok(());
+        }
+
+        // Icom requires a stream of FE preamble bytes before the power-on
+        // command when the radio is already off. The documented counts are
+        // time-based examples: 15 at 4800, 30 at 9600, and 60 at 19200.
+        // Preserve that preamble duration at faster configured baud rates.
+        let preamble_count = (self.baud_rate / 320).max(15) as usize;
+        let frame = self.build_frame_payload(&[0x18, 0x01]);
+        self.with_serial_port(Duration::from_millis(700), |port| {
+            port.write_all(&vec![0xFE; preamble_count])
+                .context("failed to write CI-V power-on preamble")?;
+            self.write_frame(port, &frame)?;
+            port.flush()
+                .context("failed to flush CI-V power-on command")
+        })
+    }
+
     fn get_frequency_blocking(&self) -> Result<u64> {
         let response = self.transact(&[0x03], true)?;
         parse_frequency(&response).context("frequency not present in CI-V response")
@@ -742,6 +789,45 @@ impl IcomCiVRadio {
             Some(0x01) => Ok(true),
             Some(value) => anyhow::bail!("invalid CI-V PTT state: {value:#04x}"),
             None => anyhow::bail!("missing CI-V PTT state"),
+        }
+    }
+
+    fn get_meter_blocking(&self, id: MeterId) -> Result<u8> {
+        let prefix: &[u8] = match id {
+            // IC-7300 manual, CI-V command table: 15 12, SWR meter.
+            MeterId::Swr => &[0x15, 0x12],
+            _ => anyhow::bail!("CI-V meter {id:?} is not implemented for this profile"),
+        };
+        let response = self.transact(prefix, true)?;
+        let data = response_data_after_prefix(&response, prefix)?;
+        decode_level_255_bcd(data).context("invalid CI-V meter payload")
+    }
+
+    fn set_tuner_enabled_blocking(&self, enabled: bool) -> Result<()> {
+        self.transact_ack(&[0x1C, 0x01, if enabled { 0x01 } else { 0x00 }])
+    }
+
+    fn start_tuner_blocking(&self) -> Result<()> {
+        self.transact_ack(&[0x1C, 0x01, 0x02])
+    }
+
+    fn get_tuner_status_blocking(&self) -> Result<TunerStatus> {
+        let response = self.transact(&[0x1C, 0x01], true)?;
+        let data = response_data_after_prefix(&response, &[0x1C, 0x01])?;
+        match *data.first().context("missing CI-V tuner status")? {
+            0x00 => Ok(TunerStatus {
+                enabled: false,
+                tuning: false,
+            }),
+            0x01 => Ok(TunerStatus {
+                enabled: true,
+                tuning: false,
+            }),
+            0x02 => Ok(TunerStatus {
+                enabled: true,
+                tuning: true,
+            }),
+            other => anyhow::bail!("invalid CI-V tuner status: {other:#04x}"),
         }
     }
 
@@ -782,6 +868,22 @@ impl IcomCiVRadio {
                         parse_mode_details(&response).context("unable to decode mode details")?;
                     Ok(Some(ControlValue::Bool(details.data_mode)))
                 }
+            };
+        }
+
+        if id == ControlId::Tuner {
+            return match op {
+                ControlOp::Set => {
+                    let enabled = match value.context("missing tuner value")? {
+                        ControlValue::Bool(v) => v,
+                        _ => anyhow::bail!("Tuner control expects bool value"),
+                    };
+                    self.set_tuner_enabled_blocking(enabled)?;
+                    Ok(None)
+                }
+                ControlOp::Get => Ok(Some(ControlValue::Bool(
+                    self.get_tuner_status_blocking()?.enabled,
+                ))),
             };
         }
 
@@ -1207,6 +1309,14 @@ impl Radio for IcomCiVRadio {
         self.get_ptt_blocking()
     }
 
+    async fn get_power(&self) -> Result<bool> {
+        anyhow::bail!("Icom CI-V power state is write-only")
+    }
+
+    async fn set_power(&self, enabled: bool) -> Result<()> {
+        self.set_power_blocking(enabled)
+    }
+
     async fn protocol_write_read(&self, request: &[u8]) -> Result<Vec<u8>> {
         if request.first().copied() != Some(CI_V_FRAME_START)
             || request.get(1).copied() != Some(CI_V_FRAME_START)
@@ -1217,9 +1327,12 @@ impl Radio for IcomCiVRadio {
 
         self.with_serial_port(Duration::from_millis(700), |port| {
             self.write_frame(port, request)?;
-            self.read_response_matching(port, Duration::from_millis(1_200), |frame| {
-                !is_spectrum_data_frame(frame)
-            })
+            self.read_response_matching(
+                port,
+                Duration::from_millis(1_200),
+                Some(request),
+                |frame| !is_spectrum_data_frame(frame),
+            )
         })
     }
 
@@ -1228,6 +1341,36 @@ impl Radio for IcomCiVRadio {
             return Ok(None);
         }
         self.run_control_op(id, ControlOp::Get, None)
+    }
+
+    async fn get_meter(&self, id: MeterId) -> Result<Option<u8>> {
+        Ok(Some(self.get_meter_blocking(id)?))
+    }
+
+    fn supports_meter(&self, id: MeterId) -> bool {
+        self.model().is_some() && matches!(id, MeterId::Swr)
+    }
+
+    fn supports_control(&self, id: ControlId) -> bool {
+        let Some(model) = self.model() else {
+            return false;
+        };
+        let profile = profile_for_model(model);
+        profile.control(id).is_some()
+            || matches!(
+                id,
+                ControlId::DataMode | ControlId::Filter | ControlId::RawCiV | ControlId::Vfo
+            )
+            || (id == ControlId::MainSub && profile.main_sub.is_some())
+            || (id == ControlId::ExternalPreamp && profile.external_preamp.is_some())
+    }
+
+    async fn start_tuner(&self) -> Result<()> {
+        self.start_tuner_blocking()
+    }
+
+    async fn get_tuner_status(&self) -> Result<Option<TunerStatus>> {
+        Ok(Some(self.get_tuner_status_blocking()?))
     }
 
     async fn set_control(&self, id: ControlId, value: ControlValue) -> Result<()> {
@@ -1246,6 +1389,8 @@ impl Radio for IcomCiVRadio {
             can_set_mode: true,
             can_get_ptt: true,
             can_set_ptt: true,
+            can_get_power: false,
+            can_set_power: true,
             can_raw_protocol: true,
         }
     }
@@ -1670,6 +1815,13 @@ mod tests {
         assert_eq!(decode_level_255_bcd(&encoded), Some(173));
         assert_eq!(decode_level_255_bcd(&[0xF1, 0x73]), None);
         assert_eq!(decode_level_255_bcd(&[0x01, 0xFA]), None);
+    }
+
+    #[test]
+    fn swr_meter_uses_documented_decimal_scaling() {
+        assert_eq!(decode_level_255_bcd(&[0x00, 0x00]), Some(0));
+        assert_eq!(decode_level_255_bcd(&[0x00, 0x48]), Some(48));
+        assert_eq!(decode_level_255_bcd(&[0x01, 0x20]), Some(120));
     }
 
     #[test]

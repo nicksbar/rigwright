@@ -110,6 +110,8 @@ impl RadioModelProfile {
             can_set_mode: true,
             can_get_ptt,
             can_set_ptt: true,
+            can_get_power: matches!(self.protocol, Protocol::YaesuCat | Protocol::KenwoodCat),
+            can_set_power: !matches!(self.protocol, Protocol::YaesuLegacyCat),
             can_raw_protocol: true,
         }
     }
@@ -163,6 +165,10 @@ impl RadioModelProfile {
                 let profile = crate::yaesu::profile::profile_for_model(model);
                 matches!(id, ControlId::RfPower) && profile.power_range_watts.is_some()
                     || id == ControlId::Split && profile.supports_split
+                    || matches!(
+                        id,
+                        ControlId::Agc | ControlId::NoiseReduction | ControlId::NoiseReductionLevel
+                    )
             }
             Protocol::YaesuLegacyCat => id == ControlId::Split,
             Protocol::KenwoodCat => {
@@ -628,13 +634,20 @@ mod tests {
     #[test]
     fn typed_control_support_matches_driver_profiles() {
         let ic7300 = *find_model("IC-7300").unwrap();
+        let ic7610 = *find_model("IC-7610").unwrap();
+        let ic9700 = *find_model("IC-9700").unwrap();
         let ftdx10 = *find_model("FTDX10").unwrap();
         let ft991a = *find_model("FT-991A").unwrap();
+        let ft857d = *find_model("FT-857D").unwrap();
         let ts890s = *find_model("TS-890S").unwrap();
         assert!(ic7300.supports_control(crate::ControlId::AfGain));
         assert!(ic7300.supports_control(crate::ControlId::Filter));
+        assert!(!ic7610.supports_control(crate::ControlId::Agc));
+        assert!(ic9700.supports_control(crate::ControlId::MainSub));
+        assert!(ic9700.supports_control(crate::ControlId::ExternalPreamp));
         assert!(ftdx10.supports_control(crate::ControlId::Split));
         assert!(!ft991a.supports_control(crate::ControlId::Split));
+        assert!(ft857d.supports_control(crate::ControlId::Split));
         assert!(ts890s.supports_control(crate::ControlId::RfPower));
         assert!(!ts890s.supports_control(crate::ControlId::AfGain));
         assert!(!ts890s.driver_capabilities().can_get_ptt);

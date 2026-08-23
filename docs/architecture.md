@@ -7,7 +7,7 @@ Rigwright has one protocol-neutral root HAL and separate protocol backends.
 The root API lives in `src/hal.rs` and `src/controls.rs`:
 
 - `Radio` provides frequency, mode, PTT state, controls, raw access, and
-  capabilities. `RadioHal` remains an alias for source compatibility.
+  capabilities through the `Radio` trait.
 - `Mode`, `ControlId`, and `ControlValue` are application-facing types.
 - Drivers translate these types into their protocol-specific command formats.
 

@@ -19,18 +19,33 @@ Only the IC-7300 is regularly hardware-tested. Other profiles are not yet
 claimed as hardware validated. Modern Yaesu models use a profile-driven ASCII
 CAT engine with model IDs, ranges, mode maps, readable PTT, RF power, and split
 gating. Classic Yaesu models use a separate profile-driven five-byte 8N2 engine
-with readable PTT, split, meters, and status. Kenwood models use a
+with readable PTT, split, and status. Kenwood models use a
 profile-driven persistent PC-control engine with exact IDs, command families,
 ranges, modes, power, split, and meter layouts. Hamlib `rigctld`, DX Lab
 Commander, and an in-memory mock backend are also available.
 
 The source tree follows the public API: protocol-neutral types live in
 `hal.rs`, `controls.rs`, and `models.rs`; shared framing lives under `protocol/`;
-and vendor/model profiles live under `icom/`, `yaesu/`, and `kenwood/`. See
-[`docs/architecture.md`](docs/architecture.md) for the profile-driven design,
-override rules, and validation policy. See
-[`docs/supported-radios.md`](docs/supported-radios.md) for maturity labels and
-official command-manual sources.
+and vendor/model profiles live under `icom/`, `yaesu/`, and `kenwood/`.
+
+## Support and documentation
+
+The [radio capability matrix](docs/radio-capability-matrix.md) is the canonical
+status report. It tracks every HAL operation, typed control, normalized meter,
+manual-only surface, exact model profile, and current QSONaut consumption. It
+distinguishes documented behavior from implemented, profile-gated, consumed,
+and hardware-validated behavior.
+
+- [Radio capability matrix](docs/radio-capability-matrix.md) — detailed status,
+  normalization, model exceptions, and QSONaut coverage.
+- [Supported radios and manual sources](docs/supported-radios.md) — supported
+  models, maturity labels, and workspace manual editions.
+- [Driver architecture](docs/architecture.md) — HAL boundaries, transport
+  rules, profiles, and validation policy.
+
+Only the capability matrix should be updated for ordinary support-status
+changes; the architecture and model-addition guides are design/maintenance
+references.
 
 ## Use
 

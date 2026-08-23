@@ -76,6 +76,14 @@ pub enum ControlId {
     Attenuator,
     NoiseBlanker,
     NoiseReduction,
+    /// Noise-reduction depth (`ControlValue::U8`), where supported.
+    NoiseReductionLevel,
+    /// Icom IP Plus receiver optimization.
+    IpPlus,
+    /// Auto-notch enable/disable.
+    Notch,
+    /// Manual-notch enable/disable; position is a separate model-specific setting.
+    ManualNotch,
     DataMode,
     Filter,
     Agc,
@@ -87,6 +95,60 @@ pub enum ControlId {
     Vfo,
     MainSub,
     ExternalPreamp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MeterId {
+    /// Receive signal-strength meter, normalized to 0..=255.
+    Signal,
+    /// Relative RF output-power meter, normalized to 0..=255.
+    Power,
+    /// Transmit SWR meter, normalized by the driver to a 0..=255 meter level.
+    Swr,
+    /// Transmit ALC meter, normalized to 0..=255.
+    Alc,
+    /// Speech/data compressor meter, normalized to 0..=255.
+    Compression,
+    /// PA drain/current meter, normalized to 0..=255.
+    Current,
+    /// PA voltage meter, normalized to 0..=255.
+    Voltage,
+    /// PA temperature meter, normalized to 0..=255.
+    Temperature,
+}
+
+/// Normalize a vendor meter-dot value to the HAL's common 0..=255 scale.
+///
+/// The value represents meter deflection, not a physical SWR ratio. Drivers
+/// must use a documented vendor maximum and reject values above it.
+pub fn normalize_meter_level(value: u16, vendor_max: u16) -> Option<u8> {
+    if vendor_max == 0 || value > vendor_max {
+        return None;
+    }
+    Some((((u32::from(value) * 255) + u32::from(vendor_max) / 2) / u32::from(vendor_max)) as u8)
+}
+
+#[cfg(test)]
+mod meter_tests {
+    use super::normalize_meter_level;
+
+    #[test]
+    fn normalizes_vendor_meter_ranges() {
+        assert_eq!(normalize_meter_level(0, 30), Some(0));
+        assert_eq!(normalize_meter_level(15, 30), Some(128));
+        assert_eq!(normalize_meter_level(30, 30), Some(255));
+        assert_eq!(normalize_meter_level(1, 3), Some(85));
+        assert_eq!(normalize_meter_level(2, 3), Some(170));
+        assert_eq!(normalize_meter_level(255, 255), Some(255));
+        assert_eq!(normalize_meter_level(31, 30), None);
+        assert_eq!(normalize_meter_level(0, 0), None);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TunerStatus {
+    pub enabled: bool,
+    pub tuning: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

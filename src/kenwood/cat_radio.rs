@@ -13,7 +13,7 @@ use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
 
 use crate::{
     hal::{Mode, Radio, RadioCapabilities},
-    hal_types::{ControlId, ControlValue},
+    hal_types::{normalize_meter_level, ControlId, ControlValue, MeterId},
     models::KenwoodCatModel,
     protocol::ascii_cat,
 };
@@ -154,6 +154,18 @@ impl KenwoodCatRadio {
         self.send_set("PC", &format!("{watts:03}"))
     }
 
+    pub fn get_power_state(&self) -> Result<bool> {
+        match parse_payload(&self.query("PS", None, Some(1))?, "PS")? {
+            "0" => Ok(false),
+            "1" => Ok(true),
+            value => bail!("invalid Kenwood PS response: {value}"),
+        }
+    }
+
+    pub fn set_power_state(&self, enabled: bool) -> Result<()> {
+        self.send_set("PS", if enabled { "1" } else { "0" })
+    }
+
     pub fn get_meter(&self) -> Result<u16> {
         let profile = self.selected_profile()?;
         let (parameters, payload_len) = match profile.model {
@@ -174,6 +186,34 @@ impl KenwoodCatRadio {
             bail!("Kenwood SM response exceeds the profiled meter range: {value}");
         }
         Ok(value)
+    }
+
+    pub(crate) fn get_swr_meter(&self) -> Result<u8> {
+        let profile = self.selected_profile()?;
+        let response = self.query("RM", None, Some(5))?;
+        let payload = parse_payload(&response, "RM")?;
+        let meter_type = payload
+            .chars()
+            .next()
+            .context("missing Kenwood RM meter selector")?;
+        if meter_type != profile.swr_rm_selector {
+            bail!(
+                "Kenwood RM response meter {meter_type} is not the profiled SWR meter {}: {payload}",
+                profile.swr_rm_selector
+            );
+        }
+        let value: u16 = payload[1..]
+            .parse()
+            .context("invalid Kenwood RM SWR response")?;
+        normalize_meter_level(value, profile.swr_meter_max)
+            .context("Kenwood RM SWR response exceeds the profiled meter range")
+    }
+
+    pub(crate) fn get_signal_meter(&self) -> Result<u8> {
+        let profile = self.selected_profile()?;
+        let value = self.get_meter()?;
+        normalize_meter_level(value, profile.meter_max)
+            .context("Kenwood SM response exceeds the profiled meter range")
     }
 
     pub fn get_split(&self) -> Result<bool> {
@@ -468,6 +508,14 @@ impl Radio for KenwoodCatRadio {
         Ok(self.get_if_status()?.transmitting)
     }
 
+    async fn get_power(&self) -> Result<bool> {
+        self.get_power_state()
+    }
+
+    async fn set_power(&self, enabled: bool) -> Result<()> {
+        self.set_power_state(enabled)
+    }
+
     async fn protocol_write_read(&self, request: &[u8]) -> Result<Vec<u8>> {
         validate_complete_command(request)?;
         let command = std::str::from_utf8(&request[..2]).context("CAT command is not ASCII")?;
@@ -484,6 +532,18 @@ impl Radio for KenwoodCatRadio {
         }
     }
 
+    async fn get_meter(&self, id: MeterId) -> Result<Option<u8>> {
+        match id {
+            MeterId::Signal => Ok(Some(self.get_signal_meter()?)),
+            MeterId::Swr => Ok(Some(self.get_swr_meter()?)),
+            _ => bail!("Kenwood meter {id:?} is not implemented for this profile"),
+        }
+    }
+
+    fn supports_meter(&self, id: MeterId) -> bool {
+        self.model().is_some() && matches!(id, MeterId::Signal | MeterId::Swr)
+    }
+
     async fn set_control(&self, id: ControlId, value: ControlValue) -> Result<()> {
         match (id, value) {
             (ControlId::RfPower, ControlValue::U8(level)) => {
@@ -492,6 +552,13 @@ impl Radio for KenwoodCatRadio {
             (ControlId::Split, ControlValue::Bool(enabled)) => self.set_split(enabled),
             (_, value) => bail!("unsupported Kenwood CAT control/value: {id:?} = {value:?}"),
         }
+    }
+
+    fn supports_control(&self, id: ControlId) -> bool {
+        self.profile().is_some_and(|profile| {
+            (id == ControlId::RfPower && profile.power_range_watts.is_some())
+                || id == ControlId::Split
+        })
     }
 
     fn capabilities(&self) -> RadioCapabilities {
@@ -504,6 +571,8 @@ impl Radio for KenwoodCatRadio {
                 .profile()
                 .is_some_and(|profile| profile.supports_if_status),
             can_set_ptt: true,
+            can_get_power: true,
+            can_set_power: true,
             can_raw_protocol: true,
         }
     }
