@@ -76,6 +76,12 @@ pub enum ControlId {
     Attenuator,
     NoiseBlanker,
     NoiseReduction,
+    /// Icom IP Plus receiver optimization.
+    IpPlus,
+    /// Auto-notch enable/disable.
+    Notch,
+    /// Manual-notch enable/disable; position is a separate model-specific setting.
+    ManualNotch,
     DataMode,
     Filter,
     Agc,
@@ -87,6 +93,18 @@ pub enum ControlId {
     Vfo,
     MainSub,
     ExternalPreamp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MeterId {
+    /// Transmit SWR meter; the raw value is vendor-defined.
+    Swr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TunerStatus {
+    pub enabled: bool,
+    pub tuning: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

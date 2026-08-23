@@ -1,6 +1,8 @@
 //! Protocol-neutral radio hardware abstraction layer.
 
-pub use crate::hal_types::{BaseMode, ControlId, ControlValue, Mode, OperatingMode};
+pub use crate::hal_types::{
+    BaseMode, ControlId, ControlValue, MeterId, Mode, OperatingMode, TunerStatus,
+};
 use anyhow::Result;
 use async_trait::async_trait;
 
@@ -52,6 +54,15 @@ pub trait Radio: Send + Sync {
     }
     async fn set_control(&self, _id: ControlId, _value: ControlValue) -> Result<()> {
         Ok(())
+    }
+    async fn get_meter(&self, _id: MeterId) -> Result<Option<u8>> {
+        Ok(None)
+    }
+    async fn start_tuner(&self) -> Result<()> {
+        anyhow::bail!("antenna tuner control is not supported by this radio")
+    }
+    async fn get_tuner_status(&self) -> Result<Option<TunerStatus>> {
+        Ok(None)
     }
     fn capabilities(&self) -> RadioCapabilities;
 

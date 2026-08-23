@@ -198,6 +198,21 @@ mod tests {
                     .command_prefix,
                 &[0x11]
             );
+            assert_eq!(
+                profile.control(ControlId::IpPlus).unwrap().command_prefix,
+                &[0x1A, 0x07]
+            );
+            assert_eq!(
+                profile.control(ControlId::Notch).unwrap().command_prefix,
+                &[0x16, 0x41]
+            );
+            assert_eq!(
+                profile
+                    .control(ControlId::ManualNotch)
+                    .unwrap()
+                    .command_prefix,
+                &[0x16, 0x42]
+            );
         }
     }
 
@@ -243,6 +258,6 @@ mod tests {
             .is_some());
         assert!(profile_for_model(IcomCivModel::Ic7300)
             .control(ControlId::Tuner)
-            .is_none());
+            .is_some());
     }
 }

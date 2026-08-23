@@ -54,6 +54,28 @@ const CONTROLS: &[ControlSpec] = &[
         command_prefix: &[0x16, 0x40],
         encoding: ControlEncoding::Bool,
     },
+    // `0x1A 0x07`: IP Plus function setting.
+    ControlSpec {
+        id: ControlId::IpPlus,
+        command_prefix: &[0x1A, 0x07],
+        encoding: ControlEncoding::Bool,
+    },
+    // `0x16 0x41`: auto-notch function; manual-notch selection is handled by the driver.
+    ControlSpec {
+        id: ControlId::Notch,
+        command_prefix: &[0x16, 0x41],
+        encoding: ControlEncoding::Bool,
+    },
+    ControlSpec {
+        id: ControlId::ManualNotch,
+        command_prefix: &[0x16, 0x42],
+        encoding: ControlEncoding::Bool,
+    },
+    ControlSpec {
+        id: ControlId::Tuner,
+        command_prefix: &[0x1C, 0x01],
+        encoding: ControlEncoding::Bool,
+    },
     // `0x16 0x12`: automatic gain control preset selection.
     ControlSpec {
         id: ControlId::Agc,

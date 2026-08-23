@@ -13,7 +13,7 @@ pub mod rigctld;
 pub mod yaesu;
 
 pub use hal::{NullRadio, Radio, RadioCapabilities, RadioStatus};
-pub use hal_types::{BaseMode, ControlId, ControlValue, Mode, OperatingMode};
+pub use hal_types::{BaseMode, ControlId, ControlValue, MeterId, Mode, OperatingMode, TunerStatus};
 pub use icom::civ_radio::{
     enumerate_serial_port_descriptors, enumerate_serial_ports, IcomCiVRadio, IcomReceiver, IcomVfo,
     SerialPortDescriptor,

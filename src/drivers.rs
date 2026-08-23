@@ -8,7 +8,7 @@ use std::{
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 
-use crate::hal::{Mode, NullRadio, Radio, RadioCapabilities};
+use crate::hal::{Mode, NullRadio, Radio, RadioCapabilities, TunerStatus};
 use crate::{
     dxlab::DxLabCommanderRadio,
     icom::civ_radio::IcomCiVRadio,
@@ -417,6 +417,24 @@ impl Radio for ConfiguredRadio {
             Self::Kenwood(r) => r.set_control(id, value).await,
             Self::LegacyYaesu(r) => r.set_control(id, value).await,
             _ => bail!("control {id:?} is not available for this driver"),
+        }
+    }
+    async fn get_meter(&self, id: crate::MeterId) -> Result<Option<u8>> {
+        match self {
+            Self::Icom(r) => r.get_meter(id).await,
+            _ => Ok(None),
+        }
+    }
+    async fn start_tuner(&self) -> Result<()> {
+        match self {
+            Self::Icom(r) => r.start_tuner().await,
+            _ => bail!("antenna tuner control is not available for this driver"),
+        }
+    }
+    async fn get_tuner_status(&self) -> Result<Option<TunerStatus>> {
+        match self {
+            Self::Icom(r) => r.get_tuner_status().await,
+            _ => Ok(None),
         }
     }
     fn capabilities(&self) -> RadioCapabilities {

@@ -16,7 +16,7 @@ use std::{
 use super::profile::profile_for_model;
 use super::profile::ControlEncoding;
 pub use crate::hal_types::{BaseMode, Mode, OperatingMode};
-use crate::hal_types::{ControlId, ControlValue};
+use crate::hal_types::{ControlId, ControlValue, MeterId, TunerStatus};
 
 const CI_V_FRAME_START: u8 = 0xFE;
 const CI_V_FRAME_END: u8 = 0xFD;
@@ -792,6 +792,44 @@ impl IcomCiVRadio {
         }
     }
 
+    fn get_meter_blocking(&self, id: MeterId) -> Result<u8> {
+        let prefix: &[u8] = match id {
+            // IC-7300 manual, CI-V command table: 15 12, SWR meter.
+            MeterId::Swr => &[0x15, 0x12],
+        };
+        let response = self.transact(prefix, true)?;
+        let data = response_data_after_prefix(&response, prefix)?;
+        decode_level_255_bcd(data).context("invalid CI-V meter payload")
+    }
+
+    fn set_tuner_enabled_blocking(&self, enabled: bool) -> Result<()> {
+        self.transact_ack(&[0x1C, 0x01, if enabled { 0x01 } else { 0x00 }])
+    }
+
+    fn start_tuner_blocking(&self) -> Result<()> {
+        self.transact_ack(&[0x1C, 0x01, 0x02])
+    }
+
+    fn get_tuner_status_blocking(&self) -> Result<TunerStatus> {
+        let response = self.transact(&[0x1C, 0x01], true)?;
+        let data = response_data_after_prefix(&response, &[0x1C, 0x01])?;
+        match *data.first().context("missing CI-V tuner status")? {
+            0x00 => Ok(TunerStatus {
+                enabled: false,
+                tuning: false,
+            }),
+            0x01 => Ok(TunerStatus {
+                enabled: true,
+                tuning: false,
+            }),
+            0x02 => Ok(TunerStatus {
+                enabled: true,
+                tuning: true,
+            }),
+            other => anyhow::bail!("invalid CI-V tuner status: {other:#04x}"),
+        }
+    }
+
     fn run_control_op(
         &self,
         id: ControlId,
@@ -829,6 +867,22 @@ impl IcomCiVRadio {
                         parse_mode_details(&response).context("unable to decode mode details")?;
                     Ok(Some(ControlValue::Bool(details.data_mode)))
                 }
+            };
+        }
+
+        if id == ControlId::Tuner {
+            return match op {
+                ControlOp::Set => {
+                    let enabled = match value.context("missing tuner value")? {
+                        ControlValue::Bool(v) => v,
+                        _ => anyhow::bail!("Tuner control expects bool value"),
+                    };
+                    self.set_tuner_enabled_blocking(enabled)?;
+                    Ok(None)
+                }
+                ControlOp::Get => Ok(Some(ControlValue::Bool(
+                    self.get_tuner_status_blocking()?.enabled,
+                ))),
             };
         }
 
@@ -1288,6 +1342,18 @@ impl Radio for IcomCiVRadio {
         self.run_control_op(id, ControlOp::Get, None)
     }
 
+    async fn get_meter(&self, id: MeterId) -> Result<Option<u8>> {
+        Ok(Some(self.get_meter_blocking(id)?))
+    }
+
+    async fn start_tuner(&self) -> Result<()> {
+        self.start_tuner_blocking()
+    }
+
+    async fn get_tuner_status(&self) -> Result<Option<TunerStatus>> {
+        Ok(Some(self.get_tuner_status_blocking()?))
+    }
+
     async fn set_control(&self, id: ControlId, value: ControlValue) -> Result<()> {
         if id == ControlId::RawCiV {
             anyhow::bail!("RawCiV is write/read through protocol_write_read, not set_control");
@@ -1730,6 +1796,13 @@ mod tests {
         assert_eq!(decode_level_255_bcd(&encoded), Some(173));
         assert_eq!(decode_level_255_bcd(&[0xF1, 0x73]), None);
         assert_eq!(decode_level_255_bcd(&[0x01, 0xFA]), None);
+    }
+
+    #[test]
+    fn swr_meter_uses_documented_decimal_scaling() {
+        assert_eq!(decode_level_255_bcd(&[0x00, 0x00]), Some(0));
+        assert_eq!(decode_level_255_bcd(&[0x00, 0x48]), Some(48));
+        assert_eq!(decode_level_255_bcd(&[0x01, 0x20]), Some(120));
     }
 
     #[test]
