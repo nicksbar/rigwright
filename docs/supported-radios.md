@@ -1,5 +1,8 @@
 # Radio support and manual sources
 
+For the complete control, meter, manual-surface, and QSONaut-consumption
+inventory, see [`radio-capability-matrix.md`](radio-capability-matrix.md).
+
 Support labels are intentionally conservative. **Hardware validated** means the
 driver is exercised against a physical radio. **Framework** means a model
 profile and protocol primitives exist, but Rigwright does not yet claim a
