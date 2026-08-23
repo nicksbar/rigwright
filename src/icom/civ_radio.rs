@@ -1347,6 +1347,24 @@ impl Radio for IcomCiVRadio {
         Ok(Some(self.get_meter_blocking(id)?))
     }
 
+    fn supports_meter(&self, id: MeterId) -> bool {
+        self.model().is_some() && matches!(id, MeterId::Swr)
+    }
+
+    fn supports_control(&self, id: ControlId) -> bool {
+        let Some(model) = self.model() else {
+            return false;
+        };
+        let profile = profile_for_model(model);
+        profile.control(id).is_some()
+            || matches!(
+                id,
+                ControlId::DataMode | ControlId::Filter | ControlId::RawCiV | ControlId::Vfo
+            )
+            || (id == ControlId::MainSub && profile.main_sub.is_some())
+            || (id == ControlId::ExternalPreamp && profile.external_preamp.is_some())
+    }
+
     async fn start_tuner(&self) -> Result<()> {
         self.start_tuner_blocking()
     }

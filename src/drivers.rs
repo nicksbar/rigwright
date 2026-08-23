@@ -443,7 +443,9 @@ impl Radio for ConfiguredRadio {
     }
     fn supports_control(&self, id: crate::ControlId) -> bool {
         match self {
+            Self::Icom(r) => r.supports_control(id),
             Self::Yaesu(r) => r.supports_control(id),
+            Self::Kenwood(r) => r.supports_control(id),
             _ => false,
         }
     }
@@ -629,6 +631,30 @@ mod tests {
         );
         assert!(open_model("TS-2000", "/dev/null", 115_200, 0xE0).is_err());
         assert!(open_model("TS-2000X", "/dev/null", 9_600, 0xE0).is_err());
+    }
+    #[test]
+    fn configured_radio_reports_profiled_controls_and_meters() {
+        let icom = open_model("IC-7300", "/dev/null", 115_200, 0xE0).unwrap();
+        assert!(icom.supports_control(crate::ControlId::IpPlus));
+        assert!(icom.supports_control(crate::ControlId::NoiseReduction));
+        assert!(icom.supports_meter(crate::MeterId::Swr));
+        assert!(!icom.supports_meter(crate::MeterId::Power));
+
+        let yaesu = open_model("FTDX10", "/dev/null", 38_400, 0xE0).unwrap();
+        assert!(yaesu.supports_control(crate::ControlId::Agc));
+        assert!(yaesu.supports_control(crate::ControlId::NoiseReductionLevel));
+        assert!(yaesu.supports_meter(crate::MeterId::Voltage));
+        assert!(!yaesu.supports_meter(crate::MeterId::Temperature));
+
+        let kenwood = open_model("TS-890S", "/dev/null", 115_200, 0xE0).unwrap();
+        assert!(kenwood.supports_control(crate::ControlId::RfPower));
+        assert!(kenwood.supports_meter(crate::MeterId::Signal));
+        assert!(kenwood.supports_meter(crate::MeterId::Swr));
+        assert!(!kenwood.supports_meter(crate::MeterId::Alc));
+
+        let generic = open_model(GENERIC_KENWOOD_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
+        assert!(!generic.supports_control(crate::ControlId::RfPower));
+        assert!(!generic.supports_meter(crate::MeterId::Signal));
     }
     #[test]
     fn decodes_common_ascii_modes() {

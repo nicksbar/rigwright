@@ -540,6 +540,10 @@ impl Radio for KenwoodCatRadio {
         }
     }
 
+    fn supports_meter(&self, id: MeterId) -> bool {
+        self.model().is_some() && matches!(id, MeterId::Signal | MeterId::Swr)
+    }
+
     async fn set_control(&self, id: ControlId, value: ControlValue) -> Result<()> {
         match (id, value) {
             (ControlId::RfPower, ControlValue::U8(level)) => {
@@ -548,6 +552,13 @@ impl Radio for KenwoodCatRadio {
             (ControlId::Split, ControlValue::Bool(enabled)) => self.set_split(enabled),
             (_, value) => bail!("unsupported Kenwood CAT control/value: {id:?} = {value:?}"),
         }
+    }
+
+    fn supports_control(&self, id: ControlId) -> bool {
+        self.profile().is_some_and(|profile| {
+            (id == ControlId::RfPower && profile.power_range_watts.is_some())
+                || id == ControlId::Split
+        })
     }
 
     fn capabilities(&self) -> RadioCapabilities {

@@ -112,3 +112,7 @@ model-specific 0..30 or 0..70 dot ranges. Modern Yaesu CAT profiles query
 `RM6`, whose documented response is already 0..255. This is normalized meter
 deflection, not a universal physical SWR-ratio conversion; the manuals do not
 define enough cross-vendor ratio calibration to infer one safely.
+
+The model-aware `ConfiguredRadio` wrapper forwards capability checks for Icom,
+Yaesu, and Kenwood. Generic vendor drivers intentionally report no typed
+optional meters or controls until a concrete model profile is selected.
