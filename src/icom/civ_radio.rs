@@ -441,16 +441,22 @@ impl IcomCiVRadio {
         self.with_serial_port(Duration::from_millis(700), |port| {
             let freq_cmd = self.build_frame(0x03);
             self.write_frame(port, &freq_cmd)?;
-            let freq = self.read_response_matching(port, Duration::from_millis(1200), |frame| {
-                frame_matches_request(frame, &[0x03])
-            })?;
+            let freq = self.read_response_matching(
+                port,
+                Duration::from_millis(1200),
+                Some(&freq_cmd),
+                |frame| frame_matches_request(frame, &[0x03]),
+            )?;
             let freq_value = parse_frequency(&freq);
 
             let mode_cmd = self.build_frame(0x04);
             self.write_frame(port, &mode_cmd)?;
-            let mode = self.read_response_matching(port, Duration::from_millis(1200), |frame| {
-                frame_matches_request(frame, &[0x04])
-            })?;
+            let mode = self.read_response_matching(
+                port,
+                Duration::from_millis(1200),
+                Some(&mode_cmd),
+                |frame| frame_matches_request(frame, &[0x04]),
+            )?;
             let mode_details = parse_mode_details(&mode);
             let mode_value = mode_details.map(|m| m.label());
 
@@ -466,16 +472,22 @@ impl IcomCiVRadio {
         self.with_serial_port(Duration::from_millis(300), |port| {
             let freq_cmd = self.build_frame(0x03);
             self.write_frame(port, &freq_cmd)?;
-            let freq = self.read_response_matching(port, Duration::from_millis(320), |frame| {
-                frame_matches_request(frame, &[0x03])
-            })?;
+            let freq = self.read_response_matching(
+                port,
+                Duration::from_millis(320),
+                Some(&freq_cmd),
+                |frame| frame_matches_request(frame, &[0x03]),
+            )?;
             let freq_value = parse_frequency(&freq);
 
             let mode_cmd = self.build_frame(0x04);
             self.write_frame(port, &mode_cmd)?;
-            let mode = self.read_response_matching(port, Duration::from_millis(320), |frame| {
-                frame_matches_request(frame, &[0x04])
-            })?;
+            let mode = self.read_response_matching(
+                port,
+                Duration::from_millis(320),
+                Some(&mode_cmd),
+                |frame| frame_matches_request(frame, &[0x04]),
+            )?;
             let mode_details = parse_mode_details(&mode);
             let mode_value = mode_details.map(|m| m.label());
 
@@ -578,6 +590,7 @@ impl IcomCiVRadio {
         &self,
         port: &mut Box<dyn SerialPort>,
         timeout: Duration,
+        echo_frame: Option<&[u8]>,
         mut matcher: F,
     ) -> Result<Vec<u8>>
     where
@@ -607,6 +620,13 @@ impl IcomCiVRadio {
                         );
                     pending.extend_from_slice(&buf[..bytes]);
                     for frame in drain_ci_v_frames(&mut pending) {
+                        // With CI-V USB Echo Back enabled, the radio/USB
+                        // interface returns the exact outbound frame before
+                        // the real ACK or data response. It is transport
+                        // noise, not a response to match.
+                        if echo_frame.is_some_and(|echo| frame == echo) {
+                            continue;
+                        }
                         if !is_radio_to_controller_frame(
                             &frame,
                             self.radio_address,
@@ -639,13 +659,19 @@ impl IcomCiVRadio {
             self.write_frame(port, &frame)?;
 
             if expect_data_frame {
-                self.read_response_matching(port, Duration::from_millis(1500), |response| {
-                    frame_matches_request(response, payload)
-                })
+                self.read_response_matching(
+                    port,
+                    Duration::from_millis(1500),
+                    Some(&frame),
+                    |response| frame_matches_request(response, payload),
+                )
             } else {
-                self.read_response_matching(port, Duration::from_millis(1_200), |response| {
-                    is_ack_frame(response) || is_nak_frame(response)
-                })
+                self.read_response_matching(
+                    port,
+                    Duration::from_millis(1_200),
+                    Some(&frame),
+                    |response| is_ack_frame(response) || is_nak_frame(response),
+                )
             }
         })?;
         if expect_data_frame || is_ack_frame(&response) {
@@ -1246,9 +1272,12 @@ impl Radio for IcomCiVRadio {
 
         self.with_serial_port(Duration::from_millis(700), |port| {
             self.write_frame(port, request)?;
-            self.read_response_matching(port, Duration::from_millis(1_200), |frame| {
-                !is_spectrum_data_frame(frame)
-            })
+            self.read_response_matching(
+                port,
+                Duration::from_millis(1_200),
+                Some(request),
+                |frame| !is_spectrum_data_frame(frame),
+            )
         })
     }
 
