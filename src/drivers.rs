@@ -423,8 +423,28 @@ impl Radio for ConfiguredRadio {
         match self {
             Self::Icom(r) => r.get_meter(id).await,
             Self::Yaesu(r) => r.get_meter(id).await,
-            Self::Kenwood(r) => Ok(Some(r.get_swr_meter()?)),
+            Self::Kenwood(r) => match id {
+                crate::MeterId::Signal => Ok(Some(r.get_signal_meter()?)),
+                crate::MeterId::Swr => Ok(Some(r.get_swr_meter()?)),
+                _ => Ok(None),
+            },
             _ => Ok(None),
+        }
+    }
+    fn supports_meter(&self, id: crate::MeterId) -> bool {
+        match self {
+            Self::Icom(_) => matches!(id, crate::MeterId::Swr),
+            Self::Yaesu(r) => r.model().is_some() && !matches!(id, crate::MeterId::Temperature),
+            Self::Kenwood(r) => {
+                r.model().is_some() && matches!(id, crate::MeterId::Signal | crate::MeterId::Swr)
+            }
+            _ => false,
+        }
+    }
+    fn supports_control(&self, id: crate::ControlId) -> bool {
+        match self {
+            Self::Yaesu(r) => r.supports_control(id),
+            _ => false,
         }
     }
     async fn start_tuner(&self) -> Result<()> {

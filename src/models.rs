@@ -165,6 +165,10 @@ impl RadioModelProfile {
                 let profile = crate::yaesu::profile::profile_for_model(model);
                 matches!(id, ControlId::RfPower) && profile.power_range_watts.is_some()
                     || id == ControlId::Split && profile.supports_split
+                    || matches!(
+                        id,
+                        ControlId::Agc | ControlId::NoiseReduction | ControlId::NoiseReductionLevel
+                    )
             }
             Protocol::YaesuLegacyCat => id == ControlId::Split,
             Protocol::KenwoodCat => {

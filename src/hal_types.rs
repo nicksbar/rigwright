@@ -76,6 +76,8 @@ pub enum ControlId {
     Attenuator,
     NoiseBlanker,
     NoiseReduction,
+    /// Noise-reduction depth (`ControlValue::U8`), where supported.
+    NoiseReductionLevel,
     /// Icom IP Plus receiver optimization.
     IpPlus,
     /// Auto-notch enable/disable.
@@ -97,8 +99,22 @@ pub enum ControlId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MeterId {
+    /// Receive signal-strength meter, normalized to 0..=255.
+    Signal,
+    /// Relative RF output-power meter, normalized to 0..=255.
+    Power,
     /// Transmit SWR meter, normalized by the driver to a 0..=255 meter level.
     Swr,
+    /// Transmit ALC meter, normalized to 0..=255.
+    Alc,
+    /// Speech/data compressor meter, normalized to 0..=255.
+    Compression,
+    /// PA drain/current meter, normalized to 0..=255.
+    Current,
+    /// PA voltage meter, normalized to 0..=255.
+    Voltage,
+    /// PA temperature meter, normalized to 0..=255.
+    Temperature,
 }
 
 /// Normalize a vendor meter-dot value to the HAL's common 0..=255 scale.

@@ -59,6 +59,16 @@ pub trait Radio: Send + Sync {
     async fn get_meter(&self, _id: MeterId) -> Result<Option<u8>> {
         Ok(None)
     }
+    /// Report whether this driver has a documented implementation for a
+    /// particular normalized meter.
+    fn supports_meter(&self, _id: MeterId) -> bool {
+        false
+    }
+    /// Report whether this driver has a documented implementation for a
+    /// particular typed control.
+    fn supports_control(&self, _id: ControlId) -> bool {
+        false
+    }
     async fn start_tuner(&self) -> Result<()> {
         anyhow::bail!("antenna tuner control is not supported by this radio")
     }

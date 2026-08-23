@@ -796,6 +796,7 @@ impl IcomCiVRadio {
         let prefix: &[u8] = match id {
             // IC-7300 manual, CI-V command table: 15 12, SWR meter.
             MeterId::Swr => &[0x15, 0x12],
+            _ => anyhow::bail!("CI-V meter {id:?} is not implemented for this profile"),
         };
         let response = self.transact(prefix, true)?;
         let data = response_data_after_prefix(&response, prefix)?;

@@ -101,7 +101,12 @@ model-specific modes and split commands, reads the documented meter layout,
 and matches responses around interleaved Auto Information frames. PTT writes
 are verified on the two models with pollable `IF` status. All three remain
 framework-level until exercised against physical radios.
-SWR telemetry uses the HAL's normalized 0..255 meter-deflection scale. The
+All normalized meters use the HAL's 0..255 meter-deflection scale. Yaesu CAT
+profiles expose signal, power, SWR, ALC, compression, current, and voltage
+through the documented `RM1` and `RM3`..`RM8` selectors, plus typed AGC,
+noise-reduction, and noise-reduction-level controls. Kenwood profiles expose
+normalized signal and profile-correct SWR. SWR telemetry uses the HAL's normalized
+0..255 meter-deflection scale. The
 Kenwood profiles query the documented `RM` SWR meter and normalize their
 model-specific 0..30 or 0..70 dot ranges. Modern Yaesu CAT profiles query
 `RM6`, whose documented response is already 0..255. This is normalized meter
