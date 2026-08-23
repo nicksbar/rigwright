@@ -28,9 +28,10 @@ reproducible without treating a product-page compatibility claim as evidence:
 
 The shared Icom profile also exposes IP+ (`1A 07`), auto notch (`16 41`), and
 manual notch enable (`16 42`) as typed controls. SWR is read-only telemetry via
-`MeterId::Swr`, using `15 12`; the IC-7300 manual documents raw values of 0 =
-1.0:1, 48 = 1.5:1, 80 = 2.0:1, and 120 = 3.0:1. These controls are
-framework-level for the non-IC-7300 profiles until bench-tested.
+`MeterId::Swr`, using `15 12`; the driver exposes the result on the HAL's
+normalized 0..255 meter-deflection scale. The IC-7300 manual documents raw
+values of 0 = 1.0:1, 48 = 1.5:1, 80 = 2.0:1, and 120 = 3.0:1, but those ratio
+anchors are Icom-specific and are not applied globally by the HAL.
 
 The Icom tuner surface is separate from the meter: `ControlId::Tuner` uses the
 documented tuner enable/status operation (`1C 01`), `start_tuner()` requests
@@ -100,3 +101,9 @@ model-specific modes and split commands, reads the documented meter layout,
 and matches responses around interleaved Auto Information frames. PTT writes
 are verified on the two models with pollable `IF` status. All three remain
 framework-level until exercised against physical radios.
+SWR telemetry uses the HAL's normalized 0..255 meter-deflection scale. The
+Kenwood profiles query the documented `RM` SWR meter and normalize their
+model-specific 0..30 or 0..70 dot ranges. Modern Yaesu CAT profiles query
+`RM6`, whose documented response is already 0..255. This is normalized meter
+deflection, not a universal physical SWR-ratio conversion; the manuals do not
+define enough cross-vendor ratio calibration to infer one safely.

@@ -422,6 +422,8 @@ impl Radio for ConfiguredRadio {
     async fn get_meter(&self, id: crate::MeterId) -> Result<Option<u8>> {
         match self {
             Self::Icom(r) => r.get_meter(id).await,
+            Self::Yaesu(r) => r.get_meter(id).await,
+            Self::Kenwood(r) => Ok(Some(r.get_swr_meter()?)),
             _ => Ok(None),
         }
     }

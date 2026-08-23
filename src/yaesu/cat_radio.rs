@@ -13,7 +13,7 @@ use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
 
 use crate::{
     hal::{Mode, Radio, RadioCapabilities},
-    hal_types::{ControlId, ControlValue},
+    hal_types::{ControlId, ControlValue, MeterId},
     models::YaesuCatModel,
     protocol::ascii_cat,
 };
@@ -384,6 +384,26 @@ impl Radio for YaesuCatRadio {
             }
             ControlId::Split => Ok(Some(ControlValue::Bool(self.get_split()?))),
             _ => Ok(None),
+        }
+    }
+
+    async fn get_meter(&self, id: MeterId) -> Result<Option<u8>> {
+        match id {
+            // Yaesu CAT manuals define RM6 as the SWR meter and return a
+            // three-digit 000..255 meter value.
+            MeterId::Swr => {
+                let response = self.query("RM", Some("6"), 10)?;
+                let payload = parse_payload(&response, "RM")?;
+                let value = payload
+                    .get(1..4)
+                    .context("invalid Yaesu RM6 response")?
+                    .parse::<u16>()
+                    .context("invalid Yaesu RM6 meter value")?;
+                if value > 255 {
+                    bail!("Yaesu RM6 SWR meter value exceeds 255: {value}");
+                }
+                Ok(Some(value as u8))
+            }
         }
     }
 

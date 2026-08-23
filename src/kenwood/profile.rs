@@ -44,6 +44,8 @@ pub struct KenwoodCatProfile {
     pub supports_if_status: bool,
     pub power_range_watts: Option<(u16, u16)>,
     pub meter_max: u16,
+    /// Documented maximum for the RM SWR meter-dot value.
+    pub swr_meter_max: u16,
 }
 
 impl KenwoodCatProfile {
@@ -160,6 +162,7 @@ pub const TS590SG_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     supports_if_status: true,
     power_range_watts: Some((5, 100)),
     meter_max: 30,
+    swr_meter_max: 30,
 };
 
 pub const TS890S_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
@@ -173,6 +176,7 @@ pub const TS890S_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     supports_if_status: false,
     power_range_watts: Some((5, 100)),
     meter_max: 70,
+    swr_meter_max: 70,
 };
 
 pub const TS2000_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
@@ -188,6 +192,7 @@ pub const TS2000_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     supports_if_status: true,
     power_range_watts: Some((5, 100)),
     meter_max: 30,
+    swr_meter_max: 30,
 };
 
 pub fn profile_for_model(model: KenwoodCatModel) -> &'static KenwoodCatProfile {
@@ -222,6 +227,8 @@ mod tests {
         assert_eq!(TS890S_PROFILE.decode_mode('C').unwrap(), Mode::Data);
         assert_eq!(TS890S_PROFILE.meter_max, 70);
         assert_eq!(TS590SG_PROFILE.meter_max, 30);
+        assert_eq!(TS890S_PROFILE.swr_meter_max, 70);
+        assert_eq!(TS2000_PROFILE.swr_meter_max, 30);
     }
 
     #[test]

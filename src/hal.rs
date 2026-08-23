@@ -55,6 +55,7 @@ pub trait Radio: Send + Sync {
     async fn set_control(&self, _id: ControlId, _value: ControlValue) -> Result<()> {
         Ok(())
     }
+    /// Read a normalized meter level on the HAL's 0..=255 scale.
     async fn get_meter(&self, _id: MeterId) -> Result<Option<u8>> {
         Ok(None)
     }

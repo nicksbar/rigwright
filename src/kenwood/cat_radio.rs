@@ -13,7 +13,7 @@ use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
 
 use crate::{
     hal::{Mode, Radio, RadioCapabilities},
-    hal_types::{ControlId, ControlValue},
+    hal_types::{normalize_meter_level, ControlId, ControlValue, MeterId},
     models::KenwoodCatModel,
     protocol::ascii_cat,
 };
@@ -186,6 +186,24 @@ impl KenwoodCatRadio {
             bail!("Kenwood SM response exceeds the profiled meter range: {value}");
         }
         Ok(value)
+    }
+
+    pub(crate) fn get_swr_meter(&self) -> Result<u8> {
+        let profile = self.selected_profile()?;
+        let response = self.query("RM", None, Some(5))?;
+        let payload = parse_payload(&response, "RM")?;
+        let meter_type = payload
+            .chars()
+            .next()
+            .context("missing Kenwood RM meter selector")?;
+        if meter_type != '1' && meter_type != '2' {
+            bail!("Kenwood RM response does not contain an SWR meter: {payload}");
+        }
+        let value: u16 = payload[1..]
+            .parse()
+            .context("invalid Kenwood RM SWR response")?;
+        normalize_meter_level(value, profile.swr_meter_max)
+            .context("Kenwood RM SWR response exceeds the profiled meter range")
     }
 
     pub fn get_split(&self) -> Result<bool> {
@@ -501,6 +519,12 @@ impl Radio for KenwoodCatRadio {
             ))),
             ControlId::Split => Ok(Some(ControlValue::Bool(self.get_split()?))),
             _ => Ok(None),
+        }
+    }
+
+    async fn get_meter(&self, id: MeterId) -> Result<Option<u8>> {
+        match id {
+            MeterId::Swr => Ok(Some(self.get_swr_meter()?)),
         }
     }
 
