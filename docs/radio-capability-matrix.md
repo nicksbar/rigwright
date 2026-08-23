@@ -1,8 +1,8 @@
 # Radio capability matrix
 
-This is the detailed support inventory for the radios in
-[`supported-radios.md`](supported-radios.md). It separates four different
-claims:
+This is the canonical detailed support inventory for the radios in
+[`supported-radios.md`](supported-radios.md). It separates documentation,
+implementation, profile, application, and validation claims:
 
 | Code | Meaning |
 |---|---|
