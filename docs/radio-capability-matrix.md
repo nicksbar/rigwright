@@ -58,7 +58,7 @@ the final column.
 | `Attenuator` | model-specific `U8` | RW/P all four profiles | M, not typed | M, not typed | M, not typed | Q compact control |
 | `NoiseBlanker` | `Bool` | RW/P all four profiles | M, not typed | M, not typed | M, not typed | Q toggle |
 | `NoiseReduction` | `Bool` | RW/P all four profiles | RW/P modern profiles | M, not typed | M, not typed | Q toggle |
-| `NoiseReductionLevel` | `U8` 1–15 | M, not typed | RW/P modern profiles | M, not typed | M, not typed | Not currently used |
+| `NoiseReductionLevel` | `U8` 1–15 | M, not typed | RW/P modern profiles | M, not typed | M, not typed | Q level control where advertised |
 | `IpPlus` | `Bool` | RW/P all four profiles | M, not typed | — | M, not typed | Q toggle |
 | `Notch` | `Bool` | RW/P all four profiles | M, not typed | M, not typed | M, not typed | Q toggle |
 | `ManualNotch` | `Bool` | RW/P all four profiles | M, not typed | M, not typed | M, not typed | Q toggle; position not typed |
@@ -113,14 +113,14 @@ documented ratio anchors, but those anchors are not shared by Yaesu or Kenwood.
 
 | HAL meter | Icom CI-V | Modern Yaesu CAT | Classic Yaesu CAT | Kenwood | QSONaut native use |
 |---|---:|---:|---:|---:|---|
-| `Signal` | M, not typed | R/P via `RM1` | M, not typed | R/P via `SM`, profile max 30 or 70 | Not currently displayed |
-| `Power` | M, not typed | R/P via `RM5` | M, not typed | M, not typed | Not currently displayed |
-| `Swr` | R/P via `15 12`; IC-7300 V | R/P via `RM6` | M, not typed | R/P via `RM`; selector and range profile-specific | Q SWR sweep/chart |
-| `Alc` | M, not typed | R/P via `RM4` | M, not typed | M, not typed | Not currently displayed |
-| `Compression` | M, not typed | R/P via `RM3` | M, not typed | M, not typed | Not currently displayed |
-| `Current` | M, not typed | R/P via `RM7` | M, not typed | M, not typed | Not currently displayed |
-| `Voltage` | M, not typed | R/P via `RM8` | M, not typed | M, not typed | Not currently displayed |
-| `Temperature` | M, not typed | Manual/protocol surface varies; intentionally not profiled | M, not typed | TS-890S manual surface exists; not typed | Not currently displayed |
+| `Signal` | M, not typed | R/P via `RM1` | M, not typed | R/P via `SM`, profile max 30 or 70 | Q normalized meter panel where advertised |
+| `Power` | M, not typed | R/P via `RM5` | M, not typed | M, not typed | Q normalized meter panel where advertised |
+| `Swr` | R/P via `15 12`; IC-7300 V | R/P via `RM6` | M, not typed | R/P via `RM`; selector and range profile-specific | Q live meter and stepped SWR chart |
+| `Alc` | M, not typed | R/P via `RM4` | M, not typed | M, not typed | Q normalized meter panel where advertised |
+| `Compression` | M, not typed | R/P via `RM3` | M, not typed | M, not typed | Q normalized meter panel where advertised |
+| `Current` | M, not typed | R/P via `RM7` | M, not typed | M, not typed | Q normalized meter panel where advertised |
+| `Voltage` | M, not typed | R/P via `RM8` | M, not typed | M, not typed | Q normalized meter panel where advertised |
+| `Temperature` | M, not typed | Manual/protocol surface varies; intentionally not profiled | M, not typed | TS-890S manual surface exists; not typed | Q only if a future profile advertises it |
 
 Yaesu `RM` selector meanings are documented by the modern CAT manuals: `1`
 signal, `3` compression, `4` ALC, `5` power, `6` SWR, `7` current, and `8`
@@ -162,10 +162,17 @@ radio worker/UI:
 - normalized SWR polling and the stepped SWR sweep workflow;
 - native Icom scope data where the selected model/profile provides it.
 
-QSONaut does not yet consume the normalized signal, power, ALC, compression,
-current, voltage, or temperature meters. It also does not consume Yaesu’s new
-NR level control, RIT/XIT, memory/channel, antenna-selection, or generic
-auto-information surfaces.
+QSONaut consumes every normalized meter that the selected Rigwright profile
+advertises and renders those values in the native radio banner. Physical units
+and calibrated SWR ratios remain limited: the HAL provides normalized meter
+deflection, while QSONaut applies the documented IC-7300 SWR anchors only for
+that model and otherwise displays the normalized level.
+
+QSONaut also consumes modern Yaesu’s typed noise-reduction level control. It
+does not yet consume RIT/XIT, Icom external-preamp or main/sub controls,
+memory/channel operations, antenna selection, or generic auto-information
+surfaces. Icom signal/power/ALC/compression/current/voltage remain manual-only
+in Rigwright, so they cannot appear in QSONaut through the capability gate.
 
 ## Maintenance rule
 

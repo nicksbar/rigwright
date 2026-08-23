@@ -8,12 +8,18 @@ evolve independently and be embedded in other amateur-radio applications.
 
 - One async, protocol-neutral `Radio` interface for frequency, mode, PTT,
   typed controls, raw-protocol access, and capability discovery.
+- A normalized `0..=255` HAL scale for radio controls and meter deflection,
+  with vendor-specific physical units kept in the driver/profile layer.
 - Native Icom CI-V over serial, developed and exercised with the IC-7300.
 - Serial-port discovery, CI-V framing and parsing, spectrum-scope data, and raw
   protocol access.
 - Strict IC-7300 USB scope assembly: ordered 11-division input produces one
   complete 475-bin sweep, with documented center-span and fixed-edge controls.
 - Captured-frame unit tests and a direct CI-V probe example.
+- Profile-gated RF power, split, AGC, noise reduction, and normalized meter
+  support for modern Yaesu; profile-gated RF power, split, signal, and SWR for
+  Kenwood; and model-specific Icom controls including IP+, notch, tuner,
+  main/sub, and external preamp where documented.
 
 Only the IC-7300 is regularly hardware-tested. Other profiles are not yet
 claimed as hardware validated. Modern Yaesu models use a profile-driven ASCII
@@ -51,7 +57,7 @@ references.
 
 ```toml
 [dependencies]
-rigwright = { git = "https://github.com/nicksbar/rigwright" }
+rigwright = "0.1.9"
 ```
 
 ```rust,no_run
