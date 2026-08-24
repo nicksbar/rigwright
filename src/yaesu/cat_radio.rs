@@ -329,7 +329,9 @@ impl Radio for YaesuCatRadio {
     }
 
     async fn get_mode(&self) -> Result<Mode> {
-        let response = self.query("MD", Some("0"), 2)?;
+        // Yaesu's MD read command has no selector parameter.  The response
+        // includes the VFO selector and mode, for example MD02;.
+        let response = self.query("MD", None, 2)?;
         let payload = parse_payload(&response, "MD")?;
         let mut chars = payload.chars();
         if chars.next() != Some('0') {
@@ -606,6 +608,7 @@ mod tests {
         );
         assert_eq!(ascii_cat::encode("MD", Some("0C")).unwrap(), b"MD0C;");
         assert_eq!(ascii_cat::encode("MD", Some("0")).unwrap(), b"MD0;");
+        assert_eq!(ascii_cat::encode("MD", None).unwrap(), b"MD;");
         assert_eq!(ascii_cat::encode("TX", None).unwrap(), b"TX;");
     }
 

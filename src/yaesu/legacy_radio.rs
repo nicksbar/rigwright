@@ -3,12 +3,13 @@
 use std::{
     io::{Read, Write},
     sync::{Arc, Mutex},
+    thread,
     time::Duration,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
-use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
+use serialport::{ClearBuffer, DataBits, FlowControl, Parity, SerialPort, StopBits};
 
 use crate::{
     hal::{Mode, Radio, RadioCapabilities},
@@ -18,6 +19,11 @@ use crate::{
 };
 
 use super::legacy_profile::{profile_for_model, YaesuLegacyProfile};
+
+// RS918/mcHF-class FT-817 CAT emulators need time to apply a write before a
+// following status query. This is also consistent with the command/mode delay
+// used by established FT-817 client integrations.
+const LEGACY_WRITE_SETTLE: Duration = Duration::from_millis(200);
 
 #[derive(Default)]
 struct TransportState {
@@ -109,20 +115,34 @@ impl LegacyYaesuRadio {
     }
 
     pub fn get_frequency_mode_status(&self) -> Result<FrequencyModeStatus> {
-        yaesu_legacy_cat::decode_frequency_and_mode(
-            &self.transact(yaesu_legacy_cat::read_frequency_and_mode(), 5)?,
-        )
+        let response = self.transact(yaesu_legacy_cat::read_frequency_and_mode(), 5)?;
+        yaesu_legacy_cat::decode_frequency_and_mode(&response).map_err(|error| {
+            anyhow!("{error}; classic Yaesu status response bytes={response:02X?}")
+        })
     }
 
     /// Set an exact classic CAT mode, including packet or narrow FM when the
     /// selected model profile documents it.
     pub fn set_legacy_mode(&self, mode: LegacyMode) -> Result<()> {
-        let profile = self.selected_profile()?;
-        if !profile.supports_mode(mode) {
-            bail!(
-                "{} does not document CAT mode {mode:?} for writing",
-                profile.model.model_name()
-            );
+        if let Some(profile) = self.profile() {
+            if !profile.supports_mode(mode) {
+                bail!(
+                    "{} does not document CAT mode {mode:?} for writing",
+                    profile.model.model_name()
+                );
+            }
+        } else if !matches!(
+            mode,
+            LegacyMode::Lsb
+                | LegacyMode::Usb
+                | LegacyMode::Cw
+                | LegacyMode::CwReverse
+                | LegacyMode::Am
+                | LegacyMode::Fm
+                | LegacyMode::Digital
+                | LegacyMode::Packet
+        ) {
+            bail!("generic classic Yaesu CAT does not support mode {mode:?}");
         }
         self.transact(yaesu_legacy_cat::set_mode(mode), 0)?;
         Ok(())
@@ -176,10 +196,22 @@ impl LegacyYaesuRadio {
                 .port
                 .as_mut()
                 .context("classic Yaesu CAT port unavailable")?;
+            // Some FT-817-compatible USB implementations echo or leave a
+            // partial write response queued. Never let those bytes become the
+            // prefix of a subsequent five-byte status frame.
+            if response_len > 0 {
+                port.clear(ClearBuffer::Input)
+                    .context("failed to clear stale classic Yaesu CAT input")?;
+            }
             port.write_all(&frame)
                 .context("failed to write classic Yaesu CAT command")?;
             port.flush()
                 .context("failed to flush classic Yaesu CAT command")?;
+            if response_len == 0 {
+                thread::sleep(LEGACY_WRITE_SETTLE);
+                port.clear(ClearBuffer::Input)
+                    .context("failed to clear classic Yaesu CAT write residue")?;
+            }
             let mut response = vec![0_u8; response_len];
             if response_len > 0 {
                 port.read_exact(&mut response)
@@ -192,11 +224,6 @@ impl LegacyYaesuRadio {
             transport.port = None;
         }
         result
-    }
-
-    fn selected_profile(&self) -> Result<&'static YaesuLegacyProfile> {
-        self.profile()
-            .context("this operation requires a selected classic Yaesu model profile")
     }
 }
 
@@ -271,7 +298,7 @@ impl Radio for LegacyYaesuRadio {
     }
 
     fn supports_control(&self, id: ControlId) -> bool {
-        self.model().is_some() && id == ControlId::Split
+        id == ControlId::Split
     }
 
     fn capabilities(&self) -> RadioCapabilities {
