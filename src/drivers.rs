@@ -675,7 +675,7 @@ mod tests {
 
         let generic_legacy =
             open_model(GENERIC_YAESU_CLASSIC_MODEL, "/dev/null", 4_800, 0xE0).unwrap();
-        assert!(!generic_legacy.supports_control(crate::ControlId::Split));
+        assert!(generic_legacy.supports_control(crate::ControlId::Split));
     }
     #[test]
     fn decodes_common_ascii_modes() {
