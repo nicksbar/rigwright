@@ -1,7 +1,6 @@
 //! Model-profiled driver for classic five-byte Yaesu CAT.
 
 use std::{
-    io::{Read, Write},
     sync::{Arc, Mutex},
     thread,
     time::Duration,
@@ -9,13 +8,14 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
-use serialport::{ClearBuffer, DataBits, FlowControl, Parity, SerialPort, StopBits};
+use serialport::{DataBits, FlowControl, Parity, StopBits};
 
 use crate::{
     hal::{Mode, Radio, RadioCapabilities},
     hal_types::{ControlId, ControlValue},
     models::YaesuLegacyModel,
     protocol::yaesu_legacy_cat::{self, FrequencyModeStatus, LegacyMode, RxStatus, TxStatus},
+    transport::{RadioTransport, SerialPortTransport},
 };
 
 use super::legacy_profile::{profile_for_model, YaesuLegacyProfile};
@@ -27,7 +27,18 @@ const LEGACY_WRITE_SETTLE: Duration = Duration::from_millis(200);
 
 #[derive(Default)]
 struct TransportState {
-    port: Option<Box<dyn SerialPort>>,
+    port: Option<Box<dyn RadioTransport>>,
+    external: Option<Box<dyn RadioTransport>>,
+}
+
+fn active_transport(state: &mut TransportState) -> Result<&mut dyn RadioTransport> {
+    if let Some(port) = state.port.as_mut() {
+        Ok(&mut **port)
+    } else if let Some(port) = state.external.as_mut() {
+        Ok(&mut **port)
+    } else {
+        bail!("classic Yaesu CAT port unavailable")
+    }
 }
 
 /// Classic Yaesu CAT driver for fixed five-byte binary commands.
@@ -83,6 +94,23 @@ impl LegacyYaesuRadio {
         Ok(Self::new_internal(Some(model), port, baud_rate))
     }
 
+    /// Construct a classic Yaesu CAT radio over an externally configured byte
+    /// transport, such as Android USB Host or Bluetooth.
+    pub fn with_transport<T>(model: Option<YaesuLegacyModel>, baud_rate: u32, transport: T) -> Self
+    where
+        T: RadioTransport + 'static,
+    {
+        Self {
+            model,
+            port: String::new(),
+            baud_rate,
+            transport: Arc::new(Mutex::new(TransportState {
+                port: None,
+                external: Some(Box::new(transport)),
+            })),
+        }
+    }
+
     fn new_internal(
         model: Option<YaesuLegacyModel>,
         port: impl Into<String>,
@@ -107,6 +135,7 @@ impl LegacyYaesuRadio {
     pub fn close(&self) {
         if let Ok(mut transport) = self.transport.lock() {
             transport.port = None;
+            transport.external = None;
         }
     }
 
@@ -171,15 +200,22 @@ impl LegacyYaesuRadio {
     }
 
     fn transact(&self, frame: [u8; 5], response_len: usize) -> Result<Vec<u8>> {
-        if self.port.trim().is_empty() {
+        if self.port.trim().is_empty()
+            && self
+                .transport
+                .lock()
+                .map_err(|_| anyhow!("classic Yaesu CAT transport lock poisoned"))?
+                .external
+                .is_none()
+        {
             bail!("a serial port is required for classic Yaesu CAT");
         }
         let mut transport = self
             .transport
             .lock()
             .map_err(|_| anyhow!("classic Yaesu CAT transport lock poisoned"))?;
-        if transport.port.is_none() {
-            transport.port = Some(
+        if transport.port.is_none() && transport.external.is_none() {
+            transport.port = Some(Box::new(SerialPortTransport(
                 serialport::new(&self.port, self.baud_rate)
                     .data_bits(DataBits::Eight)
                     .parity(Parity::None)
@@ -188,19 +224,16 @@ impl LegacyYaesuRadio {
                     .timeout(Duration::from_millis(1_200))
                     .open()
                     .with_context(|| format!("failed to open classic CAT port {}", self.port))?,
-            );
+            )));
         }
 
         let result = (|| {
-            let port = transport
-                .port
-                .as_mut()
-                .context("classic Yaesu CAT port unavailable")?;
+            let port = active_transport(&mut transport)?;
             // Some FT-817-compatible USB implementations echo or leave a
             // partial write response queued. Never let those bytes become the
             // prefix of a subsequent five-byte status frame.
             if response_len > 0 {
-                port.clear(ClearBuffer::Input)
+                port.clear_input()
                     .context("failed to clear stale classic Yaesu CAT input")?;
             }
             port.write_all(&frame)
@@ -209,7 +242,7 @@ impl LegacyYaesuRadio {
                 .context("failed to flush classic Yaesu CAT command")?;
             if response_len == 0 {
                 thread::sleep(LEGACY_WRITE_SETTLE);
-                port.clear(ClearBuffer::Input)
+                port.clear_input()
                     .context("failed to clear classic Yaesu CAT write residue")?;
             }
             let mut response = vec![0_u8; response_len];

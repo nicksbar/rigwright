@@ -1,12 +1,11 @@
 use crate::hal::{Radio, RadioCapabilities, RadioStatus};
+use crate::transport::{RadioTransport, SerialPortTransport};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use serialport::{SerialPort, SerialPortType};
+use serialport::SerialPortType;
 use std::{
     collections::VecDeque,
     io::ErrorKind,
-    io::Read,
-    io::Write,
     sync::{Arc, Mutex},
     thread,
     time::Duration,
@@ -20,6 +19,9 @@ use crate::hal_types::{ControlId, ControlValue, MeterId, TunerStatus};
 
 const CI_V_FRAME_START: u8 = 0xFE;
 const CI_V_FRAME_END: u8 = 0xFD;
+
+/// Compatibility name for the shared byte transport used by CI-V.
+pub use crate::transport::RadioTransport as CiVTransport;
 
 #[derive(Debug, Default)]
 struct ScopeSweepAssembler {
@@ -261,7 +263,8 @@ pub struct IcomCiVRadio {
     baud_rate: u32,
     controller_address: u8,
     radio_address: u8,
-    serial_port: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
+    serial_port: Arc<Mutex<Option<Box<dyn RadioTransport>>>>,
+    external_transport: Arc<Mutex<Option<Box<dyn RadioTransport>>>>,
     scope_stream_reader: Arc<Mutex<ScopeStreamReader>>,
 }
 
@@ -349,6 +352,29 @@ impl IcomCiVRadio {
         Self::new_for_model(model, port, baud_rate, controller_address, radio_address)
     }
 
+    /// Create a model-backed CI-V driver over an externally owned byte
+    /// transport, such as an Android USB Host or Bluetooth connection.
+    pub fn with_transport<T>(
+        model: Option<crate::models::IcomCivModel>,
+        controller_address: u8,
+        radio_address: u8,
+        transport: T,
+    ) -> Self
+    where
+        T: RadioTransport + 'static,
+    {
+        Self {
+            model,
+            port: String::new(),
+            baud_rate: 0,
+            controller_address,
+            radio_address,
+            serial_port: Arc::new(Mutex::new(None)),
+            external_transport: Arc::new(Mutex::new(Some(Box::new(transport)))),
+            scope_stream_reader: Arc::new(Mutex::new(ScopeStreamReader::default())),
+        }
+    }
+
     fn new_internal(
         model: Option<crate::models::IcomCivModel>,
         port: impl Into<String>,
@@ -363,6 +389,7 @@ impl IcomCiVRadio {
             controller_address,
             radio_address,
             serial_port: Arc::new(Mutex::new(None)),
+            external_transport: Arc::new(Mutex::new(None)),
             scope_stream_reader: Arc::new(Mutex::new(ScopeStreamReader::default())),
         }
     }
@@ -516,8 +543,20 @@ impl IcomCiVRadio {
 
     fn with_serial_port<T, F>(&self, timeout: Duration, mut operation: F) -> Result<T>
     where
-        F: FnMut(&mut Box<dyn SerialPort>) -> Result<T>,
+        F: FnMut(&mut dyn RadioTransport) -> Result<T>,
     {
+        if let Some(transport) = self
+            .external_transport
+            .lock()
+            .map_err(|_| anyhow::anyhow!("radio external transport lock poisoned"))?
+            .as_mut()
+        {
+            transport
+                .set_timeout(timeout)
+                .context("failed to update external CI-V transport timeout")?;
+            return operation(&mut **transport);
+        }
+
         let mut guard = self
             .serial_port
             .lock()
@@ -532,10 +571,10 @@ impl IcomCiVRadio {
             .context("radio serial port slot unavailable")?;
         port.set_timeout(timeout)
             .context("failed to update radio serial timeout")?;
-        operation(port)
+        operation(&mut **port)
     }
 
-    fn open_port_with_timeout(&self, timeout: Duration) -> Result<Box<dyn SerialPort>> {
+    fn open_port_with_timeout(&self, timeout: Duration) -> Result<Box<dyn RadioTransport>> {
         let configured_port = self.port.trim();
         let candidates = if configured_port.is_empty() {
             enumerate_serial_ports().unwrap_or_default()
@@ -551,7 +590,7 @@ impl IcomCiVRadio {
             match open_result {
                 Ok(port) => {
                     eprintln!("[rigwright] opened serial port: {candidate}");
-                    return Ok(port);
+                    return Ok(Box::new(SerialPortTransport(port)));
                 }
                 Err(err) => {
                     eprintln!("[rigwright] failed to open serial port: {candidate}: {err}");
@@ -580,7 +619,7 @@ impl IcomCiVRadio {
         }
     }
 
-    fn write_frame(&self, port: &mut Box<dyn SerialPort>, frame: &[u8]) -> Result<()> {
+    fn write_frame(&self, port: &mut dyn CiVTransport, frame: &[u8]) -> Result<()> {
         port.write_all(frame)
             .context("failed to write CI-V frame")?;
         Ok(())
@@ -588,7 +627,7 @@ impl IcomCiVRadio {
 
     fn read_response_matching<F>(
         &self,
-        port: &mut Box<dyn SerialPort>,
+        port: &mut dyn RadioTransport,
         timeout: Duration,
         echo_frame: Option<&[u8]>,
         mut matcher: F,
@@ -1182,7 +1221,7 @@ impl IcomCiVRadio {
 
     fn read_stream_scope_bins(
         &self,
-        port: &mut Box<dyn SerialPort>,
+        port: &mut dyn RadioTransport,
         timeout: Duration,
     ) -> Result<Option<Vec<u8>>> {
         Ok(self
@@ -1193,7 +1232,7 @@ impl IcomCiVRadio {
 
     fn read_stream_scope_sweeps(
         &self,
-        port: &mut Box<dyn SerialPort>,
+        port: &mut dyn RadioTransport,
         timeout: Duration,
     ) -> Result<Vec<Vec<u8>>> {
         let deadline = Instant::now() + timeout;

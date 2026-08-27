@@ -1,7 +1,7 @@
 //! Model-neutral transport for modern Yaesu ASCII CAT radios.
 
 use std::{
-    io::{ErrorKind, Read, Write},
+    io::ErrorKind,
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -9,13 +9,14 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
-use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
+use serialport::{DataBits, FlowControl, Parity, StopBits};
 
 use crate::{
     hal::{Mode, Radio, RadioCapabilities},
     hal_types::{ControlId, ControlValue, MeterId},
     models::YaesuCatModel,
     protocol::ascii_cat,
+    transport::{RadioTransport, SerialPortTransport},
 };
 
 use super::profile::{profile_for_model, YaesuCatProfile};
@@ -25,8 +26,19 @@ const MAX_FRAME_LEN: usize = 512;
 
 #[derive(Default)]
 struct TransportState {
-    port: Option<Box<dyn SerialPort>>,
+    port: Option<Box<dyn RadioTransport>>,
+    external: Option<Box<dyn RadioTransport>>,
     pending: Vec<u8>,
+}
+
+fn active_transport(state: &mut TransportState) -> Result<&mut dyn RadioTransport> {
+    if let Some(port) = state.port.as_mut() {
+        Ok(&mut **port)
+    } else if let Some(port) = state.external.as_mut() {
+        Ok(&mut **port)
+    } else {
+        bail!("Yaesu CAT port unavailable")
+    }
 }
 
 /// Modern semicolon-terminated Yaesu CAT driver.
@@ -80,6 +92,28 @@ impl YaesuCatRadio {
         Ok(Self::new_internal(Some(model), port, baud_rate))
     }
 
+    /// Construct a modern Yaesu CAT radio over an externally configured byte
+    /// transport, such as Android USB Host or Bluetooth.
+    pub fn with_external_transport<T>(
+        model: Option<YaesuCatModel>,
+        baud_rate: u32,
+        transport: T,
+    ) -> Self
+    where
+        T: RadioTransport + 'static,
+    {
+        Self {
+            model,
+            port: String::new(),
+            baud_rate,
+            transport: Arc::new(Mutex::new(TransportState {
+                port: None,
+                external: Some(Box::new(transport)),
+                pending: Vec::new(),
+            })),
+        }
+    }
+
     fn new_internal(model: Option<YaesuCatModel>, port: impl Into<String>, baud_rate: u32) -> Self {
         Self {
             model,
@@ -119,6 +153,7 @@ impl YaesuCatRadio {
     pub fn close(&self) {
         if let Ok(mut state) = self.transport.lock() {
             state.port = None;
+            state.external = None;
             state.pending.clear();
         }
     }
@@ -212,10 +247,12 @@ impl YaesuCatRadio {
     fn write_only(&self, request: &[u8]) -> Result<()> {
         validate_complete_command(request)?;
         self.with_transport(Duration::from_millis(750), |state| {
-            let port = state.port.as_mut().context("Yaesu CAT port unavailable")?;
-            port.write_all(request)
+            active_transport(state)?
+                .write_all(request)
                 .context("failed to write Yaesu CAT command")?;
-            port.flush().context("failed to flush Yaesu CAT command")
+            active_transport(state)?
+                .flush()
+                .context("failed to flush Yaesu CAT command")
         })
     }
 
@@ -225,10 +262,12 @@ impl YaesuCatRadio {
     {
         validate_complete_command(request)?;
         self.with_transport(Duration::from_millis(150), |state| {
-            let port = state.port.as_mut().context("Yaesu CAT port unavailable")?;
-            port.write_all(request)
+            active_transport(state)?
+                .write_all(request)
                 .context("failed to write Yaesu CAT command")?;
-            port.flush().context("failed to flush Yaesu CAT command")?;
+            active_transport(state)?
+                .flush()
+                .context("failed to flush Yaesu CAT command")?;
 
             let deadline = Instant::now() + RESPONSE_TIMEOUT;
             let mut buffer = [0_u8; 256];
@@ -244,7 +283,7 @@ impl YaesuCatRadio {
                     // may be interleaved. They are intentionally ignored here.
                 }
 
-                match port.read(&mut buffer) {
+                match active_transport(state)?.read(&mut buffer) {
                     Ok(count) if count > 0 => {
                         state.pending.extend_from_slice(&buffer[..count]);
                         if state.pending.len() > MAX_FRAME_LEN * 4 {
@@ -268,15 +307,22 @@ impl YaesuCatRadio {
     where
         F: FnOnce(&mut TransportState) -> Result<T>,
     {
-        if self.port.trim().is_empty() {
+        if self.port.trim().is_empty()
+            && self
+                .transport
+                .lock()
+                .map_err(|_| anyhow!("Yaesu CAT transport lock poisoned"))?
+                .external
+                .is_none()
+        {
             bail!("a serial port is required for modern Yaesu CAT");
         }
         let mut state = self
             .transport
             .lock()
             .map_err(|_| anyhow!("Yaesu CAT transport lock poisoned"))?;
-        if state.port.is_none() {
-            state.port = Some(
+        if state.port.is_none() && state.external.is_none() {
+            state.port = Some(Box::new(SerialPortTransport(
                 serialport::new(&self.port, self.baud_rate)
                     .data_bits(DataBits::Eight)
                     .parity(Parity::None)
@@ -285,12 +331,9 @@ impl YaesuCatRadio {
                     .timeout(timeout)
                     .open()
                     .with_context(|| format!("failed to open Yaesu CAT port {}", self.port))?,
-            );
+            )));
         }
-        state
-            .port
-            .as_mut()
-            .context("Yaesu CAT port unavailable")?
+        active_transport(&mut state)?
             .set_timeout(timeout)
             .context("failed to update Yaesu CAT timeout")?;
         let result = operation(&mut state);

@@ -7,3 +7,5 @@ pub mod ic7610;
 pub mod ic9700;
 pub mod modes;
 pub mod profile;
+
+pub use civ_radio::{CiVTransport, IcomCiVRadio};

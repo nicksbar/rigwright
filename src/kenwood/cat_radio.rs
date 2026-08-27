@@ -1,7 +1,7 @@
 //! Model-neutral transport for Kenwood semicolon-terminated PC control.
 
 use std::{
-    io::{ErrorKind, Read, Write},
+    io::ErrorKind,
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -9,13 +9,14 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
-use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
+use serialport::{DataBits, FlowControl, Parity, StopBits};
 
 use crate::{
     hal::{Mode, Radio, RadioCapabilities},
     hal_types::{normalize_meter_level, ControlId, ControlValue, MeterId},
     models::KenwoodCatModel,
     protocol::ascii_cat,
+    transport::{RadioTransport, SerialPortTransport},
 };
 
 use super::profile::{
@@ -27,8 +28,19 @@ const MAX_FRAME_LEN: usize = 512;
 
 #[derive(Default)]
 struct TransportState {
-    port: Option<Box<dyn SerialPort>>,
+    port: Option<Box<dyn RadioTransport>>,
+    external: Option<Box<dyn RadioTransport>>,
     pending: Vec<u8>,
+}
+
+fn active_transport(state: &mut TransportState) -> Result<&mut dyn RadioTransport> {
+    if let Some(port) = state.port.as_mut() {
+        Ok(&mut **port)
+    } else if let Some(port) = state.external.as_mut() {
+        Ok(&mut **port)
+    } else {
+        bail!("Kenwood CAT port unavailable")
+    }
 }
 
 /// Profile-driven Kenwood PC-control driver.
@@ -79,6 +91,28 @@ impl KenwoodCatRadio {
         Ok(Self::new_internal(Some(model), port, baud_rate))
     }
 
+    /// Construct a Kenwood CAT radio over an externally configured byte
+    /// transport, such as Android USB Host or Bluetooth.
+    pub fn with_external_transport<T>(
+        model: Option<KenwoodCatModel>,
+        baud_rate: u32,
+        transport: T,
+    ) -> Self
+    where
+        T: RadioTransport + 'static,
+    {
+        Self {
+            model,
+            port: String::new(),
+            baud_rate,
+            transport: Arc::new(Mutex::new(TransportState {
+                port: None,
+                external: Some(Box::new(transport)),
+                pending: Vec::new(),
+            })),
+        }
+    }
+
     fn new_internal(
         model: Option<KenwoodCatModel>,
         port: impl Into<String>,
@@ -107,6 +141,7 @@ impl KenwoodCatRadio {
     pub fn close(&self) {
         if let Ok(mut state) = self.transport.lock() {
             state.port = None;
+            state.external = None;
             state.pending.clear();
         }
     }
@@ -283,13 +318,12 @@ impl KenwoodCatRadio {
     fn write_only(&self, request: &[u8]) -> Result<()> {
         validate_complete_command(request)?;
         self.with_transport(Duration::from_millis(750), |state| {
-            let port = state
-                .port
-                .as_mut()
-                .context("Kenwood CAT port unavailable")?;
-            port.write_all(request)
+            active_transport(state)?
+                .write_all(request)
                 .context("failed to write Kenwood CAT command")?;
-            port.flush().context("failed to flush Kenwood CAT command")
+            active_transport(state)?
+                .flush()
+                .context("failed to flush Kenwood CAT command")
         })
     }
 
@@ -299,13 +333,11 @@ impl KenwoodCatRadio {
     {
         validate_complete_command(request)?;
         self.with_transport(Duration::from_millis(150), |state| {
-            let port = state
-                .port
-                .as_mut()
-                .context("Kenwood CAT port unavailable")?;
-            port.write_all(request)
+            active_transport(state)?
+                .write_all(request)
                 .context("failed to write Kenwood CAT command")?;
-            port.flush()
+            active_transport(state)?
+                .flush()
                 .context("failed to flush Kenwood CAT command")?;
 
             let deadline = Instant::now() + RESPONSE_TIMEOUT;
@@ -327,7 +359,7 @@ impl KenwoodCatRadio {
                     }
                 }
 
-                match port.read(&mut buffer) {
+                match active_transport(state)?.read(&mut buffer) {
                     Ok(count) if count > 0 => state.pending.extend_from_slice(&buffer[..count]),
                     Ok(_) => {}
                     Err(error) if error.kind() == ErrorKind::TimedOut => {}
@@ -349,20 +381,27 @@ impl KenwoodCatRadio {
     where
         F: FnOnce(&mut TransportState) -> Result<T>,
     {
-        if self.port.trim().is_empty() {
+        if self.port.trim().is_empty()
+            && self
+                .transport
+                .lock()
+                .map_err(|_| anyhow!("Kenwood CAT transport lock poisoned"))?
+                .external
+                .is_none()
+        {
             bail!("a serial port is required for Kenwood PC control");
         }
         let mut state = self
             .transport
             .lock()
             .map_err(|_| anyhow!("Kenwood CAT transport lock poisoned"))?;
-        if state.port.is_none() {
+        if state.port.is_none() && state.external.is_none() {
             let stop_bits = if self.baud_rate == 4_800 {
                 StopBits::Two
             } else {
                 StopBits::One
             };
-            state.port = Some(
+            state.port = Some(Box::new(SerialPortTransport(
                 serialport::new(&self.port, self.baud_rate)
                     .data_bits(DataBits::Eight)
                     .parity(Parity::None)
@@ -371,12 +410,9 @@ impl KenwoodCatRadio {
                     .timeout(timeout)
                     .open()
                     .with_context(|| format!("failed to open Kenwood CAT port {}", self.port))?,
-            );
+            )));
         }
-        state
-            .port
-            .as_mut()
-            .context("Kenwood CAT port unavailable")?
+        active_transport(&mut state)?
             .set_timeout(timeout)
             .context("failed to update Kenwood CAT timeout")?;
         let result = operation(&mut state);
