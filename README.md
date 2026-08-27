@@ -11,6 +11,8 @@ evolve independently and be embedded in other amateur-radio applications.
 - A normalized `0..=255` HAL scale for radio controls and meter deflection,
   with vendor-specific physical units kept in the driver/profile layer.
 - Native Icom CI-V over serial, developed and exercised with the IC-7300.
+- Additive `RadioAndroid` entry point for Icom CI-V, modern Yaesu CAT, classic
+  Yaesu CAT, and Kenwood CAT over an externally supplied byte transport.
 - Serial-port discovery, CI-V framing and parsing, spectrum-scope data, and raw
   protocol access.
 - Strict IC-7300 USB scope assembly: ordered 11-division input produces one
@@ -57,7 +59,7 @@ references.
 
 ```toml
 [dependencies]
-rigwright = "0.1.10"
+rigwright = "0.1.11"
 ```
 
 ```rust,no_run

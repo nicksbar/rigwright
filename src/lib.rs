@@ -1,5 +1,6 @@
 //! Protocol-neutral amateur-radio control with native vendor drivers.
 
+pub mod android;
 pub mod controls;
 pub mod drivers;
 pub mod dxlab;
@@ -10,8 +11,10 @@ pub mod kenwood;
 pub mod models;
 pub mod protocol;
 pub mod rigctld;
+pub mod transport;
 pub mod yaesu;
 
+pub use android::RadioAndroid;
 pub use hal::{NullRadio, Radio, RadioCapabilities, RadioStatus};
 pub use hal_types::{
     normalize_meter_level, BaseMode, ControlId, ControlValue, MeterId, Mode, OperatingMode,
@@ -27,4 +30,5 @@ pub use protocol::yaesu_legacy_cat::{
     FrequencyModeStatus as YaesuLegacyFrequencyModeStatus, LegacyMode as YaesuLegacyMode,
     RxStatus as YaesuLegacyRxStatus, TxStatus as YaesuLegacyTxStatus,
 };
+pub use transport::RadioTransport;
 pub use yaesu::{LegacyYaesuRadio, YaesuCatRadio};
