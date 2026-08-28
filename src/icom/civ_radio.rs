@@ -832,11 +832,7 @@ impl IcomCiVRadio {
     }
 
     fn get_meter_blocking(&self, id: MeterId) -> Result<u8> {
-        let prefix: &[u8] = match id {
-            // IC-7300 manual, CI-V command table: 15 12, SWR meter.
-            MeterId::Swr => &[0x15, 0x12],
-            _ => anyhow::bail!("CI-V meter {id:?} is not implemented for this profile"),
-        };
+        let prefix = meter_command_prefix(id);
         let response = self.transact(prefix, true)?;
         let data = response_data_after_prefix(&response, prefix)?;
         decode_level_255_bcd(data).context("invalid CI-V meter payload")
@@ -1268,6 +1264,22 @@ impl IcomCiVRadio {
     }
 }
 
+/// IC-7300 documented meter query prefixes. Values use the common CI-V
+/// 0000..0255 packed-decimal response encoding; physical units are model/UI
+/// concerns and must not be inferred from the normalized byte alone.
+fn meter_command_prefix(id: MeterId) -> &'static [u8] {
+    match id {
+        MeterId::Signal => &[0x15, 0x01],
+        MeterId::Power => &[0x15, 0x02],
+        MeterId::Alc => &[0x15, 0x11],
+        MeterId::Swr => &[0x15, 0x12],
+        MeterId::Compression => &[0x15, 0x13],
+        MeterId::Voltage => &[0x15, 0x14],
+        MeterId::Current => &[0x15, 0x15],
+        MeterId::Temperature => &[0x15, 0x16],
+    }
+}
+
 fn parse_scope_waveform_segment(
     frame: &[u8],
     geometry: Option<crate::models::IcomScopeGeometry>,
@@ -1387,7 +1399,18 @@ impl Radio for IcomCiVRadio {
     }
 
     fn supports_meter(&self, id: MeterId) -> bool {
-        self.model().is_some() && matches!(id, MeterId::Swr)
+        self.model().is_some()
+            && matches!(
+                id,
+                MeterId::Signal
+                    | MeterId::Power
+                    | MeterId::Swr
+                    | MeterId::Alc
+                    | MeterId::Compression
+                    | MeterId::Voltage
+                    | MeterId::Current
+                    | MeterId::Temperature
+            )
     }
 
     fn supports_control(&self, id: ControlId) -> bool {
@@ -1861,6 +1884,18 @@ mod tests {
         assert_eq!(decode_level_255_bcd(&[0x00, 0x00]), Some(0));
         assert_eq!(decode_level_255_bcd(&[0x00, 0x48]), Some(48));
         assert_eq!(decode_level_255_bcd(&[0x01, 0x20]), Some(120));
+    }
+
+    #[test]
+    fn ic7300_meter_queries_match_manual_command_table() {
+        assert_eq!(meter_command_prefix(MeterId::Signal), &[0x15, 0x01]);
+        assert_eq!(meter_command_prefix(MeterId::Power), &[0x15, 0x02]);
+        assert_eq!(meter_command_prefix(MeterId::Alc), &[0x15, 0x11]);
+        assert_eq!(meter_command_prefix(MeterId::Swr), &[0x15, 0x12]);
+        assert_eq!(meter_command_prefix(MeterId::Compression), &[0x15, 0x13]);
+        assert_eq!(meter_command_prefix(MeterId::Voltage), &[0x15, 0x14]);
+        assert_eq!(meter_command_prefix(MeterId::Current), &[0x15, 0x15]);
+        assert_eq!(meter_command_prefix(MeterId::Temperature), &[0x15, 0x16]);
     }
 
     #[test]

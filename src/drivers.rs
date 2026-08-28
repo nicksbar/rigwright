@@ -639,7 +639,13 @@ mod tests {
         assert!(icom.supports_control(crate::ControlId::IpPlus));
         assert!(icom.supports_control(crate::ControlId::NoiseReduction));
         assert!(icom.supports_meter(crate::MeterId::Swr));
-        assert!(!icom.supports_meter(crate::MeterId::Power));
+        assert!(icom.supports_meter(crate::MeterId::Signal));
+        assert!(icom.supports_meter(crate::MeterId::Power));
+        assert!(icom.supports_meter(crate::MeterId::Alc));
+        assert!(icom.supports_meter(crate::MeterId::Compression));
+        assert!(icom.supports_meter(crate::MeterId::Voltage));
+        assert!(icom.supports_meter(crate::MeterId::Current));
+        assert!(icom.supports_meter(crate::MeterId::Temperature));
 
         let ic9700 = open_model("IC-9700", "/dev/null", 115_200, 0xE0).unwrap();
         assert!(ic9700.supports_control(crate::ControlId::MainSub));

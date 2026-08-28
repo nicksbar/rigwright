@@ -59,7 +59,7 @@ references.
 
 ```toml
 [dependencies]
-rigwright = "0.1.11"
+rigwright = "0.1.12"
 ```
 
 ```rust,no_run

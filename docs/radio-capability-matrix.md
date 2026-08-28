@@ -113,14 +113,14 @@ documented ratio anchors, but those anchors are not shared by Yaesu or Kenwood.
 
 | HAL meter | Icom CI-V | Modern Yaesu CAT | Classic Yaesu CAT | Kenwood | QSONaut native use |
 |---|---:|---:|---:|---:|---|
-| `Signal` | M, not typed | R/P via `RM1` | M, not typed | R/P via `SM`, profile max 30 or 70 | Q normalized meter panel where advertised |
-| `Power` | M, not typed | R/P via `RM5` | M, not typed | M, not typed | Q normalized meter panel where advertised |
+| `Signal` | R/P via `15 01`; IC-7300 V | R/P via `RM1` | M, not typed | R/P via `SM`, profile max 30 or 70 | Q normalized meter panel where advertised |
+| `Power` | R/P via `15 02`; IC-7300 V | R/P via `RM5` | M, not typed | M, not typed | Q normalized meter panel where advertised |
 | `Swr` | R/P via `15 12`; IC-7300 V | R/P via `RM6` | M, not typed | R/P via `RM`; selector and range profile-specific | Q live meter and stepped SWR chart |
-| `Alc` | M, not typed | R/P via `RM4` | M, not typed | M, not typed | Q normalized meter panel where advertised |
-| `Compression` | M, not typed | R/P via `RM3` | M, not typed | M, not typed | Q normalized meter panel where advertised |
-| `Current` | M, not typed | R/P via `RM7` | M, not typed | M, not typed | Q normalized meter panel where advertised |
-| `Voltage` | M, not typed | R/P via `RM8` | M, not typed | M, not typed | Q normalized meter panel where advertised |
-| `Temperature` | M, not typed | Manual/protocol surface varies; intentionally not profiled | M, not typed | TS-890S manual surface exists; not typed | Q only if a future profile advertises it |
+| `Alc` | R/P via `15 11`; IC-7300 V | R/P via `RM4` | M, not typed | M, not typed | Q normalized meter panel where advertised |
+| `Compression` | R/P via `15 13`; IC-7300 V | R/P via `RM3` | M, not typed | M, not typed | Q normalized meter panel where advertised |
+| `Current` | R/P via `15 15`; IC-7300 V | R/P via `RM7` | M, not typed | M, not typed | Q normalized meter panel where advertised |
+| `Voltage` | R/P via `15 14`; IC-7300 V | R/P via `RM8` | M, not typed | M, not typed | Q normalized meter panel where advertised |
+| `Temperature` | R/P via `15 16`; IC-7300 V | Manual/protocol surface varies; intentionally not profiled | M, not typed | TS-890S manual surface exists; not typed | Q only if a future profile advertises it |
 
 Yaesu `RM` selector meanings are documented by the modern CAT manuals: `1`
 signal, `3` compression, `4` ALC, `5` power, `6` SWR, `7` current, and `8`
