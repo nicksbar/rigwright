@@ -2,6 +2,8 @@
 
 ## 0.1.14 — Icom and Yaesu capability consolidation
 
+- Document the local LLVM coverage workflow and add pull-request-only CI for
+  locked tests, LLVM coverage summaries, and uploaded HTML coverage reports.
 - Harden the generic/profile boundary across the vendor drivers: shared
   protocol engines own framing and execution, while model modules own command
   exceptions, ranges, selectors, and optional capabilities.

@@ -2,8 +2,6 @@ name: CI
 
 "on":
   pull_request:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
@@ -19,3 +17,36 @@ jobs:
       - run: cargo check --all-targets
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all-targets
+
+  coverage:
+    name: Tests and LLVM coverage
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install native and LLVM dependencies
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev llvm
+      - name: Install Rust coverage tools
+        run: |
+          rustup component add llvm-tools-preview
+          cargo install cargo-llvm-cov --locked
+      - name: Run tests and generate coverage report
+        run: cargo llvm-cov --locked --all-features --workspace --html
+      - name: Publish test and coverage summary
+        if: always()
+        run: |
+          {
+            echo '## Test and LLVM coverage'
+            echo
+            echo 'The test output and coverage report are available in this check.'
+            echo
+            echo '### Coverage summary'
+            echo
+            cargo llvm-cov --locked --all-features --workspace --summary-only
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload HTML coverage report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: rigwright-llvm-coverage
+          path: target/llvm-cov/html
+          if-no-files-found: error

@@ -147,6 +147,31 @@ The probe never sends `TX`. TS-590SG and TS-2000 PTT state is read from `IF`;
 TS-890S does not advertise readable PTT because its documented `TX` command is
 set/auto-information only.
 
+## Tests and coverage
+
+Run the full locked test suite locally with:
+
+```text
+cargo test --locked --all-targets --all-features
+```
+
+Rigwright uses LLVM source-based coverage through `cargo-llvm-cov`. Install the
+LLVM tools and the Cargo subcommand once, then generate an HTML report:
+
+```text
+rustup component add llvm-tools-preview
+cargo install cargo-llvm-cov
+cargo llvm-cov --locked --all-features --workspace --html
+```
+
+The report is written to `target/llvm-cov/html/index.html`; open that file in a
+browser to inspect line and branch coverage. For a terminal summary instead,
+run `cargo llvm-cov --locked --all-features --workspace`.
+
+Pull requests run formatting, checks, tests, and LLVM coverage in GitHub Actions.
+The coverage check prints the test and coverage summary in the pull request's
+check details and uploads the complete HTML report as a workflow artifact.
+
 ## Design rules
 
 - Keep the app-facing HAL protocol-neutral.
