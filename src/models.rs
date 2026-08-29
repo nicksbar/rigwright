@@ -191,8 +191,7 @@ impl RadioModelProfile {
                     return false;
                 };
                 let profile = crate::kenwood::profile::profile_for_model(model);
-                matches!(id, ControlId::RfPower) && profile.power_range_watts.is_some()
-                    || id == ControlId::Split
+                profile.supports_control(id)
             }
         }
     }
@@ -684,7 +683,7 @@ mod tests {
         assert!(!ft991a.supports_control(crate::ControlId::Split));
         assert!(ft857d.supports_control(crate::ControlId::Split));
         assert!(ts890s.supports_control(crate::ControlId::RfPower));
-        assert!(!ts890s.supports_control(crate::ControlId::AfGain));
+        assert!(ts890s.supports_control(crate::ControlId::AfGain));
         assert!(!ts890s.driver_capabilities().can_get_ptt);
         assert!(
             find_model("TS-590SG")

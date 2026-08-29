@@ -101,22 +101,26 @@ newer radios.
 
 | Model | Manual/reference used | Profile details checked |
 |---|---|---|
-| TS-590SG | `B5A-0180-20.pdf`; `ts590_g_pc_command_en_rev3.pdf`, Jan. 2019 | ID `023`; `FA`/`FB` 11-digit frequency; `FR`/`FT`; `MD` plus `DA`; `IF` RX/TX field; `PC` 5-100 W broad range (AM max 25 W); `SM0` 0-30; 4800-115200 baud |
-| TS-890S | `B5A-4695-00.pdf`; `ts890_pc_command_en_rev1.pdf`, Jan. 2019 | ID `024`; `FA`/`FB`; `OM` with PSK and data variants; direct `TB` split; `PC`; `SM` 0-70; no pollable PTT query; COM/USB baud differences |
+| TS-590SG | `B5A-0180-20.pdf`; `ts590_g_pc_command_en_rev3.pdf`, Jan. 2019 | ID `023`; `FA`/`FB` 11-digit frequency; `FR`/`FT`; `MD` plus `DA`; `IF` RX/TX/RIT/XIT fields; `PC` 5-100 W broad range (AM max 25 W); `SM0` 0-30; `RM` SWR/COMP/ALC; `MC`/`MR`/`MW` memory records; 4800-115200 baud |
+| TS-890S | `B5A-4695-00.pdf`; `ts890_pc_command_en_rev1.pdf`, Jan. 2019 | ID `024`; `FA`/`FB`; `OM` with PSK and data variants; direct `TB` split; `PC`; `SM` 0-70; `RM` SWR/ALC/COMP/ID/VD/TEMP; `RF`/`RT`/`XT` RIT/XIT; no pollable PTT query; COM/USB baud differences |
 | TS-2000 | `B62-1221-70.pdf`, PC Control Command Tables | ID `019`; `FA`/`FB`; `FR`/`FT`; `MD`; `IF` RX/TX field; HF/VHF/UHF/1.2 GHz receive segments; 4800 baud requires two stop bits |
 
 The shared driver verifies `ID`, follows the selected receiver VFO for
 frequency reads/writes, exposes exact watts and normalized HAL power, handles
 model-specific modes and split commands, reads the documented meter layout,
-and matches responses around interleaved Auto Information frames. PTT writes
-are verified on the two models with pollable `IF` status. All three remain
-framework-level until exercised against physical radios.
+implements profiled receiver controls, RIT/XIT, VFO selection, tuner, filters,
+and memory records, and routes interleaved Auto Information frames to the
+shared event router. PTT writes are verified on the two models with pollable
+`IF` status. All three remain framework-level until exercised against physical
+radios.
 All normalized meters use the HAL's 0..255 meter-deflection scale. Yaesu CAT
 profiles expose signal, power, SWR, ALC, compression, current, and voltage
 through the documented `RM1` and `RM3`..`RM8` selectors, plus typed AGC,
 noise-reduction, and noise-reduction-level controls. Kenwood profiles expose
-normalized signal and profile-correct SWR. SWR telemetry uses the HAL's normalized
-0..255 meter-deflection scale. The
+normalized signal, TX power, and profile-correct SWR; TS-590SG additionally
+exposes ALC and compression, while TS-890S additionally exposes ALC,
+compression, current, voltage, and temperature. SWR telemetry uses
+the HAL's normalized 0..255 meter-deflection scale. The
 Kenwood profiles query the documented `RM` SWR meter and normalize their
 model-specific 0..30 or 0..70 dot ranges. Modern Yaesu CAT profiles query
 `RM6`, whose documented response is already 0..255. This is normalized meter

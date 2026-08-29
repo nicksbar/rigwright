@@ -2,7 +2,40 @@
 
 use anyhow::{bail, Result};
 
-use crate::{hal::Mode, models::KenwoodCatModel};
+use crate::{
+    hal::Mode,
+    hal_types::{ControlId, MeterId},
+    models::KenwoodCatModel,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KenwoodControlSpec {
+    pub id: ControlId,
+    pub command: &'static str,
+    pub response_len: usize,
+    pub max_value: Option<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KenwoodMeterSpec {
+    pub id: MeterId,
+    pub command: &'static str,
+    pub selector: char,
+    pub maximum: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KenwoodRitXitLayout {
+    IfStatus,
+    RfAndFunctionState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KenwoodMemorySurface {
+    None,
+    Ts590,
+    Ts890,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KenwoodModeSpec {
@@ -48,6 +81,14 @@ pub struct KenwoodCatProfile {
     pub swr_meter_max: u16,
     /// RM selector returned when the radio is displaying SWR.
     pub swr_rm_selector: char,
+    pub controls: &'static [KenwoodControlSpec],
+    pub extra_meters: &'static [KenwoodMeterSpec],
+    pub rit_xit_layout: KenwoodRitXitLayout,
+    pub memory_surface: KenwoodMemorySurface,
+    pub ai_on_value: &'static str,
+    pub sm_payload_len: usize,
+    pub sm_value_start: usize,
+    pub swr_meter_requires_selection: bool,
 }
 
 impl KenwoodCatProfile {
@@ -100,6 +141,20 @@ impl KenwoodCatProfile {
         }
         Ok(())
     }
+
+    pub fn control(self, id: ControlId) -> Option<KenwoodControlSpec> {
+        self.controls.iter().copied().find(|spec| spec.id == id)
+    }
+
+    pub fn meter(self, id: MeterId) -> Option<KenwoodMeterSpec> {
+        self.extra_meters.iter().copied().find(|spec| spec.id == id)
+    }
+
+    pub fn supports_control(self, id: ControlId) -> bool {
+        self.control(id).is_some()
+            || (id == ControlId::RfPower && self.power_range_watts.is_some())
+            || matches!(id, ControlId::Split | ControlId::Vfo)
+    }
 }
 
 const fn mode(code: char, mode: Mode, preferred: bool) -> KenwoodModeSpec {
@@ -151,6 +206,246 @@ const TS2000_RANGES: &[(u64, u64)] = &[
     (1_240_000_000, 1_300_000_000),
 ];
 
+/* model command tables moved to ts590sg.rs, ts890s.rs, and ts2000.rs */
+/*
+const TS590_CONTROLS: &[KenwoodControlSpec] = &[
+    KenwoodControlSpec {
+        id: ControlId::AfGain,
+        command: "AG",
+        response_len: 4,
+        max_value: Some(255),
+    },
+    KenwoodControlSpec {
+        id: ControlId::RfGain,
+        command: "RG",
+        response_len: 3,
+        max_value: Some(255),
+    },
+    KenwoodControlSpec {
+        id: ControlId::Squelch,
+        command: "SQ",
+        response_len: 4,
+        max_value: Some(255),
+    },
+    KenwoodControlSpec {
+        id: ControlId::Preamp,
+        command: "PA",
+        response_len: 2,
+        max_value: Some(1),
+    },
+    KenwoodControlSpec {
+        id: ControlId::NoiseBlanker,
+        command: "NB",
+        response_len: 1,
+        max_value: Some(1),
+    },
+    KenwoodControlSpec {
+        id: ControlId::NoiseReduction,
+        command: "NR",
+        response_len: 1,
+        max_value: Some(1),
+    },
+    KenwoodControlSpec {
+        id: ControlId::Notch,
+        command: "NT",
+        response_len: 2,
+        max_value: Some(2),
+    },
+    KenwoodControlSpec {
+        id: ControlId::Filter,
+        command: "FL",
+        response_len: 1,
+        max_value: Some(2),
+    },
+    KenwoodControlSpec {
+        id: ControlId::Rit,
+        command: "RT",
+        response_len: 1,
+        max_value: Some(1),
+    },
+    KenwoodControlSpec {
+        id: ControlId::Xit,
+        command: "XT",
+        response_len: 1,
+        max_value: Some(1),
+    },
+];
+
+const TS890_CONTROLS: &[KenwoodControlSpec] = &[
+    KenwoodControlSpec {
+        id: ControlId::AfGain,
+        command: "AG",
+        response_len: 3,
+        max_value: Some(255),
+    },
+    KenwoodControlSpec {
+        id: ControlId::RfGain,
+        command: "RG",
+        response_len: 3,
+        max_value: Some(255),
+    },
+    KenwoodControlSpec {
+        id: ControlId::Squelch,
+        command: "SQ",
+        response_len: 3,
+        max_value: Some(255),
+    },
+    KenwoodControlSpec {
+        id: ControlId::Preamp,
+        command: "PA",
+        response_len: 1,
+        max_value: Some(2),
+    },
+    KenwoodControlSpec {
+        id: ControlId::NoiseBlanker,
+        command: "NB1",
+        response_len: 1,
+        max_value: Some(1),
+    },
+    KenwoodControlSpec {
+        id: ControlId::NoiseReduction,
+        command: "NR",
+        response_len: 1,
+        max_value: Some(1),
+    },
+    KenwoodControlSpec {
+        id: ControlId::Notch,
+        command: "NT",
+        response_len: 1,
+        max_value: Some(1),
+    },
+    KenwoodControlSpec {
+        id: ControlId::Filter,
+        command: "FL0",
+        response_len: 2,
+        max_value: Some(2),
+    },
+    KenwoodControlSpec {
+        id: ControlId::Agc,
+        command: "GC",
+        response_len: 1,
+        max_value: Some(3),
+    },
+    KenwoodControlSpec {
+        id: ControlId::Rit,
+        command: "RT",
+        response_len: 1,
+        max_value: Some(1),
+    },
+    KenwoodControlSpec {
+        id: ControlId::Xit,
+        command: "XT",
+        response_len: 1,
+        max_value: Some(1),
+    },
+];
+
+const TS2000_CONTROLS: &[KenwoodControlSpec] = &[
+    KenwoodControlSpec {
+        id: ControlId::AfGain,
+        command: "AG",
+        response_len: 3,
+        max_value: Some(255),
+    },
+    KenwoodControlSpec {
+        id: ControlId::RfGain,
+        command: "RG",
+        response_len: 3,
+        max_value: Some(255),
+    },
+    KenwoodControlSpec {
+        id: ControlId::Squelch,
+        command: "SQ",
+        response_len: 3,
+        max_value: Some(255),
+    },
+    KenwoodControlSpec {
+        id: ControlId::Preamp,
+        command: "PA",
+        response_len: 1,
+        max_value: Some(1),
+    },
+    KenwoodControlSpec {
+        id: ControlId::NoiseBlanker,
+        command: "NB",
+        response_len: 1,
+        max_value: Some(1),
+    },
+    KenwoodControlSpec {
+        id: ControlId::NoiseReduction,
+        command: "NR",
+        response_len: 1,
+        max_value: Some(1),
+    },
+    KenwoodControlSpec {
+        id: ControlId::Notch,
+        command: "NT",
+        response_len: 1,
+        max_value: Some(1),
+    },
+    KenwoodControlSpec {
+        id: ControlId::Rit,
+        command: "RT",
+        response_len: 1,
+        max_value: Some(1),
+    },
+    KenwoodControlSpec {
+        id: ControlId::Xit,
+        command: "XT",
+        response_len: 1,
+        max_value: Some(1),
+    },
+];
+
+const TS590_METERS: &[KenwoodMeterSpec] = &[
+    KenwoodMeterSpec {
+        id: MeterId::Alc,
+        command: "RM",
+        selector: '3',
+        maximum: 30,
+    },
+    KenwoodMeterSpec {
+        id: MeterId::Compression,
+        command: "RM",
+        selector: '2',
+        maximum: 30,
+    },
+];
+const TS890_METERS: &[KenwoodMeterSpec] = &[
+    KenwoodMeterSpec {
+        id: MeterId::Alc,
+        command: "RM",
+        selector: '1',
+        maximum: 70,
+    },
+    KenwoodMeterSpec {
+        id: MeterId::Compression,
+        command: "RM",
+        selector: '3',
+        maximum: 70,
+    },
+    KenwoodMeterSpec {
+        id: MeterId::Current,
+        command: "RM",
+        selector: '4',
+        maximum: 70,
+    },
+    KenwoodMeterSpec {
+        id: MeterId::Voltage,
+        command: "RM",
+        selector: '5',
+        maximum: 70,
+    },
+    KenwoodMeterSpec {
+        id: MeterId::Temperature,
+        command: "RM",
+        selector: '6',
+        maximum: 70,
+    },
+];
+const NO_EXTRA_METERS: &[KenwoodMeterSpec] = &[];
+*/
+
 pub const TS590SG_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     model: KenwoodCatModel::Ts590Sg,
     id_code: "023",
@@ -166,6 +461,14 @@ pub const TS590SG_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     meter_max: 30,
     swr_meter_max: 30,
     swr_rm_selector: '1',
+    controls: crate::kenwood::ts590sg::CONTROLS,
+    extra_meters: crate::kenwood::ts590sg::METERS,
+    rit_xit_layout: KenwoodRitXitLayout::IfStatus,
+    memory_surface: KenwoodMemorySurface::Ts590,
+    ai_on_value: "2",
+    sm_payload_len: 5,
+    sm_value_start: 1,
+    swr_meter_requires_selection: false,
 };
 
 pub const TS890S_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
@@ -181,6 +484,14 @@ pub const TS890S_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     meter_max: 70,
     swr_meter_max: 70,
     swr_rm_selector: '2',
+    controls: crate::kenwood::ts890s::CONTROLS,
+    extra_meters: crate::kenwood::ts890s::METERS,
+    rit_xit_layout: KenwoodRitXitLayout::RfAndFunctionState,
+    memory_surface: KenwoodMemorySurface::Ts890,
+    ai_on_value: "2",
+    sm_payload_len: 4,
+    sm_value_start: 0,
+    swr_meter_requires_selection: true,
 };
 
 pub const TS2000_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
@@ -198,6 +509,14 @@ pub const TS2000_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     meter_max: 30,
     swr_meter_max: 30,
     swr_rm_selector: '1',
+    controls: crate::kenwood::ts2000::CONTROLS,
+    extra_meters: &[],
+    rit_xit_layout: KenwoodRitXitLayout::IfStatus,
+    memory_surface: KenwoodMemorySurface::None,
+    ai_on_value: "1",
+    sm_payload_len: 5,
+    sm_value_start: 1,
+    swr_meter_requires_selection: false,
 };
 
 pub fn profile_for_model(model: KenwoodCatModel) -> &'static KenwoodCatProfile {
@@ -242,5 +561,25 @@ mod tests {
         assert!(TS2000_PROFILE.supports_frequency(145_000_000));
         assert!(!TS590SG_PROFILE.supports_frequency(145_000_000));
         assert!(!TS890S_PROFILE.baud_rates.contains(&1_200));
+    }
+
+    #[test]
+    fn every_profile_owns_its_optional_control_and_meter_contract() {
+        for profile in [TS590SG_PROFILE, TS890S_PROFILE, TS2000_PROFILE] {
+            assert!(!profile.controls.is_empty());
+            for (index, control) in profile.controls.iter().enumerate() {
+                assert!(control.response_len > 0);
+                assert!(profile.controls[index + 1..]
+                    .iter()
+                    .all(|other| other.id != control.id));
+            }
+            assert!(profile
+                .extra_meters
+                .iter()
+                .all(|meter| meter.command == "RM" && meter.maximum > 0));
+        }
+        assert!(TS590SG_PROFILE.control(ControlId::Filter).is_some());
+        assert!(TS890S_PROFILE.control(ControlId::Agc).is_some());
+        assert!(TS2000_PROFILE.control(ControlId::Filter).is_none());
     }
 }

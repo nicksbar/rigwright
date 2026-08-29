@@ -17,6 +17,11 @@
   offset data.
 - Add modern Yaesu typed AF/RF gain, squelch, preamp, attenuator, NB, notch,
   filter-width, RIT/XIT, VFO, and tuner controls, plus AI event routing.
+- Expand Kenwood PC control with profile-aware AF/RF gain, squelch, preamp,
+  noise blanker, noise reduction, notch, filters, RIT/XIT offsets, VFO A/B,
+  tuner control, Auto Information event routing, TX power metering, TS-590SG
+  memory/ALC/compression support, and TS-890S
+  ALC/compression/current/voltage/temperature meters.
 - Complete the classic Yaesu binary CAT surfaces available in the documented
   opcode table: normalized signal/power meters, clarifier enable/offset writes,
   and repeater shift, offset-frequency, CTCSS, and DCS writes. Readback remains
