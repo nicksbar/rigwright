@@ -22,8 +22,6 @@ jobs:
           cargo install cargo-llvm-cov --locked
       - name: Run the complete test suite
         run: cargo test --locked --all-features --all-targets
-      - name: Run tests and generate coverage report
-        run: cargo llvm-cov --locked --all-features --workspace --html --output-dir target/llvm-cov/html
       - name: Enforce Icom coverage threshold
         run: |
           set -o pipefail
@@ -33,6 +31,8 @@ jobs:
         env:
           GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/check-changed-coverage.sh coverage-summary.txt
+      - name: Generate HTML coverage report
+        run: cargo llvm-cov --locked --all-features --workspace --html --output-dir target/llvm-cov
       - name: Publish test and coverage summary
         if: always()
         run: |
