@@ -1077,6 +1077,15 @@ impl IcomCiVRadio {
                 self.transact(&[0x07, value], false)?;
                 Ok(None)
             }
+            (ControlId::Vfo, ControlOp::Get) => {
+                // CI-V 0x07 is a selector command. The IC-7300 accepts the
+                // write form (0x07 00/01) but NAKs the read form (0x07), so
+                // there is no reliable active-VFO readback through this API.
+                anyhow::bail!(
+                    "VFO selection is write-only for {}",
+                    self.selected_model()?.model_name()
+                )
+            }
             (ControlId::Preamp, op) if profile.external_preamp.is_some() => {
                 let spec = profile.external_preamp.expect("profile checked");
                 let combined = self.read_u8_control(spec.command_prefix)?;
@@ -1425,6 +1434,14 @@ impl Radio for IcomCiVRadio {
             )
             || (id == ControlId::MainSub && profile.main_sub.is_some())
             || (id == ControlId::ExternalPreamp && profile.external_preamp.is_some())
+    }
+
+    fn supports_control_read(&self, id: ControlId) -> bool {
+        self.supports_control(id) && !matches!(id, ControlId::RawCiV | ControlId::Vfo)
+    }
+
+    fn supports_control_write(&self, id: ControlId) -> bool {
+        self.supports_control(id) && id != ControlId::RawCiV
     }
 
     async fn start_tuner(&self) -> Result<()> {

@@ -69,6 +69,16 @@ pub trait Radio: Send + Sync {
     fn supports_control(&self, _id: ControlId) -> bool {
         false
     }
+    /// Report whether a typed control has a reliable readback operation.
+    /// Defaults to the legacy supported-control behavior for existing drivers.
+    fn supports_control_read(&self, id: ControlId) -> bool {
+        self.supports_control(id)
+    }
+    /// Report whether a typed control has a reliable write operation.
+    /// Defaults to the legacy supported-control behavior for existing drivers.
+    fn supports_control_write(&self, id: ControlId) -> bool {
+        self.supports_control(id)
+    }
     async fn start_tuner(&self) -> Result<()> {
         anyhow::bail!("antenna tuner control is not supported by this radio")
     }

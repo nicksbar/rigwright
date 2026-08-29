@@ -176,6 +176,14 @@ impl Radio for RadioAndroid {
         self.radio().supports_control(id)
     }
 
+    fn supports_control_read(&self, id: ControlId) -> bool {
+        self.radio().supports_control_read(id)
+    }
+
+    fn supports_control_write(&self, id: ControlId) -> bool {
+        self.radio().supports_control_write(id)
+    }
+
     async fn start_tuner(&self) -> Result<()> {
         self.radio().start_tuner().await
     }

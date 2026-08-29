@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.13 — Directional control capabilities
+
+- Add independent `supports_control_read()` and
+  `supports_control_write()` capability queries.
+- Mark Icom VFO A/B selection as write-only because the documented CI-V
+  selector has no reliable active-VFO readback command.
+- Preserve readable and writable status for the existing Yaesu and Kenwood
+  typed controls.
+- Expose the directional capability contract through the Android adapter.
+
 ## 0.1.12 — IC-7300 telemetry meters
 
 - Add IC-7300 CI-V meter queries for signal, output power, ALC, SWR,

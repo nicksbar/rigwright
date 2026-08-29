@@ -69,11 +69,17 @@ the final column.
 | `Xit` | model-specific value | M | M | M | M | Not implemented |
 | `Split` | `Bool` | RW/P all four profiles | RW/P profiles with documented split | RW/P all four profiles | RW/P all three profiles | Q profile/control path, limited banner use |
 | `Tuner` | `Bool` enable/status | RW/P all four profiles | M, not typed | M, not typed | M, not typed | Q enable/disable and sweep safety |
-| `Vfo` | model-specific selector | H/P Icom profiles | M, not typed | M, not typed | M, not typed | Not currently used as a typed banner control |
+| `Vfo` | model-specific selector | W/P Icom profiles; A/B readback is not documented | M, not typed | M, not typed | M, not typed | Q write-only selector with local state |
 | `MainSub` | receiver selector | RW/P IC-7610 and IC-9700 | M, not typed | — | M, not typed | Not currently used |
 | `RawCiV` | raw bytes | H/P Icom only | — | — | — | Not a normal UI control |
 
 ### Control interpretation notes
+
+Read/write direction is part of the driver contract. A control may be exposed
+for writing without having reliable readback; Icom VFO A/B selection is the
+current example. Applications should use `supports_control_read()` and
+`supports_control_write()` independently rather than inferring both from
+`supports_control()`.
 
 - Icom controls are declarative CI-V profile entries. The exact command
   prefixes and allowed values remain model-specific even when the HAL name is

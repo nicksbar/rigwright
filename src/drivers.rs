@@ -450,6 +450,24 @@ impl Radio for ConfiguredRadio {
             _ => false,
         }
     }
+    fn supports_control_read(&self, id: crate::ControlId) -> bool {
+        match self {
+            Self::Icom(r) => r.supports_control_read(id),
+            Self::Yaesu(r) => r.supports_control_read(id),
+            Self::Kenwood(r) => r.supports_control_read(id),
+            Self::LegacyYaesu(r) => r.supports_control_read(id),
+            _ => false,
+        }
+    }
+    fn supports_control_write(&self, id: crate::ControlId) -> bool {
+        match self {
+            Self::Icom(r) => r.supports_control_write(id),
+            Self::Yaesu(r) => r.supports_control_write(id),
+            Self::Kenwood(r) => r.supports_control_write(id),
+            Self::LegacyYaesu(r) => r.supports_control_write(id),
+            _ => false,
+        }
+    }
     async fn start_tuner(&self) -> Result<()> {
         match self {
             Self::Icom(r) => r.start_tuner().await,
@@ -638,6 +656,10 @@ mod tests {
         let icom = open_model("IC-7300", "/dev/null", 115_200, 0xE0).unwrap();
         assert!(icom.supports_control(crate::ControlId::IpPlus));
         assert!(icom.supports_control(crate::ControlId::NoiseReduction));
+        assert!(!icom.supports_control_read(crate::ControlId::Vfo));
+        assert!(icom.supports_control_write(crate::ControlId::Vfo));
+        assert!(!icom.supports_control_read(crate::ControlId::RawCiV));
+        assert!(!icom.supports_control_write(crate::ControlId::RawCiV));
         assert!(icom.supports_meter(crate::MeterId::Swr));
         assert!(icom.supports_meter(crate::MeterId::Signal));
         assert!(icom.supports_meter(crate::MeterId::Power));
@@ -649,16 +671,24 @@ mod tests {
 
         let ic9700 = open_model("IC-9700", "/dev/null", 115_200, 0xE0).unwrap();
         assert!(ic9700.supports_control(crate::ControlId::MainSub));
+        assert!(ic9700.supports_control_read(crate::ControlId::MainSub));
+        assert!(ic9700.supports_control_write(crate::ControlId::MainSub));
         assert!(ic9700.supports_control(crate::ControlId::ExternalPreamp));
 
         let yaesu = open_model("FTDX10", "/dev/null", 38_400, 0xE0).unwrap();
         assert!(yaesu.supports_control(crate::ControlId::Agc));
+        assert!(yaesu.supports_control_read(crate::ControlId::Agc));
+        assert!(yaesu.supports_control_write(crate::ControlId::Agc));
         assert!(yaesu.supports_control(crate::ControlId::NoiseReductionLevel));
         assert!(yaesu.supports_meter(crate::MeterId::Voltage));
         assert!(!yaesu.supports_meter(crate::MeterId::Temperature));
 
         let kenwood = open_model("TS-890S", "/dev/null", 115_200, 0xE0).unwrap();
         assert!(kenwood.supports_control(crate::ControlId::RfPower));
+        assert!(kenwood.supports_control_read(crate::ControlId::RfPower));
+        assert!(kenwood.supports_control_write(crate::ControlId::RfPower));
+        assert!(kenwood.supports_control_read(crate::ControlId::Split));
+        assert!(kenwood.supports_control_write(crate::ControlId::Split));
         assert!(kenwood.supports_meter(crate::MeterId::Signal));
         assert!(kenwood.supports_meter(crate::MeterId::Swr));
         assert!(!kenwood.supports_meter(crate::MeterId::Alc));
