@@ -282,7 +282,9 @@ mod tests {
             for index in 0..6 {
                 let (mut stream, _) = listener.accept().unwrap();
                 let mut line = String::new();
-                BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
+                BufReader::new(stream.try_clone().unwrap())
+                    .read_line(&mut line)
+                    .unwrap();
                 seen.lock().unwrap().push(line.trim().to_string());
                 let response = match index {
                     0 => "14074000\n",
@@ -296,9 +298,15 @@ mod tests {
         });
 
         let radio = RigctldRadio::new(address.to_string()).with_timeout(Duration::from_secs(1));
-        assert_eq!(futures::executor::block_on(radio.get_frequency_hz()).unwrap(), 14_074_000);
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_074_000
+        );
         futures::executor::block_on(radio.set_frequency_hz(14_075_000)).unwrap();
-        assert_eq!(futures::executor::block_on(radio.get_mode()).unwrap(), Mode::Usb);
+        assert_eq!(
+            futures::executor::block_on(radio.get_mode()).unwrap(),
+            Mode::Usb
+        );
         futures::executor::block_on(radio.set_mode(Mode::Data)).unwrap();
         futures::executor::block_on(radio.set_ptt(true)).unwrap();
         assert!(futures::executor::block_on(radio.set_ptt(false)).is_err());

@@ -280,7 +280,9 @@ mod tests {
                 let mut request = [0_u8; 512];
                 let count = stream.read(&mut request).unwrap();
                 let request = &request[..count];
-                seen.lock().unwrap().push(std::str::from_utf8(request).unwrap().to_string());
+                seen.lock()
+                    .unwrap()
+                    .push(std::str::from_utf8(request).unwrap().to_string());
                 let response = match index {
                     0 => b"<CmdFreq:10> 14074.000".as_slice(),
                     2 => b"<CmdMode:3>USB".as_slice(),
@@ -290,10 +292,17 @@ mod tests {
             }
         });
 
-        let radio = DxLabCommanderRadio::new(address.to_string()).with_timeout(Duration::from_secs(1));
-        assert_eq!(futures::executor::block_on(radio.get_frequency_hz()).unwrap(), 14_074_000);
+        let radio =
+            DxLabCommanderRadio::new(address.to_string()).with_timeout(Duration::from_secs(1));
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_074_000
+        );
         futures::executor::block_on(radio.set_frequency_hz(14_075_000)).unwrap();
-        assert_eq!(futures::executor::block_on(radio.get_mode()).unwrap(), Mode::Usb);
+        assert_eq!(
+            futures::executor::block_on(radio.get_mode()).unwrap(),
+            Mode::Usb
+        );
         futures::executor::block_on(radio.set_mode(Mode::Data)).unwrap();
         futures::executor::block_on(radio.set_ptt(true)).unwrap();
         futures::executor::block_on(radio.set_ptt(false)).unwrap();
@@ -317,8 +326,13 @@ mod tests {
         assert!(format_frequency_khz(1_000_000_000_000).is_err());
         assert!(decode_commander_mode("unknown").is_err());
         for mode in [
-            Mode::Am, Mode::Fm, Mode::Wfm, Mode::Rtty,
-            Mode::RttyReverse, Mode::Cw, Mode::Lsb,
+            Mode::Am,
+            Mode::Fm,
+            Mode::Wfm,
+            Mode::Rtty,
+            Mode::RttyReverse,
+            Mode::Cw,
+            Mode::Lsb,
         ] {
             assert!(!encode_commander_mode(mode).is_empty());
         }

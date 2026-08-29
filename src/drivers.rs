@@ -871,8 +871,18 @@ mod tests {
     #[test]
     fn ascii_compatibility_driver_covers_documented_modes_and_capabilities() {
         for (flavor, modes) in [
-            (AsciiCatFlavor::Yaesu, ["01", "02", "03", "04", "05", "06", "07", "08", "09", "0A", "0C", "0E", "0F"]),
-            (AsciiCatFlavor::Kenwood, ["1", "2", "3", "4", "5", "6", "7", "9", "8", "0", "A", "C", "E"]),
+            (
+                AsciiCatFlavor::Yaesu,
+                [
+                    "01", "02", "03", "04", "05", "06", "07", "08", "09", "0A", "0C", "0E", "0F",
+                ],
+            ),
+            (
+                AsciiCatFlavor::Kenwood,
+                [
+                    "1", "2", "3", "4", "5", "6", "7", "9", "8", "0", "A", "C", "E",
+                ],
+            ),
         ] {
             for raw in modes {
                 let _ = decode_ascii_mode(flavor, raw);
@@ -880,50 +890,81 @@ mod tests {
         }
         assert!(decode_ascii_mode(AsciiCatFlavor::Yaesu, "00").is_err());
         assert!(decode_ascii_mode(AsciiCatFlavor::Kenwood, "00").is_err());
-        assert!(AsciiCatRadio::new("", 9_600, AsciiCatFlavor::Yaesu)
-            .capabilities()
-            .can_get_ptt);
-        assert!(!AsciiCatRadio::new("", 9_600, AsciiCatFlavor::Kenwood)
-            .capabilities()
-            .can_get_ptt);
+        assert!(
+            AsciiCatRadio::new("", 9_600, AsciiCatFlavor::Yaesu)
+                .capabilities()
+                .can_get_ptt
+        );
+        assert!(
+            !AsciiCatRadio::new("", 9_600, AsciiCatFlavor::Kenwood)
+                .capabilities()
+                .can_get_ptt
+        );
         assert!(futures::executor::block_on(
             AsciiCatRadio::new("", 9_600, AsciiCatFlavor::Yaesu).set_mode(Mode::Wfm)
-        ).is_err());
+        )
+        .is_err());
     }
 
     #[test]
     fn configured_radio_handles_null_and_unsupported_dispatch_paths() {
         let radio = open_null();
-        assert_eq!(futures::executor::block_on(radio.get_frequency_hz()).unwrap(), 14_074_000);
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_074_000
+        );
         futures::executor::block_on(radio.set_frequency_hz(14_075_000)).unwrap();
-        assert_eq!(futures::executor::block_on(radio.get_mode()).unwrap(), Mode::Usb);
+        assert_eq!(
+            futures::executor::block_on(radio.get_mode()).unwrap(),
+            Mode::Usb
+        );
         futures::executor::block_on(radio.set_mode(Mode::Cw)).unwrap();
         futures::executor::block_on(radio.set_ptt(true)).unwrap();
         assert!(futures::executor::block_on(radio.get_ptt()).unwrap());
         assert!(futures::executor::block_on(radio.get_power()).is_err());
         assert!(futures::executor::block_on(radio.set_power(true)).is_err());
         assert!(futures::executor::block_on(radio.protocol_write_read(&[])).is_err());
-        assert_eq!(futures::executor::block_on(radio.get_control(ControlId::RfPower)).unwrap(), None);
-        assert!(futures::executor::block_on(radio.set_control(ControlId::RfPower, ControlValue::U8(1))).is_err());
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::RfPower)).unwrap(),
+            None
+        );
+        assert!(futures::executor::block_on(
+            radio.set_control(ControlId::RfPower, ControlValue::U8(1))
+        )
+        .is_err());
         assert!(futures::executor::block_on(radio.get_repeater_settings()).is_err());
-        assert!(futures::executor::block_on(radio.set_repeater_settings(RepeaterSettings::default())).is_err());
+        assert!(futures::executor::block_on(
+            radio.set_repeater_settings(RepeaterSettings::default())
+        )
+        .is_err());
         assert!(futures::executor::block_on(radio.get_rit_offset_hz()).is_err());
         assert!(futures::executor::block_on(radio.set_rit_offset_hz(0)).is_err());
         assert!(futures::executor::block_on(radio.get_xit_offset_hz()).is_err());
         assert!(futures::executor::block_on(radio.set_xit_offset_hz(0)).is_err());
         assert!(futures::executor::block_on(radio.select_memory_channel(1)).is_err());
         assert!(futures::executor::block_on(radio.read_memory_channel(1)).is_err());
-        assert!(futures::executor::block_on(radio.write_memory_channel(MemoryChannel {
-            channel: 1,
-            name: None,
-            frequency_hz: 14_074_000,
-            transmit_frequency_hz: None,
-            mode: Mode::Usb,
-            repeater: RepeaterSettings::default(),
-        })).is_err());
-        assert!(futures::executor::block_on(radio.send_dtmf(DtmfSequence::new("1").unwrap())).is_err());
-        assert!(futures::executor::block_on(radio.get_meter(MeterId::Signal)).unwrap().is_none());
+        assert!(
+            futures::executor::block_on(radio.write_memory_channel(MemoryChannel {
+                channel: 1,
+                name: None,
+                frequency_hz: 14_074_000,
+                transmit_frequency_hz: None,
+                mode: Mode::Usb,
+                repeater: RepeaterSettings::default(),
+            }))
+            .is_err()
+        );
+        assert!(
+            futures::executor::block_on(radio.send_dtmf(DtmfSequence::new("1").unwrap())).is_err()
+        );
+        assert!(
+            futures::executor::block_on(radio.get_meter(MeterId::Signal))
+                .unwrap()
+                .is_none()
+        );
         assert!(futures::executor::block_on(radio.start_tuner()).is_err());
-        assert!(futures::executor::block_on(radio.get_tuner_status()).unwrap().is_none());
+        assert!(futures::executor::block_on(radio.get_tuner_status())
+            .unwrap()
+            .is_none());
     }
 }

@@ -2753,6 +2753,47 @@ mod tests {
     }
 
     #[test]
+    fn ignores_usb_echo_back_before_civ_data_response() {
+        let echo = TestTransport::response(0xE0, 0x94, &[0x15, 0x02]);
+        let response = TestTransport::response(0x94, 0xE0, &[0x15, 0x02, 0x00, 0x48]);
+        let (transport, writes) = TestTransport::with_reads(vec![echo, response]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_meter(MeterId::Signal)).unwrap(),
+            Some(48)
+        );
+        assert_eq!(
+            writes.lock().unwrap().as_slice(),
+            [vec![0xFE, 0xFE, 0x94, 0xE0, 0x15, 0x02, 0xFD]]
+        );
+    }
+
+    #[test]
+    fn preserves_civ_nak_after_usb_echo_back() {
+        let echo = TestTransport::response(0xE0, 0x94, &[0x14, 0x0A, 0x00, 0x50]);
+        let nak = TestTransport::response(0x94, 0xE0, &[0xFA, 0x06]);
+        let (transport, _) = TestTransport::with_reads(vec![echo, nak]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+
+        let error = futures::executor::block_on(
+            radio.set_control(ControlId::RfPower, ControlValue::U8(50)),
+        )
+        .expect_err("CI-V NAK must not be hidden by echo filtering");
+        assert!(error.to_string().contains("radio rejected CI-V command"));
+    }
+
+    #[test]
     fn model_value_boundaries_reject_before_transport() {
         for (model, attenuator, invalid_attenuator, max_preamp) in [
             (crate::models::IcomCivModel::Ic705, 20, 10, 2_u8),
@@ -3318,22 +3359,37 @@ mod tests {
             0x94,
             transport,
         );
-        assert_eq!(futures::executor::block_on(radio.get_frequency_hz()).unwrap(), 14_074_000);
-        assert_eq!(futures::executor::block_on(radio.get_mode()).unwrap(), Mode::Data);
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_074_000
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_mode()).unwrap(),
+            Mode::Data
+        );
         futures::executor::block_on(radio.set_ptt(true)).unwrap();
         assert!(futures::executor::block_on(radio.get_ptt()).unwrap());
         futures::executor::block_on(radio.set_control(ControlId::Tuner, ControlValue::Bool(true)))
             .unwrap();
         assert_eq!(
             futures::executor::block_on(radio.get_tuner_status()).unwrap(),
-            Some(TunerStatus { enabled: true, tuning: true })
+            Some(TunerStatus {
+                enabled: true,
+                tuning: true
+            })
         );
         futures::executor::block_on(radio.set_mode(Mode::Usb)).unwrap();
         let writes = writes.lock().unwrap();
         assert!(writes.iter().any(|frame| frame.ends_with(&[0x03, 0xFD])));
-        assert!(writes.iter().any(|frame| frame.ends_with(&[0x1C, 0x00, 0x01, 0xFD])));
-        assert!(writes.iter().any(|frame| frame.ends_with(&[0x1C, 0x01, 0x01, 0xFD])));
-        assert!(writes.iter().any(|frame| frame.ends_with(&[0x26, 0x00, 0x01, 0x00, 0x03, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x1C, 0x00, 0x01, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x1C, 0x01, 0x01, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x26, 0x00, 0x01, 0x00, 0x03, 0xFD])));
     }
 
     #[test]
@@ -3356,24 +3412,40 @@ mod tests {
             0xA2,
             transport,
         );
-        futures::executor::block_on(radio.set_control(ControlId::Vfo, ControlValue::U8(1))).unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::Vfo, ControlValue::U8(1)))
+            .unwrap();
         futures::executor::block_on(radio.select_receiver(IcomReceiver::Sub)).unwrap();
         assert_eq!(
             futures::executor::block_on(radio.get_control(ControlId::ExternalPreamp)).unwrap(),
             Some(ControlValue::Bool(true))
         );
-        futures::executor::block_on(radio.set_control(ControlId::ExternalPreamp, ControlValue::Bool(false))).unwrap();
+        futures::executor::block_on(
+            radio.set_control(ControlId::ExternalPreamp, ControlValue::Bool(false)),
+        )
+        .unwrap();
         assert_eq!(radio.get_rit_offset_hz().unwrap(), -1250);
         radio.set_rit_offset_hz(567).unwrap();
         radio.start_tuner_blocking().unwrap();
         assert!(!radio.get_tuner_status_blocking().unwrap().enabled);
         let writes = writes.lock().unwrap();
-        assert!(writes.iter().any(|frame| frame.ends_with(&[0x07, 0x01, 0xFD])));
-        assert!(writes.iter().any(|frame| frame.ends_with(&[0x07, 0xD1, 0xFD])));
-        assert!(writes.iter().any(|frame| frame.ends_with(&[0x16, 0x02, 0xFD])));
-        assert!(writes.iter().any(|frame| frame.ends_with(&[0x16, 0x02, 0x01, 0xFD])));
-        assert!(writes.iter().any(|frame| frame.ends_with(&[0x16, 0x02, 0x01, 0xFD])));
-        assert!(writes.iter().any(|frame| frame.ends_with(&[0x1C, 0x01, 0x02, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x07, 0x01, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x07, 0xD1, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x16, 0x02, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x16, 0x02, 0x01, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x16, 0x02, 0x01, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x1C, 0x01, 0x02, 0xFD])));
     }
 
     #[test]
@@ -3405,34 +3477,59 @@ mod tests {
         assert_eq!(repeater.shift, RepeaterShift::Plus);
         assert_eq!(repeater.tone.mode, ToneMode::Encode);
         assert_eq!(repeater.offset_hz, Some(60_000));
-        radio.set_repeater_settings(RepeaterSettings {
-            shift: RepeaterShift::Minus,
-            offset_hz: Some(600_000),
-            tone: ToneSettings {
-                mode: ToneMode::EncodeDecode,
-                frequency_tenths_hz: Some(885),
-                ..ToneSettings::default()
-            },
-        }).unwrap();
+        radio
+            .set_repeater_settings(RepeaterSettings {
+                shift: RepeaterShift::Minus,
+                offset_hz: Some(600_000),
+                tone: ToneSettings {
+                    mode: ToneMode::EncodeDecode,
+                    frequency_tenths_hz: Some(885),
+                    ..ToneSettings::default()
+                },
+            })
+            .unwrap();
         futures::executor::block_on(radio.set_frequency_hz(14_074_000)).unwrap();
         futures::executor::block_on(radio.set_power(false)).unwrap();
-        assert_eq!(futures::executor::block_on(radio.get_control(ControlId::Filter)).unwrap(), Some(ControlValue::U8(2)));
-        futures::executor::block_on(radio.set_control(ControlId::Filter, ControlValue::U8(3))).unwrap();
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::Filter)).unwrap(),
+            Some(ControlValue::U8(2))
+        );
+        futures::executor::block_on(radio.set_control(ControlId::Filter, ControlValue::U8(3)))
+            .unwrap();
         let writes = writes.lock().unwrap();
-        assert!(writes.iter().any(|frame| frame.ends_with(&[0x0F, 0x11, 0xFD])));
-        assert!(writes.iter().any(|frame| frame.ends_with(&[0x18, 0x00, 0xFD])));
-        assert!(writes.iter().any(|frame| frame.ends_with(&[0x05, 0x00, 0x40, 0x07, 0x14, 0x00, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x0F, 0x11, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x18, 0x00, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x05, 0x00, 0x40, 0x07, 0x14, 0x00, 0xFD])));
     }
 
     #[test]
     fn rejects_nak_and_invalid_raw_frames_without_hiding_protocol_errors() {
-        let (transport, _) = TestTransport::with_reads(vec![TestTransport::response(0x94, 0xE0, &[0xFA])]);
-        let radio = IcomCiVRadio::with_transport(Some(crate::models::IcomCivModel::Ic7300), 0xE0, 0x94, transport);
+        let (transport, _) =
+            TestTransport::with_reads(vec![TestTransport::response(0x94, 0xE0, &[0xFA])]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
         let error = futures::executor::block_on(radio.set_ptt(true)).unwrap_err();
         assert!(error.to_string().contains("rejected CI-V command"));
         let (transport, _) = TestTransport::with_reads(Vec::new());
-        let radio = IcomCiVRadio::with_transport(Some(crate::models::IcomCivModel::Ic7300), 0xE0, 0x94, transport);
-        assert!(futures::executor::block_on(radio.protocol_write_read(&[0xFE, 0x00, 0xFD])).is_err());
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+        assert!(
+            futures::executor::block_on(radio.protocol_write_read(&[0xFE, 0x00, 0xFD])).is_err()
+        );
         assert!(futures::executor::block_on(radio.get_power()).is_err());
     }
 
@@ -3455,7 +3552,8 @@ mod tests {
             sweep_speed: Some(2),
             vbw_wide: Some(true),
             fixed_edges_hz: Some((14_000_000, 14_200_000)),
-        })).unwrap();
+        }))
+        .unwrap();
         futures::executor::block_on(radio.select_vfo(IcomVfo::A)).unwrap();
         assert!(writes.lock().unwrap().len() == 9);
 
@@ -3466,12 +3564,20 @@ mod tests {
             0xE0,
             0xA2,
         );
-        assert!(futures::executor::block_on(unsupported.set_scope_configuration(
-            ScopeConfiguration { span_hz: Some(0), ..ScopeConfiguration::default() }
-        )).is_err());
-        assert!(futures::executor::block_on(radio.set_scope_configuration(
-            ScopeConfiguration { fixed_edge_number: Some(5), ..ScopeConfiguration::default() }
-        )).is_err());
+        assert!(
+            futures::executor::block_on(unsupported.set_scope_configuration(ScopeConfiguration {
+                span_hz: Some(0),
+                ..ScopeConfiguration::default()
+            }))
+            .is_err()
+        );
+        assert!(
+            futures::executor::block_on(radio.set_scope_configuration(ScopeConfiguration {
+                fixed_edge_number: Some(5),
+                ..ScopeConfiguration::default()
+            }))
+            .is_err()
+        );
     }
 
     #[test]
@@ -3498,21 +3604,23 @@ mod tests {
         let memory = radio.read_memory_channel(7).unwrap();
         assert_eq!(memory.frequency_hz, 14_074_000);
         assert_eq!(memory.name.as_deref(), Some("FIELD TEST"));
-        radio.write_memory_channel(MemoryChannel {
-            channel: 7,
-            name: Some("FIELD TEST".to_string()),
-            frequency_hz: 14_074_000,
-            transmit_frequency_hz: None,
-            mode: Mode::Data,
-            repeater: RepeaterSettings {
-                tone: ToneSettings {
-                    mode: ToneMode::Encode,
-                    frequency_tenths_hz: Some(885),
-                    ..ToneSettings::default()
+        radio
+            .write_memory_channel(MemoryChannel {
+                channel: 7,
+                name: Some("FIELD TEST".to_string()),
+                frequency_hz: 14_074_000,
+                transmit_frequency_hz: None,
+                mode: Mode::Data,
+                repeater: RepeaterSettings {
+                    tone: ToneSettings {
+                        mode: ToneMode::Encode,
+                        frequency_tenths_hz: Some(885),
+                        ..ToneSettings::default()
+                    },
+                    ..RepeaterSettings::default()
                 },
-                ..RepeaterSettings::default()
-            },
-        }).unwrap();
+            })
+            .unwrap();
         assert_eq!(writes.lock().unwrap().len(), 4);
 
         let (transport, _) = TestTransport::with_reads(Vec::new());
@@ -3523,14 +3631,16 @@ mod tests {
             transport,
         );
         assert!(radio.select_memory_channel(0).is_err());
-        assert!(radio.write_memory_channel(MemoryChannel {
-            channel: 1,
-            name: Some("é".to_string()),
-            frequency_hz: 14_074_000,
-            transmit_frequency_hz: None,
-            mode: Mode::Usb,
-            repeater: RepeaterSettings::default(),
-        }).is_err());
+        assert!(radio
+            .write_memory_channel(MemoryChannel {
+                channel: 1,
+                name: Some("é".to_string()),
+                frequency_hz: 14_074_000,
+                transmit_frequency_hz: None,
+                mode: Mode::Usb,
+                repeater: RepeaterSettings::default(),
+            })
+            .is_err());
     }
 
     #[test]
@@ -3541,7 +3651,13 @@ mod tests {
         ];
         for division in 1..=11 {
             let mut payload = vec![0x27, 0x00, 0x00, decimal_to_bcd(division), 0x11];
-            let count = if division == 1 { 0 } else if division == 11 { 25 } else { 50 };
+            let count = if division == 1 {
+                0
+            } else if division == 11 {
+                25
+            } else {
+                50
+            };
             payload.extend(std::iter::repeat_n(42, count));
             reads.push(TestTransport::response(0x94, 0xE0, &payload));
         }
@@ -3553,15 +3669,27 @@ mod tests {
             0x94,
             transport,
         );
-        let bins = futures::executor::block_on(
-            radio.enable_spectrum_stream(Duration::from_millis(50)),
-        ).unwrap();
+        let bins =
+            futures::executor::block_on(radio.enable_spectrum_stream(Duration::from_millis(50)))
+                .unwrap();
         assert_eq!(bins.len(), 475);
         assert_eq!(radio.scope_stream_counters(), (11, 1, 0));
         futures::executor::block_on(radio.disable_spectrum_stream()).unwrap();
-        assert!(writes.lock().unwrap().iter().any(|frame| frame.ends_with(&[0x27, 0x10, 0x01, 0xFD])));
-        assert!(writes.lock().unwrap().iter().any(|frame| frame.ends_with(&[0x27, 0x11, 0x01, 0xFD])));
-        assert!(writes.lock().unwrap().iter().any(|frame| frame.ends_with(&[0x27, 0x11, 0x00, 0xFD])));
+        assert!(writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.ends_with(&[0x27, 0x10, 0x01, 0xFD])));
+        assert!(writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.ends_with(&[0x27, 0x11, 0x01, 0xFD])));
+        assert!(writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.ends_with(&[0x27, 0x11, 0x00, 0xFD])));
     }
 
     #[test]
@@ -3569,7 +3697,13 @@ mod tests {
         let mut reads = Vec::new();
         for division in 1..=11 {
             let mut payload = vec![0x27, 0x00, 0x00, decimal_to_bcd(division), 0x11];
-            let count = if division == 1 { 0 } else if division == 11 { 25 } else { 50 };
+            let count = if division == 1 {
+                0
+            } else if division == 11 {
+                25
+            } else {
+                50
+            };
             payload.extend(std::iter::repeat_n(80, count));
             reads.push(TestTransport::response(0x94, 0xE0, &payload));
         }
@@ -3582,8 +3716,18 @@ mod tests {
         );
         let bins = futures::executor::block_on(radio.request_scope_waveform_bins()).unwrap();
         assert_eq!(bins.len(), 475);
-        assert_eq!(futures::executor::block_on(radio.drain_scope_waveform_sweeps(Duration::from_millis(1))).unwrap(), Vec::<Vec<u8>>::new());
-        assert!(writes.lock().unwrap().iter().any(|frame| frame.ends_with(&[0x27, 0x00, 0xFD])));
+        assert_eq!(
+            futures::executor::block_on(
+                radio.drain_scope_waveform_sweeps(Duration::from_millis(1))
+            )
+            .unwrap(),
+            Vec::<Vec<u8>>::new()
+        );
+        assert!(writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.ends_with(&[0x27, 0x00, 0xFD])));
     }
 
     #[test]
@@ -3602,24 +3746,30 @@ mod tests {
         let status = radio.probe().unwrap();
         assert_eq!(status.frequency_hz, Some(14_074_000));
         assert_eq!(status.mode, Some("USB".to_string()));
-        radio.write_memory_channel(MemoryChannel {
-            channel: 12,
-            name: Some("VHF TEST".to_string()),
-            frequency_hz: 145_500_000,
-            transmit_frequency_hz: Some(145_500_000),
-            mode: Mode::Fm,
-            repeater: RepeaterSettings {
-                shift: RepeaterShift::Plus,
-                offset_hz: Some(600_000),
-                tone: ToneSettings {
-                    mode: ToneMode::Dtcs,
-                    dtcs_code: Some(125),
-                    dtcs_reverse: Some(true),
-                    ..ToneSettings::default()
+        radio
+            .write_memory_channel(MemoryChannel {
+                channel: 12,
+                name: Some("VHF TEST".to_string()),
+                frequency_hz: 145_500_000,
+                transmit_frequency_hz: Some(145_500_000),
+                mode: Mode::Fm,
+                repeater: RepeaterSettings {
+                    shift: RepeaterShift::Plus,
+                    offset_hz: Some(600_000),
+                    tone: ToneSettings {
+                        mode: ToneMode::Dtcs,
+                        dtcs_code: Some(125),
+                        dtcs_reverse: Some(true),
+                        ..ToneSettings::default()
+                    },
                 },
-            },
-        }).unwrap();
-        assert!(writes.lock().unwrap().iter().any(|frame| frame.len() > 70 && frame[4..6] == [0x1A, 0x00]));
+            })
+            .unwrap();
+        assert!(writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.len() > 70 && frame[4..6] == [0x1A, 0x00]));
 
         let (transport, _) = TestTransport::with_reads(vec![
             TestTransport::response(0xA4, 0xE0, &[0x03, 0x00, 0x40, 0x07, 0x14, 0x00]),
@@ -3631,23 +3781,28 @@ mod tests {
             0xA4,
             transport,
         );
-        assert_eq!(futures::executor::block_on(stream_radio.probe_stream_status()).unwrap().mode, Some("USB".to_string()));
+        assert_eq!(
+            futures::executor::block_on(stream_radio.probe_stream_status())
+                .unwrap()
+                .mode,
+            Some("USB".to_string())
+        );
         assert_eq!(
             IcomCiVRadio::new_for_model_default_address(
                 crate::models::IcomCivModel::Ic7300,
                 "",
                 115_200,
                 0xE0,
-            ).radio_address(),
+            )
+            .radio_address(),
             0x94
         );
     }
 
     #[test]
     fn exercises_ic7300_specific_scope_controls_and_validation() {
-        let (transport, writes) = TestTransport::with_reads(
-            (0..8).map(|_| TestTransport::ack(0x94, 0xE0)).collect(),
-        );
+        let (transport, writes) =
+            TestTransport::with_reads((0..8).map(|_| TestTransport::ack(0x94, 0xE0)).collect());
         let radio = IcomCiVRadio::with_transport(
             Some(crate::models::IcomCivModel::Ic7300),
             0xE0,
@@ -3659,14 +3814,19 @@ mod tests {
         futures::executor::block_on(radio.set_scope_reference_level_tenths_db(-55)).unwrap();
         futures::executor::block_on(radio.set_scope_center_fixed_mode(true)).unwrap();
         futures::executor::block_on(radio.set_scope_fixed_edge_number(2)).unwrap();
-        futures::executor::block_on(radio.set_scope_fixed_edge_frequencies(2, 14_000_000, 14_200_000)).unwrap();
+        futures::executor::block_on(
+            radio.set_scope_fixed_edge_frequencies(2, 14_000_000, 14_200_000),
+        )
+        .unwrap();
         futures::executor::block_on(radio.set_scope_span_hz(500_000)).unwrap();
         futures::executor::block_on(radio.set_scope_vbw_wide(true)).unwrap();
         assert_eq!(writes.lock().unwrap().len(), 8);
         assert!(futures::executor::block_on(radio.set_scope_sweep_speed(3)).is_err());
         assert!(futures::executor::block_on(radio.set_scope_fixed_edge_number(5)).is_err());
         assert!(futures::executor::block_on(radio.set_scope_reference_level_tenths_db(3)).is_err());
-        assert!(futures::executor::block_on(radio.set_scope_fixed_edge_frequencies(1, 10, 9)).is_err());
+        assert!(
+            futures::executor::block_on(radio.set_scope_fixed_edge_frequencies(1, 10, 9)).is_err()
+        );
     }
 
     fn parse_hex_line(line: &str) -> Vec<u8> {

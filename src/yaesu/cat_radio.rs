@@ -110,8 +110,8 @@ impl YaesuCatRadio {
 
     /// Construct a model-backed radio for interfaces where the radio's CAT
     /// RTS setting is enabled and the USB/serial bridge requires RTS/CTS
-    /// hardware flow control. The normal constructor remains no-flow-control
-    /// because that is the FTDX10 factory/default configuration.
+    /// hardware flow control. The normal constructor starts without a local
+    /// flow-control assumption and auto-detects the FTDX10 CAT RTS setting.
     pub fn new_for_model_with_hardware_flow_control(
         model: YaesuCatModel,
         port: impl Into<String>,
@@ -415,20 +415,33 @@ impl YaesuCatRadio {
         }
 
         let response = match self.query("EX", Some("030310"), 7) {
-            Ok(response) => Some(response),
-            Err(_) => {
+            Ok(response) => response,
+            Err(first_error) => {
                 // If CAT RTS is already enabled on the radio, a no-flow
                 // control probe may never receive a response. Reopen with
-                // RTS/CTS and retry the menu read before giving up on auto
-                // detection.
-                self.enable_hardware_flow_control()?;
-                self.query("EX", Some("030310"), 7).ok()
+                // RTS/CTS and retry the menu read. Do not hide a second
+                // failure: without a valid menu response, the driver cannot
+                // safely claim that detection completed.
+                self.enable_hardware_flow_control().with_context(|| {
+                    format!("failed to apply Yaesu CAT RTS/CTS after initial probe: {first_error}")
+                })?;
+                self.query("EX", Some("030310"), 7).with_context(|| {
+                    format!(
+                        "Yaesu CAT RTS probe failed with and without hardware flow control: {first_error}"
+                    )
+                })?
             }
         };
-        let enabled = response
-            .and_then(|frame| parse_payload(&frame, "EX").ok().map(str::to_owned))
-            .and_then(|payload| payload.chars().last())
-            .is_some_and(|value| value == '1');
+        let payload = parse_payload(&response, "EX")?;
+        anyhow::ensure!(
+            payload.starts_with("030310") && payload.len() == 7,
+            "unexpected Yaesu CAT RTS response payload: {payload}"
+        );
+        let enabled = match payload.as_bytes()[6] {
+            b'0' => false,
+            b'1' => true,
+            value => bail!("unexpected Yaesu CAT RTS value: {}", char::from(value)),
+        };
         let flow_control_enabled = self
             .hardware_flow_control
             .lock()
@@ -445,15 +458,18 @@ impl YaesuCatRadio {
     }
 
     fn enable_hardware_flow_control(&self) -> Result<()> {
-        *self
-            .hardware_flow_control
-            .lock()
-            .map_err(|_| anyhow!("Yaesu CAT flow-control state lock poisoned"))? = true;
-        self.with_transport(Duration::from_millis(150), |state| {
+        let result = self.with_transport(Duration::from_millis(150), |state| {
             active_transport(state)?
                 .set_hardware_flow_control(true)
                 .context("failed to enable Yaesu CAT RTS/CTS flow control")
-        })
+        });
+        if result.is_ok() {
+            *self
+                .hardware_flow_control
+                .lock()
+                .map_err(|_| anyhow!("Yaesu CAT flow-control state lock poisoned"))? = true;
+        }
+        result
     }
 
     fn write_only(&self, request: &[u8]) -> Result<()> {
@@ -644,23 +660,7 @@ impl Radio for YaesuCatRadio {
         // MD0; / MD1; select the mode for VFO-A / VFO-B respectively.
         let selector = self.active_vfo_selector()?;
         let selector_text = selector.to_string();
-        let response = match self.query("MD", Some(&selector_text), 2) {
-            Ok(response) => response,
-            Err(error)
-                if self.model == Some(YaesuCatModel::Ftdx10)
-                    && (error.to_string().contains("rejected command MD")
-                        || error
-                            .to_string()
-                            .contains("timed out waiting for Yaesu CAT response to MD")) =>
-            {
-                // Some FTDX10/USB bridge combinations report CAT RTS enabled
-                // but reject the first mode read until the host applies
-                // RTS/CTS. Keep this recovery bounded and transparent.
-                self.enable_hardware_flow_control()?;
-                self.query("MD", Some(&selector_text), 2)?
-            }
-            Err(error) => return Err(error),
-        };
+        let response = self.query("MD", Some(&selector_text), 2)?;
         let payload = parse_payload(&response, "MD")?;
         let mut chars = payload.chars();
         if chars.next() != Some(char::from(b'0' + selector)) {
@@ -1308,6 +1308,38 @@ mod tests {
         }
     }
 
+    struct FlowControlTransport {
+        scripted: ScriptedTransport,
+        flow_control: Arc<Mutex<Vec<bool>>>,
+    }
+
+    impl Read for FlowControlTransport {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            self.scripted.read(buffer)
+        }
+    }
+
+    impl Write for FlowControlTransport {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.scripted.write(buffer)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.scripted.flush()
+        }
+    }
+
+    impl crate::transport::RadioTransport for FlowControlTransport {
+        fn set_timeout(&mut self, timeout: std::time::Duration) -> std::io::Result<()> {
+            self.scripted.set_timeout(timeout)
+        }
+
+        fn set_hardware_flow_control(&mut self, enabled: bool) -> std::io::Result<()> {
+            self.flow_control.lock().unwrap().push(enabled);
+            Ok(())
+        }
+    }
+
     struct FailingTransport;
 
     impl Read for FailingTransport {
@@ -1386,6 +1418,75 @@ mod tests {
             Mode::Data
         );
         assert_eq!(&*mode_output.lock().unwrap(), b"EX030310;VS;MD1;");
+    }
+
+    #[test]
+    fn ftdx10_rts_probe_observes_disabled_setting_without_enabling_flow_control() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let flow_control = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            FlowControlTransport {
+                scripted: ScriptedTransport {
+                    input: b"EX0303100;VS0;FA014250000;".to_vec(),
+                    output,
+                },
+                flow_control: Arc::clone(&flow_control),
+            },
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        assert!(flow_control.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn ftdx10_rts_probe_applies_enabled_setting_before_normal_cat() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let flow_control = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            FlowControlTransport {
+                scripted: ScriptedTransport {
+                    input: b"EX0303101;VS0;FA014250000;".to_vec(),
+                    output,
+                },
+                flow_control: Arc::clone(&flow_control),
+            },
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        assert_eq!(&*flow_control.lock().unwrap(), &[true]);
+    }
+
+    #[test]
+    fn ftdx10_rts_probe_retries_with_flow_control_after_rejected_probe() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let flow_control = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            FlowControlTransport {
+                scripted: ScriptedTransport {
+                    input: b"?;EX0303101;VS0;FA014250000;".to_vec(),
+                    output,
+                },
+                flow_control: Arc::clone(&flow_control),
+            },
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        assert_eq!(&*flow_control.lock().unwrap(), &[true]);
     }
 
     #[test]

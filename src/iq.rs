@@ -85,7 +85,8 @@ mod tests {
             IqSampleFormat::SignedPcm24Le,
             192_000,
             7_074_000,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(block.sample_rate_hz, 192_000);
         assert_eq!(block.center_frequency_hz, 7_074_000);
         assert_eq!(block.samples, vec![(0.5, -0.5)]);
@@ -98,15 +99,26 @@ mod tests {
         bytes.extend_from_slice(&(-0.75_f32).to_le_bytes());
         bytes.extend_from_slice(&1.0_f32.to_le_bytes());
         bytes.extend_from_slice(&0.0_f32.to_le_bytes());
-        let block = decode_interleaved_iq(&bytes, IqSampleFormat::Float32Le, 48_000, 14_074_000).unwrap();
+        let block =
+            decode_interleaved_iq(&bytes, IqSampleFormat::Float32Le, 48_000, 14_074_000).unwrap();
         assert_eq!(block.samples, vec![(0.25, -0.75), (1.0, 0.0)]);
     }
 
     #[test]
     fn rejects_partial_and_format_specific_payloads() {
-        assert!(decode_interleaved_iq(&[0, 1, 2], IqSampleFormat::SignedPcm16Le, 48_000, 0).is_err());
-        assert!(decode_interleaved_iq(&[0, 1, 2, 3, 4], IqSampleFormat::SignedPcm24Le, 48_000, 0).is_err());
+        assert!(
+            decode_interleaved_iq(&[0, 1, 2], IqSampleFormat::SignedPcm16Le, 48_000, 0).is_err()
+        );
+        assert!(
+            decode_interleaved_iq(&[0, 1, 2, 3, 4], IqSampleFormat::SignedPcm24Le, 48_000, 0)
+                .is_err()
+        );
         assert!(decode_interleaved_iq(&[0; 7], IqSampleFormat::Float32Le, 48_000, 0).is_err());
-        assert!(decode_interleaved_iq(&[], IqSampleFormat::SignedPcm16Le, 0, 0).unwrap().samples.is_empty());
+        assert!(
+            decode_interleaved_iq(&[], IqSampleFormat::SignedPcm16Le, 0, 0)
+                .unwrap()
+                .samples
+                .is_empty()
+        );
     }
 }

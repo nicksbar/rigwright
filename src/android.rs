@@ -411,9 +411,9 @@ mod tests {
             futures::executor::block_on(radio.get_control(ControlId::RawCiV)).unwrap(),
             None
         );
-        assert!(futures::executor::block_on(radio.set_control(
-            ControlId::RawCiV,
-            ControlValue::U8(0),
-        )).is_err());
+        assert!(futures::executor::block_on(
+            radio.set_control(ControlId::RawCiV, ControlValue::U8(0),)
+        )
+        .is_err());
     }
 }
