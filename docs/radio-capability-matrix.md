@@ -89,8 +89,9 @@ current example. Applications should use `supports_control_read()` and
   selection, and split across the current modern profiles. Repeater (`CN`/`CT`/`OS`)
   and memory (`MC`/`MR`/`MT`) operations are also profile-gated.
 - Classic Yaesu has a separate five-byte binary protocol. It supports split,
-  frequency, mode, PTT, and status operations in Rigwright; it does not inherit
-  modern Yaesu CAT controls.
+  write-only RIT/clarifier and repeater shift/tone/offset operations, explicit
+  VFO toggle and CAT-lock helpers, frequency, mode, PTT, and normalized RX/TX
+  status meters in Rigwright; it does not inherit modern Yaesu CAT controls.
 - Kenwood has verified RF power, split, frequency, mode, PTT where pollable,
   signal meter, and SWR meter. Its manual surfaces are broader than the
   current typed profile.
@@ -110,7 +111,7 @@ and `RawCiV` where the selected profile permits them.
 | FTDX10 | Full modern typed-control set, repeater controls, full memory records; hardware-validated CAT path |
 | FT-710, FTDX101D, FTDX101MP | Full modern typed-control set, repeater controls, full memory records |
 | FT-991A | Full modern typed-control set, repeater controls, full memory records; split remains manual-only in the current profile |
-| FT-817ND, FT-818, FT-857D, FT-897D | Split only; other documented CAT surfaces remain untyped |
+| FT-817ND, FT-818, FT-857D, FT-897D | Split (read/write), RIT/clarifier and repeater shift/tone/offset (write-only), VFO toggle, CAT lock |
 | TS-590SG, TS-890S, TS-2000 | RF power and split |
 
 ## Normalized meters
@@ -121,8 +122,8 @@ documented ratio anchors, but those anchors are not shared by Yaesu or Kenwood.
 
 | HAL meter | Icom CI-V | Modern Yaesu CAT | Classic Yaesu CAT | Kenwood | QSONaut native use |
 |---|---:|---:|---:|---:|---|
-| `Signal` | R/P via `15 01`; IC-7300 V | R/P via `RM1` | M, not typed | R/P via `SM`, profile max 30 or 70 | Q normalized meter panel where advertised |
-| `Power` | R/P via `15 02`; IC-7300 V | R/P via `RM5` | M, not typed | M, not typed | Q normalized meter panel where advertised |
+| `Signal` | R/P via `15 01`; IC-7300 V | R/P via `RM1` | R/P via `E7`, 0-15 | R/P via `SM`, profile max 30 or 70 | Q normalized meter panel where advertised |
+| `Power` | R/P via `15 02`; IC-7300 V | R/P via `RM5` | R/P via `F7`, 0-15 | M, not typed | Q normalized meter panel where advertised |
 | `Swr` | R/P via `15 12`; IC-7300 V | R/P via `RM6` | M, not typed | R/P via `RM`; selector and range profile-specific | Q live meter and stepped SWR chart |
 | `Alc` | R/P via `15 11`; IC-7300 V | R/P via `RM4` | M, not typed | M, not typed | Q normalized meter panel where advertised |
 | `Compression` | R/P via `15 13`; IC-7300 V | R/P via `RM3` | M, not typed | M, not typed | Q normalized meter panel where advertised |

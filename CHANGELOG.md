@@ -17,6 +17,13 @@
   offset data.
 - Add modern Yaesu typed AF/RF gain, squelch, preamp, attenuator, NB, notch,
   filter-width, RIT/XIT, VFO, and tuner controls, plus AI event routing.
+- Complete the classic Yaesu binary CAT surfaces available in the documented
+  opcode table: normalized signal/power meters, clarifier enable/offset writes,
+  and repeater shift, offset-frequency, CTCSS, and DCS writes. Readback remains
+  limited to the documented status operations; classic memory and event
+  controls are not exposed because the protocol does not provide them.
+- Add explicit classic-driver helpers for the documented CAT lock and VFO-A/B
+  toggle commands, whose state cannot be read back through binary CAT.
 
 - Add protocol-neutral typed values for CTCSS tone mode/index, repeater shift,
   memory channels, and validated DTMF sequences.

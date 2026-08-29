@@ -82,12 +82,15 @@ behavior.
 |---|---|---|
 | FT-817ND | `FT-817ND_OM_ENG_E13771011.pdf` | 17-opcode table; 8N2; 4800/9600/38400 baud; model receive ranges; mode/status codes; `E7`, `F7`, `03`; active-low PTT/split; power commands intentionally not exposed |
 | FT-818 | `FT-818ND_OM_ENG_E13772004_2003u-ES-1.pdf` | Same five-byte family; distinct 0.1-56 MHz low receive range; status layouts; baud rates; power commands intentionally not exposed |
-| FT-857D | `FT-857D_OM_ENG_EH007M108.pdf` | CAT/LINEAR jack; 8N2; segmented receive ranges; FM-N write code; WFM/CW-N status codes; RX/TX bit layouts |
-| FT-897D | `FT-897_OpMan.pdf` | Available FT-897 family manual; CAT/LINEAR menu; segmented receive ranges; FM-N and WFM codes; RX/TX bit layouts |
+| FT-857D | `FT-857D_OM_ENG_EH007M108.pdf` | CAT/LINEAR jack; 8N2; segmented receive ranges; FM-N write code; WFM/CW-N status codes; RX/TX bit layouts; clarifier and repeater opcodes |
+| FT-897D | `FT-897_OpMan.pdf` | Available FT-897 family manual; CAT/LINEAR menu; segmented receive ranges; FM-N and WFM codes; RX/TX bit layouts; shared classic opcode family |
 
-These remain framework-level. In particular, the available FT-897 manual is a
-family reference rather than proof of FT-897D hardware behavior, and classic
-CAT has no model ID query with which to detect an incorrect operator selection.
+Classic CAT has no model ID query with which to detect an incorrect operator
+selection. The driver also exposes the documented VFO toggle and CAT-lock
+commands as explicit classic-driver helpers. The protocol has no memory read/write or unsolicited event opcodes;
+AF/RF gain, squelch, IPO/ATT, DSP filters, and local memory channels therefore
+remain untyped. Repeater and clarifier writes have no documented readback and
+are intentionally advertised as write-only at the control level.
 
 ## Kenwood manual audit
 

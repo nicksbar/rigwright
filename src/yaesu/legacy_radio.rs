@@ -12,7 +12,9 @@ use serialport::{DataBits, FlowControl, Parity, StopBits};
 
 use crate::{
     hal::{Mode, Radio, RadioCapabilities},
-    hal_types::{ControlId, ControlValue},
+    hal_types::{
+        normalize_meter_level, ControlId, ControlValue, MeterId, RepeaterSettings, ToneMode,
+    },
     models::YaesuLegacyModel,
     protocol::yaesu_legacy_cat::{self, FrequencyModeStatus, LegacyMode, RxStatus, TxStatus},
     transport::{RadioTransport, SerialPortTransport},
@@ -190,6 +192,20 @@ impl LegacyYaesuRadio {
         Ok(())
     }
 
+    /// Toggle between the classic radio's VFO-A and VFO-B. The binary CAT
+    /// protocol does not report which VFO is active, so this deliberately is
+    /// not exposed as a selectable `ControlId::Vfo` value.
+    pub fn toggle_vfo(&self) -> Result<()> {
+        self.transact(yaesu_legacy_cat::toggle_vfo(), 0)?;
+        Ok(())
+    }
+
+    /// Apply the radio's CAT lock. Classic CAT has no lock-state readback.
+    pub fn set_cat_lock(&self, enabled: bool) -> Result<()> {
+        self.transact(yaesu_legacy_cat::set_lock(enabled), 0)?;
+        Ok(())
+    }
+
     /// Execute one complete five-byte command and read its documented response
     /// length. This is the escape hatch for model commands not in the root HAL.
     pub fn transact_raw(&self, frame: [u8; 5], response_len: usize) -> Result<Vec<u8>> {
@@ -326,12 +342,90 @@ impl Radio for LegacyYaesuRadio {
     async fn set_control(&self, id: ControlId, value: ControlValue) -> Result<()> {
         match (id, value) {
             (ControlId::Split, ControlValue::Bool(enabled)) => self.set_split(enabled),
+            (ControlId::Rit, ControlValue::Bool(enabled)) => {
+                self.transact(yaesu_legacy_cat::set_clarifier(enabled), 0)?;
+                Ok(())
+            }
             (_, value) => bail!("unsupported classic Yaesu control/value: {id:?} = {value:?}"),
         }
     }
 
     fn supports_control(&self, id: ControlId) -> bool {
+        matches!(id, ControlId::Split | ControlId::Rit)
+    }
+
+    fn supports_control_read(&self, id: ControlId) -> bool {
         id == ControlId::Split
+    }
+
+    fn supports_control_write(&self, id: ControlId) -> bool {
+        matches!(id, ControlId::Split | ControlId::Rit)
+    }
+
+    async fn set_rit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        self.transact(yaesu_legacy_cat::set_clarifier_offset(offset_hz)?, 0)?;
+        Ok(())
+    }
+
+    async fn set_repeater_settings(&self, settings: RepeaterSettings) -> Result<()> {
+        self.transact(yaesu_legacy_cat::set_repeater_shift(settings.shift), 0)?;
+        if let Some(offset_hz) = settings.offset_hz {
+            self.transact(
+                yaesu_legacy_cat::set_repeater_offset_frequency(offset_hz)?,
+                0,
+            )?;
+        }
+        let tone_mode = match settings.tone.mode {
+            ToneMode::Off => 0x8A,
+            ToneMode::Encode => 0x4A,
+            ToneMode::EncodeDecode => 0x2A,
+            ToneMode::Dtcs => 0x0A,
+        };
+        self.transact(yaesu_legacy_cat::set_ctcss_dcs_mode(tone_mode), 0)?;
+        match settings.tone.mode {
+            ToneMode::Off => {}
+            ToneMode::Dtcs => {
+                let tx = settings
+                    .tone
+                    .dtcs_code
+                    .ok_or_else(|| anyhow!("classic Yaesu DTCS requires a transmit code"))?;
+                let rx = settings
+                    .tone
+                    .dtcs_code
+                    .ok_or_else(|| anyhow!("classic Yaesu DTCS requires a receive code"))?;
+                self.transact(yaesu_legacy_cat::set_dcs_codes(tx, rx)?, 0)?;
+            }
+            ToneMode::Encode | ToneMode::EncodeDecode => {
+                let tone = settings
+                    .tone
+                    .frequency_tenths_hz
+                    .ok_or_else(|| anyhow!("classic Yaesu CTCSS requires a tone frequency"))?;
+                self.transact(yaesu_legacy_cat::set_ctcss_tones(tone, tone)?, 0)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn supports_repeater_settings(&self) -> bool {
+        true
+    }
+
+    async fn get_meter(&self, id: MeterId) -> Result<Option<u8>> {
+        match id {
+            MeterId::Signal => Ok(normalize_meter_level(
+                u16::from(self.get_rx_status()?.s_meter),
+                15,
+            )),
+            MeterId::Power => Ok(normalize_meter_level(
+                u16::from(self.get_tx_status()?.power_meter),
+                15,
+            )),
+            _ => Ok(None),
+        }
+    }
+
+    fn supports_meter(&self, id: MeterId) -> bool {
+        matches!(id, MeterId::Signal | MeterId::Power)
     }
 
     fn capabilities(&self) -> RadioCapabilities {
