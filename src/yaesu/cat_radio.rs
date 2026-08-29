@@ -406,9 +406,18 @@ impl YaesuCatRadio {
             return Ok(());
         }
 
-        let response = self.query("EX", Some("030310"), 7);
+        let response = match self.query("EX", Some("030310"), 7) {
+            Ok(response) => Some(response),
+            Err(_) => {
+                // If CAT RTS is already enabled on the radio, a no-flow
+                // control probe may never receive a response. Reopen with
+                // RTS/CTS and retry the menu read before giving up on auto
+                // detection.
+                self.enable_hardware_flow_control()?;
+                self.query("EX", Some("030310"), 7).ok()
+            }
+        };
         let enabled = response
-            .ok()
             .and_then(|frame| parse_payload(&frame, "EX").ok().map(str::to_owned))
             .and_then(|payload| payload.chars().last())
             .is_some_and(|value| value == '1');

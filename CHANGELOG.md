@@ -40,6 +40,8 @@
   adapter's RTS/CTS flow control without requiring a command-line flag.
 - Persist the detected RTS/CTS choice and retry the initial FTDX10 `MD;` mode
   query once when the radio rejects or times out on the first request.
+- Retry the FTDX10 CAT RTS menu probe itself with RTS/CTS when the initial
+  no-flow-control probe cannot receive a response.
 - Implement Kenwood TS-890 memory selection and structured `MA0` memory
   record read/write support, including channel names and split frequencies.
 - Implement FTDX10 `MR` memory reads and `MT` memory writes for documented
