@@ -2,6 +2,8 @@
 
 ## 0.1.14 — Icom and Yaesu capability consolidation
 
+- Add repository ownership, Dependabot updates, an owner-specific MIT license
+  notice, and weekly/pull-request CodeQL security analysis.
 - Document the local LLVM coverage workflow and add pull-request-only CI for
   locked tests, LLVM coverage summaries, and uploaded HTML coverage reports.
 - Harden the generic/profile boundary across the vendor drivers: shared

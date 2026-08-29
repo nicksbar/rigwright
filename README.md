@@ -2,10 +2,15 @@
 
 [![CI](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml)
 [![Coverage](https://github.com/nicksbar/rigwright/actions/workflows/coverage.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/coverage.yml)
+[![CodeQL](https://github.com/nicksbar/rigwright/actions/workflows/codeql.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/codeql.yml)
 
 Rigwright is a reusable Rust radio-control HAL with native radio drivers. It was
 extracted from [QSONaut](https://github.com/nicksbar/QSONaut) so radio support can
 evolve independently and be embedded in other amateur-radio applications.
+
+CodeQL scans the Rust workspace on pull requests and weekly. The repository
+configuration enables GitHub's `security-extended` query suite; findings are
+reported through the CodeQL check and GitHub code-scanning alerts.
 
 ## What works today
 

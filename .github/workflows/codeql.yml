@@ -1,0 +1,36 @@
+name: CodeQL
+
+"on":
+  pull_request:
+  schedule:
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    name: Analyze Rust
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: rust
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
+      - name: Build Rust workspace
+        run: cargo build --workspace --all-targets
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:rust
