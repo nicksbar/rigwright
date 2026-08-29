@@ -43,3 +43,4 @@ check_target "Icom" '^icom/' 85
 check_target "HAL" '^hal\.rs$' 90
 check_target "Android" '^android\.rs$' 80
 check_target "Transport" '^transport\.rs$' 90
+check_target "Drivers" '^drivers\.rs$' 85
