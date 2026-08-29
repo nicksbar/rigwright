@@ -2,6 +2,18 @@
 
 ## 0.1.14 — Icom and Yaesu capability consolidation
 
+- Harden the generic/profile boundary across the vendor drivers: shared
+  protocol engines own framing and execution, while model modules own command
+  exceptions, ranges, selectors, and optional capabilities.
+- Complete the Icom profile split for IC-705, IC-7300, IC-7610, and IC-9700;
+  remove duplicated common controls and profile the model-specific memory,
+  meter, VFO, repeater, and special-control surfaces.
+- Add generic-versus-profile capability tests and fake-transport exact-frame
+  regression tests for common RF power plus IC-7300 XIT, IC-7610 antenna, and
+  IC-9700 AGC controls.
+- Reconcile the Icom capability matrix with the manuals, including the `15`
+  meter selectors and the `16 48` manual-notch command. Framework profiles
+  remain distinct from physical-radio validation.
 - Promote the common Icom CI-V control definitions and meter selectors into
   the shared profile/generic driver layer.
 - Complete live Icom duplex repeater state: read/write offset frequency via

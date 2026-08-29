@@ -73,6 +73,17 @@ the final column.
 | `MainSub` | receiver selector | RW/P IC-7610 and IC-9700 | M, not typed | — | M, not typed | Not currently used |
 | `RawCiV` | raw bytes | H/P Icom only | — | — | — | Not a normal UI control |
 
+Icom control-boundary tests cover both sides of the profile boundary. A
+model-neutral CI-V instance advertises neither profile controls nor meters and
+rejects typed model controls before transport. Each profiled model is checked
+for inherited common controls, model-only controls, read/write direction, and
+meter availability. Fake-transport tests additionally verify exact CI-V
+frames for inherited RF power and the IC-7300 XIT override. Decoder tests
+cover both HF and VHF/UHF memory layouts, signed RIT offsets, repeater flags,
+meter BCD values, and all four scope geometries. These are protocol and
+regression tests; they do not promote the framework-level IC-705, IC-7610, or
+IC-9700 profiles to physical-hardware validation.
+
 ### Control interpretation notes
 
 Read/write direction is part of the driver contract. A control may be exposed
@@ -124,14 +135,14 @@ documented ratio anchors, but those anchors are not shared by Yaesu or Kenwood.
 
 | HAL meter | Icom CI-V | Modern Yaesu CAT | Classic Yaesu CAT | Kenwood | QSONaut native use |
 |---|---:|---:|---:|---:|---|
-| `Signal` | R/P via `15 01`; IC-7300 V | R/P via `RM1` | R/P via `E7`, 0-15 | R/P via `SM`, profile max 30 or 70 | Q normalized meter panel where advertised |
-| `Power` | R/P via `15 02`; IC-7300 V | R/P via `RM5` | R/P via `F7`, 0-15 | R/P via `SM` (TX), profile max 30 or 70 | Q normalized meter panel where advertised |
+| `Signal` | R/P via `15 02`; IC-7300 V | R/P via `RM1` | R/P via `E7`, 0-15 | R/P via `SM`, profile max 30 or 70 | Q normalized meter panel where advertised |
+| `Power` | R/P via `15 11`; IC-7300 V | R/P via `RM5` | R/P via `F7`, 0-15 | R/P via `SM` (TX), profile max 30 or 70 | Q normalized meter panel where advertised |
 | `Swr` | R/P via `15 12`; IC-7300 V | R/P via `RM6` | M, not typed | R/P via `RM`; selector and range profile-specific | Q live meter and stepped SWR chart |
-| `Alc` | R/P via `15 11`; IC-7300 V | R/P via `RM4` | M, not typed | R/P TS-890S via `RM1` | Q normalized meter panel where advertised |
-| `Compression` | R/P via `15 13`; IC-7300 V | R/P via `RM3` | M, not typed | R/P TS-890S via `RM3` | Q normalized meter panel where advertised |
-| `Current` | R/P via `15 15`; IC-7300 V | R/P via `RM7` | M, not typed | R/P TS-890S via `RM4` | Q normalized meter panel where advertised |
-| `Voltage` | R/P via `15 14`; IC-7300 V | R/P via `RM8` | M, not typed | R/P TS-890S via `RM5` | Q normalized meter panel where advertised |
-| `Temperature` | R/P via `15 16`; IC-7300 V | Manual/protocol surface varies; intentionally not profiled | M, not typed | R/P TS-890S via `RM6` | Q only if a future profile advertises it |
+| `Alc` | R/P via `15 13`; IC-7300 V | R/P via `RM4` | M, not typed | R/P TS-890S via `RM1` | Q normalized meter panel where advertised |
+| `Compression` | R/P via `15 14`; IC-7300 V | R/P via `RM3` | M, not typed | R/P TS-890S via `RM3` | Q normalized meter panel where advertised |
+| `Current` | R/P via `15 16`; IC-7300 V | R/P via `RM7` | M, not typed | R/P TS-890S via `RM4` | Q normalized meter panel where advertised |
+| `Voltage` | R/P via `15 15`; IC-7300 V | R/P via `RM8` | M, not typed | R/P TS-890S via `RM5` | Q normalized meter panel where advertised |
+| `Temperature` | R/P via `15 17`; IC-7300 V | Manual/protocol surface varies; intentionally not profiled | M, not typed | R/P TS-890S via `RM6` | Q only if a future profile advertises it |
 
 Yaesu `RM` selector meanings are documented by the modern CAT manuals: `1`
 signal, `3` compression, `4` ALC, `5` power, `6` SWR, `7` current, and `8`

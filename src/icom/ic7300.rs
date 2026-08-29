@@ -1,7 +1,10 @@
 //! IC-7300-specific CI-V scope profile and payload builders.
 
-use super::profile::{ControlEncoding, ControlSpec, IcomCivProfile, ScopeSpec};
+use super::profile::{
+    ControlCapabilities, ControlEncoding, ControlSpec, IcomCivProfile, MemoryLayout, ScopeSpec,
+};
 use crate::controls::ControlId;
+use crate::hal_types::MeterId;
 use anyhow::Result;
 
 const FREQUENCY_RANGES: &[(u64, u64)] = &[(30_000, 74_800_000)];
@@ -36,6 +39,16 @@ const SCOPE: ScopeSpec = ScopeSpec {
     stream_command: &[0x27, 0x11, 0x01],
     disable_stream_command: &[0x27, 0x11, 0x00],
 };
+const METERS: &[MeterId] = &[
+    MeterId::Signal,
+    MeterId::Power,
+    MeterId::Swr,
+    MeterId::Alc,
+    MeterId::Compression,
+    MeterId::Voltage,
+    MeterId::Current,
+    MeterId::Temperature,
+];
 
 pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     model: crate::models::IcomCivModel::Ic7300,
@@ -56,6 +69,16 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     attenuator_values: ATTENUATOR_VALUES,
     preamp_max_level: 1,
     supports_iq_output: false,
+    meters: METERS,
+    control_capabilities: ControlCapabilities {
+        supports_data_mode: true,
+        filter_values: &[1, 2, 3],
+        supports_vfo: true,
+        vfo_readable: false,
+    },
+    memory_layout: MemoryLayout::Hf,
+    supports_repeater_settings: true,
+    supports_memory_channels: true,
 };
 
 /// IC-7300-specific scope configuration operations.

@@ -147,16 +147,7 @@ impl RadioModelProfile {
                     return false;
                 };
                 let profile = crate::icom::profile::profile_for_model(model);
-                profile.control(id).is_some()
-                    || matches!(
-                        id,
-                        ControlId::DataMode
-                            | ControlId::Filter
-                            | ControlId::RawCiV
-                            | ControlId::Vfo
-                    )
-                    || (id == ControlId::MainSub && profile.main_sub.is_some())
-                    || (id == ControlId::ExternalPreamp && profile.external_preamp.is_some())
+                profile.supports_control(id)
             }
             Protocol::YaesuCat => {
                 let Some(model) = YaesuCatModel::from_model_name(self.model) else {

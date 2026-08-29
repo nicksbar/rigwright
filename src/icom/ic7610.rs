@@ -1,7 +1,11 @@
 //! Icom IC-7610 model profile (framework only; hardware validation pending).
 
-use super::profile::{ControlEncoding, ControlSpec, IcomCivProfile, MainSubSpec, ScopeSpec};
+use super::profile::{
+    ControlCapabilities, ControlEncoding, ControlSpec, IcomCivProfile, MainSubSpec, MemoryLayout,
+    ScopeSpec,
+};
 use crate::controls::ControlId;
+use crate::hal_types::MeterId;
 use crate::models::{find_model, RadioModelProfile};
 
 pub fn profile() -> &'static RadioModelProfile {
@@ -29,11 +33,6 @@ const FREQUENCY_RANGES: &[(u64, u64)] = &[(30_000, 60_000_000)];
 const CONTROLS: &[ControlSpec] = &[
     // `0x21 0x01`: RIT enable/disable; `0x21 0x02`: XIT enable/disable.
     ControlSpec {
-        id: ControlId::Rit,
-        command_prefix: &[0x21, 0x01],
-        encoding: ControlEncoding::Bool,
-    },
-    ControlSpec {
         id: ControlId::Xit,
         command_prefix: &[0x21, 0x02],
         encoding: ControlEncoding::Bool,
@@ -49,64 +48,9 @@ const CONTROLS: &[ControlSpec] = &[
     // `0x16 0x40`: noise reduction enable/disable.
     // `0x0F`: split operation enable/disable (the value is not a subcommand).
     ControlSpec {
-        id: ControlId::RfPower,
-        command_prefix: &[0x14, 0x0A],
-        encoding: ControlEncoding::Level255Bcd,
-    },
-    ControlSpec {
-        id: ControlId::AfGain,
-        command_prefix: &[0x14, 0x01],
-        encoding: ControlEncoding::Level255Bcd,
-    },
-    ControlSpec {
-        id: ControlId::RfGain,
-        command_prefix: &[0x14, 0x02],
-        encoding: ControlEncoding::Level255Bcd,
-    },
-    ControlSpec {
-        id: ControlId::Squelch,
-        command_prefix: &[0x14, 0x03],
-        encoding: ControlEncoding::Level255Bcd,
-    },
-    ControlSpec {
-        id: ControlId::Attenuator,
-        command_prefix: &[0x11],
-        encoding: ControlEncoding::U8,
-    },
-    ControlSpec {
-        id: ControlId::Preamp,
-        command_prefix: &[0x16, 0x02],
-        encoding: ControlEncoding::U8,
-    },
-    ControlSpec {
-        id: ControlId::NoiseBlanker,
-        command_prefix: &[0x16, 0x22],
-        encoding: ControlEncoding::Bool,
-    },
-    ControlSpec {
-        id: ControlId::NoiseReduction,
-        command_prefix: &[0x16, 0x40],
-        encoding: ControlEncoding::Bool,
-    },
-    ControlSpec {
         id: ControlId::NoiseReductionLevel,
         command_prefix: &[0x14, 0x06],
         encoding: ControlEncoding::Level255Bcd,
-    },
-    ControlSpec {
-        id: ControlId::IpPlus,
-        command_prefix: &[0x1A, 0x07],
-        encoding: ControlEncoding::Bool,
-    },
-    ControlSpec {
-        id: ControlId::Notch,
-        command_prefix: &[0x16, 0x41],
-        encoding: ControlEncoding::Bool,
-    },
-    ControlSpec {
-        id: ControlId::ManualNotch,
-        command_prefix: &[0x16, 0x48],
-        encoding: ControlEncoding::Bool,
     },
     ControlSpec {
         id: ControlId::ManualNotchPosition,
@@ -117,16 +61,6 @@ const CONTROLS: &[ControlSpec] = &[
         id: ControlId::Antenna,
         command_prefix: &[0x12],
         encoding: ControlEncoding::U8,
-    },
-    ControlSpec {
-        id: ControlId::Tuner,
-        command_prefix: &[0x1C, 0x01],
-        encoding: ControlEncoding::Bool,
-    },
-    ControlSpec {
-        id: ControlId::Split,
-        command_prefix: &[0x0F],
-        encoding: ControlEncoding::Bool,
     },
 ];
 const ATTENUATOR_VALUES: &[u8] = &[0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45];
@@ -141,6 +75,16 @@ const MAIN_SUB: MainSubSpec = MainSubSpec {
     get_command: 0x07,
     get_subcommand: 0xD2,
 };
+const METERS: &[MeterId] = &[
+    MeterId::Signal,
+    MeterId::Power,
+    MeterId::Swr,
+    MeterId::Alc,
+    MeterId::Compression,
+    MeterId::Voltage,
+    MeterId::Current,
+    MeterId::Temperature,
+];
 
 pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     model: crate::models::IcomCivModel::Ic7610,
@@ -161,4 +105,14 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     attenuator_values: ATTENUATOR_VALUES,
     preamp_max_level: 2,
     supports_iq_output: true,
+    meters: METERS,
+    control_capabilities: ControlCapabilities {
+        supports_data_mode: true,
+        filter_values: &[1, 2, 3],
+        supports_vfo: true,
+        vfo_readable: false,
+    },
+    memory_layout: MemoryLayout::Hf,
+    supports_repeater_settings: true,
+    supports_memory_channels: true,
 };

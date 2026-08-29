@@ -152,6 +152,22 @@ pub struct ScopeSpec {
     pub disable_stream_command: &'static [u8],
 }
 
+/// Model-owned capability metadata for controls whose CI-V layout is shared
+/// but whose availability or readback is not universal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControlCapabilities {
+    pub supports_data_mode: bool,
+    pub filter_values: &'static [u8],
+    pub supports_vfo: bool,
+    pub vfo_readable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryLayout {
+    Hf,
+    VhfUhf,
+}
+
 /// Complete declarative CI-V behavior for one supported Icom model.
 ///
 /// This is the boundary between the model-neutral CI-V engine and a model
@@ -183,6 +199,14 @@ pub struct IcomCivProfile {
     /// Whether the model exposes documented I/Q output. This is protocol/model
     /// metadata only; it does not claim that Rigwright has an openable stream.
     pub supports_iq_output: bool,
+    /// Explicit meter surface exposed by this model profile.
+    pub meters: &'static [MeterId],
+    /// Availability and readback metadata for shared special controls.
+    pub control_capabilities: ControlCapabilities,
+    /// Memory record layout used by this model.
+    pub memory_layout: MemoryLayout,
+    pub supports_repeater_settings: bool,
+    pub supports_memory_channels: bool,
 }
 
 impl IcomCivProfile {
@@ -196,6 +220,20 @@ impl IcomCivProfile {
             .iter()
             .find(|spec| spec.id == id)
             .or_else(|| COMMON_CONTROLS.iter().find(|spec| spec.id == id))
+    }
+
+    pub fn supports_meter(self, id: MeterId) -> bool {
+        self.meters.contains(&id)
+    }
+
+    pub fn supports_control(self, id: ControlId) -> bool {
+        self.control(id).is_some()
+            || (id == ControlId::DataMode && self.control_capabilities.supports_data_mode)
+            || (id == ControlId::Filter && !self.control_capabilities.filter_values.is_empty())
+            || id == ControlId::RawCiV
+            || (id == ControlId::Vfo && self.control_capabilities.supports_vfo)
+            || (id == ControlId::MainSub && self.main_sub.is_some())
+            || (id == ControlId::ExternalPreamp && self.external_preamp.is_some())
     }
 }
 
@@ -240,6 +278,43 @@ mod tests {
         assert!(profile_for_model(IcomCivModel::Ic9700)
             .external_preamp
             .is_some());
+    }
+
+    #[test]
+    fn every_profile_declares_special_controls_meters_and_memory_layout() {
+        for model in [
+            IcomCivModel::Ic705,
+            IcomCivModel::Ic7300,
+            IcomCivModel::Ic7610,
+            IcomCivModel::Ic9700,
+        ] {
+            let profile = profile_for_model(model);
+            assert!(profile.control_capabilities.supports_vfo);
+            assert!(!profile.control_capabilities.filter_values.is_empty());
+            assert!(profile.supports_meter(MeterId::Signal));
+            assert!(profile.supports_meter(MeterId::Power));
+            assert!(profile.supports_meter(MeterId::Swr));
+            assert!(profile.supports_control(ControlId::DataMode));
+            assert!(profile.supports_control(ControlId::Filter));
+            assert!(profile.supports_control(ControlId::Vfo));
+            assert!(profile.supports_repeater_settings);
+            assert!(profile.supports_memory_channels);
+            for spec in profile.controls {
+                assert!(
+                    !COMMON_CONTROLS.iter().any(|common| common.id == spec.id),
+                    "{model:?} redundantly overrides common control {:?}",
+                    spec.id
+                );
+            }
+        }
+        assert_eq!(
+            profile_for_model(IcomCivModel::Ic705).memory_layout,
+            MemoryLayout::VhfUhf
+        );
+        assert_eq!(
+            profile_for_model(IcomCivModel::Ic7300).memory_layout,
+            MemoryLayout::Hf
+        );
     }
 
     #[test]

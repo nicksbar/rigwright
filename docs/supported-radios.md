@@ -31,7 +31,7 @@ reproducible without treating a product-page compatibility claim as evidence:
 | IC-9700 | `IC-9700_ENG_CI-V_4.pdf`, Mar. 2023 | address `A2`; commands `07 D0/D1/D2`, `0F`, `11`, `16 02`, `26`, `27`; combined internal/external preamp; 144/430/1240 MHz bands; 11/475 scope |
 
 The shared Icom profile also exposes IP+ (`1A 07`), auto notch (`16 41`), and
-manual notch enable (`16 42`) as typed controls. SWR is read-only telemetry via
+manual notch enable (`16 48`) as typed controls. SWR is read-only telemetry via
 `MeterId::Swr`, using `15 12`; the driver exposes the result on the HAL's
 normalized 0..255 meter-deflection scale. The IC-7300 manual documents raw
 values of 0 = 1.0:1, 48 = 1.5:1, 80 = 2.0:1, and 120 = 3.0:1, but those ratio
