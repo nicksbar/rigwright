@@ -45,3 +45,4 @@ check_target "Android" '^android\.rs$' 80
 check_target "Transport" '^transport\.rs$' 90
 check_target "Drivers" '^drivers\.rs$' 85
 check_target "IQ" '^iq\.rs$' 95
+check_target "rigctld" '^rigctld\.rs$' 90

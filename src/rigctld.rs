@@ -192,6 +192,10 @@ fn decode_rigctld_mode(token: &str) -> Result<Mode> {
 mod tests {
     use super::*;
     use crate::hal::NullRadio;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
 
     #[test]
     fn encodes_common_modes() {
@@ -266,5 +270,44 @@ mod tests {
             Mode::Cw
         );
         assert!(radio.capabilities().can_get_ptt);
+    }
+
+    #[test]
+    fn loopback_server_exercises_rigctld_command_and_error_paths() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&commands);
+        let server = thread::spawn(move || {
+            for index in 0..6 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
+                seen.lock().unwrap().push(line.trim().to_string());
+                let response = match index {
+                    0 => "14074000\n",
+                    1 => "RPRT 0\n",
+                    2 => "USB 0\n",
+                    3 | 4 => "RPRT 0\n",
+                    _ => "RPRT -1\n",
+                };
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+
+        let radio = RigctldRadio::new(address.to_string()).with_timeout(Duration::from_secs(1));
+        assert_eq!(futures::executor::block_on(radio.get_frequency_hz()).unwrap(), 14_074_000);
+        futures::executor::block_on(radio.set_frequency_hz(14_075_000)).unwrap();
+        assert_eq!(futures::executor::block_on(radio.get_mode()).unwrap(), Mode::Usb);
+        futures::executor::block_on(radio.set_mode(Mode::Data)).unwrap();
+        futures::executor::block_on(radio.set_ptt(true)).unwrap();
+        assert!(futures::executor::block_on(radio.set_ptt(false)).is_err());
+        server.join().unwrap();
+        assert_eq!(
+            commands.lock().unwrap().as_slice(),
+            ["f", "F 14075000", "m", "M PKTUSB 0", "T 1", "T 0"]
+        );
+        assert!(radio.capabilities().can_set_ptt);
+        assert!(!radio.capabilities().can_get_ptt);
     }
 }
