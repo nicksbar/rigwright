@@ -1390,6 +1390,17 @@ mod tests {
         }
     }
 
+    fn test_radio(
+        model: KenwoodCatModel,
+        reads: Vec<Vec<u8>>,
+    ) -> (KenwoodCatRadio, Arc<Mutex<Vec<Vec<u8>>>>) {
+        let (transport, writes) = ScriptedTransport::with_reads(reads);
+        (
+            KenwoodCatRadio::with_external_transport(Some(model), 115_200, transport),
+            writes,
+        )
+    }
+
     #[test]
     fn constructors_select_exact_profiles_and_validate_baud() {
         let radio =
@@ -1569,5 +1580,314 @@ mod tests {
         let radio = KenwoodCatRadio::new_for_model(KenwoodCatModel::Ts890S, "", 115_200).unwrap();
         assert!(!radio.capabilities().can_get_ptt);
         assert!(futures::executor::block_on(radio.get_ptt()).is_err());
+    }
+
+    #[test]
+    fn ts590_common_controls_meters_and_power_use_documented_fields() {
+        let response = |payload: &[u8]| ScriptedTransport::response(payload);
+        let if_response = |rit: bool, xit: bool, transmitting: bool| {
+            let mut payload = vec![b'0'; 27];
+            payload[16..21].copy_from_slice(b"00125");
+            payload[21] = if rit { b'1' } else { b'0' };
+            payload[22] = if xit { b'1' } else { b'0' };
+            payload[26] = if transmitting { b'1' } else { b'0' };
+            let mut frame = b"IF".to_vec();
+            frame.extend_from_slice(&payload);
+            response(&frame)
+        };
+        let (radio, _) = test_radio(
+            KenwoodCatModel::Ts590Sg,
+            vec![
+                response(b"PC100"),
+                response(b"PS1"),
+                response(b"SM00030"),
+                response(b"RM10015"),
+                response(b"RM30012"),
+                response(b"SM00030"),
+                response(b"AG0128"),
+                response(b"RG255"),
+                response(b"SQ0100"),
+                response(b"NB1"),
+                response(b"NR1"),
+                response(b"NT11"),
+                response(b"FL2"),
+                if_response(true, false, false),
+                if_response(false, false, false),
+                response(b"FR0"),
+                response(b"FR0"),
+                response(b"FT1"),
+                if_response(false, false, true),
+                response(b"CN08"),
+                response(b"CT2"),
+                response(b"AC101"),
+            ],
+        );
+
+        assert_eq!(radio.get_power_watts().unwrap(), 100);
+        assert!(radio.get_power_state().unwrap());
+        assert_eq!(radio.get_meter().unwrap(), 30);
+        assert_eq!(radio.get_swr_meter().unwrap(), 128);
+        assert_eq!(radio.get_rm_meter('3', 30).unwrap(), 102);
+        assert_eq!(radio.get_signal_meter().unwrap(), 255);
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::AfGain)).unwrap(),
+            Some(ControlValue::U8(128))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::RfGain)).unwrap(),
+            Some(ControlValue::U8(255))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::Squelch)).unwrap(),
+            Some(ControlValue::U8(100))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::NoiseBlanker)).unwrap(),
+            Some(ControlValue::Bool(true))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::NoiseReduction)).unwrap(),
+            Some(ControlValue::Bool(true))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::Notch)).unwrap(),
+            Some(ControlValue::Bool(true))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::Filter)).unwrap(),
+            Some(ControlValue::U8(2))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::Rit)).unwrap(),
+            Some(ControlValue::Bool(true))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::Xit)).unwrap(),
+            Some(ControlValue::Bool(false))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::Vfo)).unwrap(),
+            Some(ControlValue::Vfo(0))
+        );
+        assert!(radio.get_split().unwrap());
+        assert!(futures::executor::block_on(radio.get_ptt()).unwrap());
+        assert_eq!(
+            radio.get_repeater_settings().unwrap().tone.mode,
+            ToneMode::EncodeDecode
+        );
+        assert!(radio.get_tuner_status().unwrap().tuning);
+    }
+
+    #[test]
+    fn profiled_set_controls_cover_kenwood_command_families() {
+        let (radio, writes) = test_radio(KenwoodCatModel::Ts590Sg, Vec::new());
+        futures::executor::block_on(radio.set_control(ControlId::AfGain, ControlValue::U8(12)))
+            .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::RfGain, ControlValue::U8(34)))
+            .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::Squelch, ControlValue::U8(56)))
+            .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::Preamp, ControlValue::U8(1)))
+            .unwrap();
+        futures::executor::block_on(
+            radio.set_control(ControlId::NoiseReduction, ControlValue::Bool(true)),
+        )
+        .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::Notch, ControlValue::Bool(false)))
+            .unwrap();
+        futures::executor::block_on(
+            radio.set_control(ControlId::NoiseBlanker, ControlValue::Bool(true)),
+        )
+        .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::Filter, ControlValue::U8(2)))
+            .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::Rit, ControlValue::Bool(true)))
+            .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::Xit, ControlValue::Bool(false)))
+            .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::Vfo, ControlValue::Vfo(1)))
+            .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::RfPower, ControlValue::U8(128)))
+            .unwrap();
+        radio.set_power_watts(50).unwrap();
+        radio.set_power_state(false).unwrap();
+        radio.start_tuner().unwrap();
+        radio
+            .set_repeater_settings(RepeaterSettings {
+                tone: ToneSettings {
+                    mode: ToneMode::Encode,
+                    index: 8,
+                    ..ToneSettings::default()
+                },
+                ..RepeaterSettings::default()
+            })
+            .unwrap();
+        assert!(writes.lock().unwrap().len() >= 16);
+    }
+
+    #[test]
+    fn ts890_uses_om_tb_rf_and_selected_rm_meter_semantics() {
+        let response = |payload: &[u8]| ScriptedTransport::response(payload);
+        let (radio, writes) = test_radio(
+            KenwoodCatModel::Ts890S,
+            vec![
+                response(b"FR1"),
+                response(b"OM1D"),
+                response(b"TB1"),
+                response(b"RF11250"),
+                response(b"RT1"),
+                response(b"XT0"),
+                response(b"RM20040"),
+                response(b"RM60070"),
+                response(b"AC001"),
+                response(b"CN08"),
+                response(b"CT1"),
+                response(b"FR1"),
+            ],
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_mode()).unwrap(),
+            Mode::Data
+        );
+        assert!(radio.get_split().unwrap());
+        assert_eq!(radio.get_rit_offset_hz().unwrap(), -1250);
+        assert_eq!(
+            futures::executor::block_on(Radio::get_meter(&radio, MeterId::Swr)).unwrap(),
+            Some(146)
+        );
+        assert_eq!(
+            futures::executor::block_on(Radio::get_meter(&radio, MeterId::Temperature)).unwrap(),
+            Some(255)
+        );
+        assert!(!radio.get_tuner_status().unwrap().enabled);
+        assert_eq!(
+            radio.get_repeater_settings().unwrap().tone.mode,
+            ToneMode::Encode
+        );
+
+        futures::executor::block_on(radio.set_mode(Mode::Usb)).unwrap();
+        radio.set_split(false).unwrap();
+        futures::executor::block_on(radio.set_frequency_hz(14_074_000)).unwrap();
+        assert!(writes.lock().unwrap().iter().any(|frame| frame == b"OM02;"));
+        assert!(writes.lock().unwrap().iter().any(|frame| frame == b"TB0;"));
+    }
+
+    #[test]
+    fn memory_repeater_and_validation_paths_are_model_scoped() {
+        let response = |payload: &[u8]| ScriptedTransport::response(payload);
+        let ts590_memory = format!("MR1{:03}{:011}20020800000000000000000LOCAL;", 7, 14_074_000);
+        let (ts590, writes) = test_radio(
+            KenwoodCatModel::Ts590Sg,
+            vec![
+                response(ts590_memory.as_bytes()),
+                response(b"CN08"),
+                response(b"CT2"),
+            ],
+        );
+        ts590.select_memory_channel(7).unwrap();
+        assert_eq!(ts590.read_memory_channel(7).unwrap().channel, 7);
+        assert_eq!(ts590.get_repeater_settings().unwrap().tone.index, 8);
+        ts590
+            .set_repeater_settings(RepeaterSettings {
+                tone: ToneSettings {
+                    mode: ToneMode::EncodeDecode,
+                    index: 8,
+                    ..ToneSettings::default()
+                },
+                ..RepeaterSettings::default()
+            })
+            .unwrap();
+        ts590
+            .write_memory_channel(MemoryChannel {
+                channel: 7,
+                name: Some("LOCAL".to_owned()),
+                frequency_hz: 14_074_000,
+                transmit_frequency_hz: Some(14_075_000),
+                mode: Mode::Usb,
+                repeater: RepeaterSettings::default(),
+            })
+            .unwrap();
+        assert!(writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.starts_with(b"MW")));
+
+        let (ts890, writes) = test_radio(
+            KenwoodCatModel::Ts890S,
+            vec![response(
+                format!(
+                    "MA0{:03}{:011}{}0{}00{:02}{:011}{}000{}",
+                    1, 14_500_000, '4', '1', 8, 14_500_000, '4', "LOCAL"
+                )
+                .as_bytes(),
+            )],
+        );
+        ts890.select_memory_channel(1).unwrap();
+        assert_eq!(ts890.read_memory_channel(1).unwrap().channel, 1);
+        ts890
+            .write_memory_channel(MemoryChannel {
+                channel: 1,
+                name: Some("LOCAL".to_owned()),
+                frequency_hz: 14_500_000,
+                transmit_frequency_hz: None,
+                mode: Mode::Fm,
+                repeater: RepeaterSettings::default(),
+            })
+            .unwrap();
+        assert!(writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.starts_with(b"MA0")));
+
+        assert!(ts590.select_memory_channel(120).is_err());
+        assert!(ts590.set_power_watts(1).is_err());
+        assert!(ts590
+            .set_repeater_settings(RepeaterSettings {
+                shift: RepeaterShift::Plus,
+                ..RepeaterSettings::default()
+            })
+            .is_err());
+        assert!(ts590
+            .set_repeater_settings(RepeaterSettings {
+                tone: ToneSettings {
+                    mode: ToneMode::Dtcs,
+                    ..ToneSettings::default()
+                },
+                ..RepeaterSettings::default()
+            })
+            .is_err());
+    }
+
+    #[test]
+    fn ts2000_uses_classic_md_and_fr_ft_semantics() {
+        let response = |payload: &[u8]| ScriptedTransport::response(payload);
+        let (radio, writes) = test_radio(
+            KenwoodCatModel::Ts2000,
+            vec![
+                response(b"MD2"),
+                response(b"FR0"),
+                response(b"FR0"),
+                response(b"FT1"),
+                response(b"FR0"),
+                response(b"FR0"),
+            ],
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_mode()).unwrap(),
+            Mode::Usb
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::Vfo)).unwrap(),
+            Some(ControlValue::Vfo(0))
+        );
+        assert!(radio.get_split().unwrap());
+        futures::executor::block_on(radio.set_mode(Mode::Usb)).unwrap();
+        radio.set_split(false).unwrap();
+        assert!(writes.lock().unwrap().iter().any(|frame| frame == b"MD2;"));
+        assert!(writes.lock().unwrap().iter().any(|frame| frame == b"FT0;"));
+        assert!(futures::executor::block_on(radio.set_frequency_hz(145_000_000)).is_ok());
+        assert!(futures::executor::block_on(radio.set_frequency_hz(1_301_000_000)).is_err());
     }
 }
