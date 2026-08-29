@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.12 — IC-7300 telemetry meters
+
+- Add IC-7300 CI-V meter queries for signal, output power, ALC, SWR,
+  compression, voltage, current, and temperature.
+- Expose the documented meters through the profile-gated `MeterId` capability
+  surface using normalized `0..=255` values.
+- Add coverage for the documented CI-V meter command selectors.
+
 ## 0.1.11 — Android transport plumbing
 
 - Add the shared `RadioTransport` byte-stream contract while preserving the
