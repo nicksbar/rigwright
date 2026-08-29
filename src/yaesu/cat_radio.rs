@@ -257,9 +257,9 @@ impl YaesuCatRadio {
         self.send_set("ST", if enabled { "1" } else { "0" })
     }
 
-    /// Read the FTDX10-family documented repeater controls.  The CAT manual
-    /// exposes tone as an index and offset as a direction; those native forms
-    /// are preserved in the protocol-neutral value instead of inventing Hz.
+    /// Read the modern Yaesu documented repeater controls. `OS` returns a
+    /// receiver selector followed by the direction; the offset itself is a
+    /// memory/configuration value and is not reported by this live surface.
     pub fn get_repeater_settings(&self) -> Result<RepeaterSettings> {
         if !self.selected_profile()?.supports_repeater_settings {
             bail!("repeater settings are not documented for this Yaesu model");
@@ -273,12 +273,7 @@ impl YaesuCatRadio {
             "2" => ToneMode::Encode,
             value => bail!("invalid Yaesu CT tone mode: {value}"),
         };
-        let shift = match parse_payload(&self.query("OS", None, 1)?, "OS")? {
-            "0" => RepeaterShift::Simplex,
-            "1" => RepeaterShift::Plus,
-            "2" => RepeaterShift::Minus,
-            value => bail!("invalid Yaesu OS repeater shift: {value}"),
-        };
+        let shift = decode_repeater_shift(parse_payload(&self.query("OS", None, 2)?, "OS")?)?;
         Ok(RepeaterSettings {
             shift,
             offset_hz: None,
@@ -297,28 +292,28 @@ impl YaesuCatRadio {
             bail!("repeater settings are not documented for this Yaesu model");
         }
         if settings.tone.index > 49 {
-            bail!("Yaesu FTDX10 tone index must be 0..=49");
+            bail!("Yaesu tone index must be 0..=49");
         }
+        anyhow::ensure!(
+            settings.offset_hz.is_none() || settings.offset_hz == Some(0),
+            "Yaesu live OS control selects shift direction; set non-zero offset through a memory record"
+        );
         let tone_mode = match settings.tone.mode {
             ToneMode::Off => "0",
             ToneMode::EncodeDecode => "1",
             ToneMode::Encode => "2",
             ToneMode::Dtcs => anyhow::bail!("DTCS is not supported by this Yaesu profile"),
         };
-        let shift = match settings.shift {
-            RepeaterShift::Simplex => "0",
-            RepeaterShift::Plus => "1",
-            RepeaterShift::Minus => "2",
-        };
+        let shift = encode_repeater_shift(settings.shift);
         self.send_set("CN", &format!("{:03}", settings.tone.index))?;
         self.send_set("CT", tone_mode)?;
-        self.send_set("OS", shift)
+        self.send_set("OS", &format!("0{shift}"))
     }
 
-    /// Select a documented FTDX10 memory channel. Read/write of the complete
-    /// `MR`/`MT` records remains a separate model-specific operation.
+    /// Select a documented modern Yaesu memory channel. Complete `MR`/`MT`
+    /// record codecs remain gated to the hardware-validated FTDX10 layout.
     pub fn select_memory_channel(&self, channel: u16) -> Result<()> {
-        if !self.selected_profile()?.supports_repeater_settings || channel > 99 {
+        if !self.selected_profile()?.supports_memory_channels || channel > 99 {
             bail!("memory channel selection is not documented for this Yaesu model");
         }
         self.send_set("MC", &format!("{channel:03}"))
@@ -327,20 +322,20 @@ impl YaesuCatRadio {
     pub fn read_memory_channel(&self, channel: u16) -> Result<MemoryChannel> {
         anyhow::ensure!(
             self.model() == Some(YaesuCatModel::Ftdx10) && (1..=99).contains(&channel),
-            "FTDX10 memory records are the only Yaesu memory surface currently profiled"
+            "full Yaesu memory records are currently profiled only for the FTDX10"
         );
         let response = self.query("MR", Some(&format!("{channel:03}")), 0)?;
-        decode_ftdx10_memory(parse_payload(&response, "MR")?, self.selected_profile()?)
+        decode_modern_yaesu_memory(parse_payload(&response, "MR")?, self.selected_profile()?)
     }
 
     pub fn write_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
         anyhow::ensure!(
             self.model() == Some(YaesuCatModel::Ftdx10) && (1..=99).contains(&channel.channel),
-            "FTDX10 memory records are the only Yaesu memory surface currently profiled"
+            "full Yaesu memory records are currently profiled only for the FTDX10"
         );
         anyhow::ensure!(
             channel.frequency_hz <= 999_999_999,
-            "FTDX10 memory frequency exceeds CAT width"
+            "Yaesu memory frequency exceeds CAT width"
         );
         let mode = self.selected_profile()?.encode_mode(channel.mode)?;
         let tone = match channel.repeater.tone.mode {
@@ -358,7 +353,7 @@ impl YaesuCatRadio {
         let name = channel.name.unwrap_or_default();
         anyhow::ensure!(
             name.is_ascii() && name.len() <= 12,
-            "FTDX10 memory tag must be ASCII and at most 12 characters"
+            "Yaesu memory tag must be ASCII and at most 12 characters"
         );
         let params = format!(
             "0{:03}{:09}+{:04}00{}0{}00{}0{}",
@@ -755,7 +750,7 @@ impl Radio for YaesuCatRadio {
 
     fn supports_memory_channels(&self) -> bool {
         self.profile()
-            .is_some_and(|profile| profile.supports_repeater_settings)
+            .is_some_and(|profile| profile.supports_memory_channels)
     }
 
     fn supports_meter(&self, id: MeterId) -> bool {
@@ -843,39 +838,57 @@ fn parse_payload<'a>(frame: &'a [u8], command: &str) -> Result<&'a str> {
         .context("unexpected Yaesu CAT response")
 }
 
-fn decode_ftdx10_memory(payload: &str, profile: &YaesuCatProfile) -> Result<MemoryChannel> {
-    anyhow::ensure!(payload.len() >= 25, "FTDX10 MR response is too short");
+fn decode_repeater_shift(payload: &str) -> Result<RepeaterShift> {
+    match payload.chars().last() {
+        Some('0') => Ok(RepeaterShift::Simplex),
+        Some('1') => Ok(RepeaterShift::Plus),
+        Some('2') => Ok(RepeaterShift::Minus),
+        Some(value) => bail!("invalid Yaesu OS repeater shift: {value}"),
+        None => bail!("missing Yaesu OS repeater shift"),
+    }
+}
+
+fn encode_repeater_shift(shift: RepeaterShift) -> &'static str {
+    match shift {
+        RepeaterShift::Simplex => "0",
+        RepeaterShift::Plus => "1",
+        RepeaterShift::Minus => "2",
+    }
+}
+
+fn decode_modern_yaesu_memory(payload: &str, profile: &YaesuCatProfile) -> Result<MemoryChannel> {
+    anyhow::ensure!(payload.len() >= 25, "Yaesu MR response is too short");
     let channel = payload[0..3]
         .parse::<u16>()
-        .context("invalid FTDX10 memory channel")?;
+        .context("invalid Yaesu memory channel")?;
     let frequency_hz = payload[3..12]
         .parse::<u64>()
-        .context("invalid FTDX10 memory frequency")?;
+        .context("invalid Yaesu memory frequency")?;
     let sign = match &payload[12..13] {
         "+" => 1i32,
         "-" => -1i32,
-        value => bail!("invalid FTDX10 clarifier direction: {value}"),
+        value => bail!("invalid Yaesu clarifier direction: {value}"),
     };
     let offset = payload[13..17]
         .parse::<i32>()
-        .context("invalid FTDX10 memory offset")?;
+        .context("invalid Yaesu memory offset")?;
     let mode = profile.decode_mode(
         payload[19..20]
             .chars()
             .next()
-            .context("missing FTDX10 memory mode")?,
+            .context("missing Yaesu memory mode")?,
     )?;
     let tone = match &payload[21..22] {
         "0" => ToneMode::Off,
         "1" => ToneMode::EncodeDecode,
         "2" => ToneMode::Encode,
-        value => bail!("invalid FTDX10 memory tone mode: {value}"),
+        value => bail!("invalid Yaesu memory tone mode: {value}"),
     };
     let shift = match &payload[24..25] {
         "0" => RepeaterShift::Simplex,
         "1" => RepeaterShift::Plus,
         "2" => RepeaterShift::Minus,
-        value => bail!("invalid FTDX10 memory shift: {value}"),
+        value => bail!("invalid Yaesu memory shift: {value}"),
     };
     Ok(MemoryChannel {
         channel,
@@ -986,6 +999,14 @@ mod tests {
     }
 
     #[test]
+    fn repeater_os_preserves_main_band_selector_and_decodes_direction() {
+        assert_eq!(decode_repeater_shift("00").unwrap(), RepeaterShift::Simplex);
+        assert_eq!(decode_repeater_shift("01").unwrap(), RepeaterShift::Plus);
+        assert_eq!(decode_repeater_shift("12").unwrap(), RepeaterShift::Minus);
+        assert_eq!(encode_repeater_shift(RepeaterShift::Plus), "1");
+    }
+
+    #[test]
     fn raw_commands_must_be_single_complete_frames() {
         assert!(validate_complete_command(b"ID;").is_ok());
         assert!(validate_complete_command(b"ID").is_err());
@@ -998,7 +1019,7 @@ mod tests {
             "{:03}{:09}+{:04}00{}0{}00{}",
             1, 14_074_000, 0, '2', '2', '1'
         );
-        let channel = decode_ftdx10_memory(&payload, &FTDX10_PROFILE).unwrap();
+        let channel = decode_modern_yaesu_memory(&payload, &FTDX10_PROFILE).unwrap();
         assert_eq!(channel.channel, 1);
         assert_eq!(channel.frequency_hz, 14_074_000);
         assert_eq!(channel.mode, Mode::Usb);

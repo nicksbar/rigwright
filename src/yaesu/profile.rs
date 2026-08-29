@@ -36,6 +36,8 @@ pub struct YaesuCatProfile {
     pub supports_split: bool,
     /// The model manual documents `CN`, `CT`, and `OS` CAT operations.
     pub supports_repeater_settings: bool,
+    /// The model manual documents `MC`, `MR`, and `MT` memory operations.
+    pub supports_memory_channels: bool,
 }
 
 impl YaesuCatProfile {
@@ -146,7 +148,8 @@ pub const FT710_PROFILE: YaesuCatProfile = YaesuCatProfile {
     modes: MODERN_HF_MODES,
     power_range_watts: Some((5, 100)),
     supports_split: true,
-    supports_repeater_settings: false,
+    supports_repeater_settings: true,
+    supports_memory_channels: true,
 };
 
 pub const FTDX10_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -158,6 +161,7 @@ pub const FTDX10_PROFILE: YaesuCatProfile = YaesuCatProfile {
     power_range_watts: Some((5, 100)),
     supports_split: true,
     supports_repeater_settings: true,
+    supports_memory_channels: true,
 };
 
 pub const FTDX101D_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -168,7 +172,8 @@ pub const FTDX101D_PROFILE: YaesuCatProfile = YaesuCatProfile {
     modes: MODERN_HF_MODES,
     power_range_watts: Some((5, 100)),
     supports_split: true,
-    supports_repeater_settings: false,
+    supports_repeater_settings: true,
+    supports_memory_channels: true,
 };
 
 pub const FTDX101MP_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -179,7 +184,8 @@ pub const FTDX101MP_PROFILE: YaesuCatProfile = YaesuCatProfile {
     modes: MODERN_HF_MODES,
     power_range_watts: Some((5, 200)),
     supports_split: true,
-    supports_repeater_settings: false,
+    supports_repeater_settings: true,
+    supports_memory_channels: true,
 };
 
 pub const FT991A_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -190,7 +196,8 @@ pub const FT991A_PROFILE: YaesuCatProfile = YaesuCatProfile {
     modes: FT991A_MODES,
     power_range_watts: Some((5, 100)),
     supports_split: false,
-    supports_repeater_settings: false,
+    supports_repeater_settings: true,
+    supports_memory_channels: true,
 };
 
 pub fn profile_for_model(model: YaesuCatModel) -> &'static YaesuCatProfile {
@@ -241,5 +248,20 @@ mod tests {
         assert!(profile_for_model(YaesuCatModel::Ftdx101Mp)
             .validate_power(200)
             .is_ok());
+    }
+
+    #[test]
+    fn modern_profiles_expose_documented_repeater_and_memory_surfaces() {
+        for model in [
+            YaesuCatModel::Ft710,
+            YaesuCatModel::Ft991A,
+            YaesuCatModel::Ftdx10,
+            YaesuCatModel::Ftdx101D,
+            YaesuCatModel::Ftdx101Mp,
+        ] {
+            let profile = profile_for_model(model);
+            assert!(profile.supports_repeater_settings);
+            assert!(profile.supports_memory_channels);
+        }
     }
 }

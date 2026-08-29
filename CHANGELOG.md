@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.14 — Icom capability consolidation and repeater duplex controls
+## 0.1.14 — Icom and Yaesu capability consolidation
 
 - Promote the common Icom CI-V control definitions and meter selectors into
   the shared profile/generic driver layer.
@@ -10,15 +10,19 @@
   its model profile.
 - Document the Icom IQ boundary: IC-7300 CI-V scope is supported, while raw
   USB IQ remains unavailable on that model.
+- Promote documented modern Yaesu `CN`, `CT`, and `OS` repeater controls to all
+  current modern profiles, including the required main-band selector in `OS`.
+- Generalize modern Yaesu `MC` memory-channel selection beyond the FTDX10
+  profile; retain `MR`/`MT` record codecs behind the hardware-validated FTDX10
+  layout gate, and keep live `OS` direction distinct from memory offset data.
 
 - Add protocol-neutral typed values for CTCSS tone mode/index, repeater shift,
   memory channels, and validated DTMF sequences.
 - Add capability-gated HAL operations for repeater settings, memory/channel
   access, and DTMF transmission, including Android and configured-driver
   delegation.
-- Implement the documented Yaesu FTDX10 `CN`, `CT`, and `OS` repeater
-  operations; other models remain unavailable until their command manuals are
-  individually profiled.
+- Implement the documented modern Yaesu `CN`, `CT`, and `OS` repeater
+  operations with model-profile gating and correct main-band `OS` framing.
 - Implement Icom CI-V repeater tone state/frequency and documented memory
   channel selection, plus Kenwood `CN`/`CT` CTCSS controls.
 - Correct Icom tone mappings to the documented `16 42/43` enable flags and
