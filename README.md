@@ -119,7 +119,9 @@ PTT/keying/digital-mode signals, not frequency and mode CAT commands.
 For a read-only identity/frequency/mode/PTT check, run
 `cargo run --example yaesu_probe -- FTDX10 /dev/ttyUSB0 38400`. Match the baud
 rate and one-stop-bit setting in the radio's CAT menu. No example command keys
-the transmitter.
+the transmitter. FTDX10 automatically reads its CAT RTS setting and adapts the
+serial flow-control mode; `--hardware-flow` remains available for adapters that
+need an explicit override.
 
 For an older FT-817ND, FT-818, FT-857D, or FT-897D, set the radio's CAT menu to
 4800, 9600, or 38400 baud and use the documented CT-62-compatible serial

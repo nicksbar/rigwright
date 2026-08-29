@@ -1,7 +1,9 @@
 //! Protocol-neutral radio hardware abstraction layer.
 
+pub use crate::events::RadioEventRouter;
 pub use crate::hal_types::{
-    BaseMode, ControlId, ControlValue, MeterId, Mode, OperatingMode, TunerStatus,
+    BaseMode, ControlId, ControlValue, DtmfSequence, MemoryChannel, MeterId, Mode, OperatingMode,
+    RepeaterSettings, RepeaterShift, ToneSettings, TunerStatus,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -32,6 +34,12 @@ pub struct RadioCapabilities {
 /// I/O internally; applications should avoid calling them while holding UI or
 /// other latency-sensitive locks.
 pub trait Radio: Send + Sync {
+    /// Shared unsolicited-event source, when the backend has a persistent
+    /// protocol event router. Consumers should retain the returned router or
+    /// subscription for the lifetime of the connection.
+    fn event_router(&self) -> Option<RadioEventRouter> {
+        None
+    }
     async fn get_frequency_hz(&self) -> Result<u64>;
     async fn set_frequency_hz(&self, hz: u64) -> Result<()>;
     async fn get_mode(&self) -> Result<Mode>;
@@ -55,6 +63,39 @@ pub trait Radio: Send + Sync {
     async fn set_control(&self, _id: ControlId, _value: ControlValue) -> Result<()> {
         Ok(())
     }
+    async fn get_repeater_settings(&self) -> Result<RepeaterSettings> {
+        anyhow::bail!("repeater tone/offset control is not supported by this radio")
+    }
+    async fn set_repeater_settings(&self, _settings: RepeaterSettings) -> Result<()> {
+        anyhow::bail!("repeater tone/offset control is not supported by this radio")
+    }
+    async fn get_rit_offset_hz(&self) -> Result<i32> {
+        anyhow::bail!("RIT offset control is not supported by this radio")
+    }
+    async fn set_rit_offset_hz(&self, _offset_hz: i32) -> Result<()> {
+        anyhow::bail!("RIT offset control is not supported by this radio")
+    }
+    async fn select_memory_channel(&self, _channel: u16) -> Result<()> {
+        anyhow::bail!("memory/channel control is not supported by this radio")
+    }
+    async fn read_memory_channel(&self, _channel: u16) -> Result<MemoryChannel> {
+        anyhow::bail!("memory/channel read is not supported by this radio")
+    }
+    async fn write_memory_channel(&self, _channel: MemoryChannel) -> Result<()> {
+        anyhow::bail!("memory/channel write is not supported by this radio")
+    }
+    async fn send_dtmf(&self, _sequence: DtmfSequence) -> Result<()> {
+        anyhow::bail!("DTMF control is not supported by this radio")
+    }
+    fn supports_repeater_settings(&self) -> bool {
+        false
+    }
+    fn supports_memory_channels(&self) -> bool {
+        false
+    }
+    fn supports_send_dtmf(&self) -> bool {
+        false
+    }
     /// Read a normalized meter level on the HAL's 0..=255 scale.
     async fn get_meter(&self, _id: MeterId) -> Result<Option<u8>> {
         Ok(None)
@@ -68,6 +109,16 @@ pub trait Radio: Send + Sync {
     /// particular typed control.
     fn supports_control(&self, _id: ControlId) -> bool {
         false
+    }
+    /// Report whether a typed control has a reliable readback operation.
+    /// Defaults to the legacy supported-control behavior for existing drivers.
+    fn supports_control_read(&self, id: ControlId) -> bool {
+        self.supports_control(id)
+    }
+    /// Report whether a typed control has a reliable write operation.
+    /// Defaults to the legacy supported-control behavior for existing drivers.
+    fn supports_control_write(&self, id: ControlId) -> bool {
+        self.supports_control(id)
     }
     async fn start_tuner(&self) -> Result<()> {
         anyhow::bail!("antenna tuner control is not supported by this radio")

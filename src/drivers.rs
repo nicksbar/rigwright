@@ -8,7 +8,10 @@ use std::{
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 
-use crate::hal::{Mode, NullRadio, Radio, RadioCapabilities, TunerStatus};
+use crate::hal::{
+    DtmfSequence, MemoryChannel, Mode, NullRadio, Radio, RadioCapabilities, RepeaterSettings,
+    TunerStatus,
+};
 use crate::{
     dxlab::DxLabCommanderRadio,
     icom::civ_radio::IcomCiVRadio,
@@ -296,6 +299,13 @@ impl ConfiguredRadio {
 
 #[async_trait]
 impl Radio for ConfiguredRadio {
+    fn event_router(&self) -> Option<crate::RadioEventRouter> {
+        match self {
+            Self::Icom(r) => r.event_router(),
+            _ => None,
+        }
+    }
+
     async fn get_frequency_hz(&self) -> Result<u64> {
         match self {
             Self::Icom(r) => r.get_frequency_hz().await,
@@ -419,6 +429,72 @@ impl Radio for ConfiguredRadio {
             _ => bail!("control {id:?} is not available for this driver"),
         }
     }
+    async fn get_repeater_settings(&self) -> Result<RepeaterSettings> {
+        match self {
+            Self::Icom(r) => r.get_repeater_settings(),
+            Self::Yaesu(r) => r.get_repeater_settings(),
+            Self::Kenwood(r) => r.get_repeater_settings(),
+            Self::LegacyYaesu(r) => r.get_repeater_settings().await,
+            _ => bail!("repeater settings are not available for this driver"),
+        }
+    }
+    async fn set_repeater_settings(&self, settings: RepeaterSettings) -> Result<()> {
+        match self {
+            Self::Icom(r) => r.set_repeater_settings(settings),
+            Self::Yaesu(r) => r.set_repeater_settings(settings),
+            Self::Kenwood(r) => r.set_repeater_settings(settings),
+            Self::LegacyYaesu(r) => r.set_repeater_settings(settings).await,
+            _ => bail!("repeater settings are not available for this driver"),
+        }
+    }
+    async fn get_rit_offset_hz(&self) -> Result<i32> {
+        match self {
+            Self::Icom(r) => r.get_rit_offset_hz(),
+            _ => bail!("RIT offset control is not available for this driver"),
+        }
+    }
+    async fn set_rit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        match self {
+            Self::Icom(r) => r.set_rit_offset_hz(offset_hz),
+            _ => bail!("RIT offset control is not available for this driver"),
+        }
+    }
+    async fn select_memory_channel(&self, channel: u16) -> Result<()> {
+        match self {
+            Self::Icom(r) => r.select_memory_channel(channel),
+            Self::Yaesu(r) => r.select_memory_channel(channel),
+            Self::Kenwood(r) => r.select_memory_channel(channel),
+            Self::LegacyYaesu(r) => r.select_memory_channel(channel).await,
+            _ => bail!("memory channels are not available for this driver"),
+        }
+    }
+    async fn read_memory_channel(&self, channel: u16) -> Result<MemoryChannel> {
+        match self {
+            Self::Icom(r) => r.read_memory_channel(channel),
+            Self::Yaesu(r) => r.read_memory_channel(channel),
+            Self::Kenwood(r) => r.read_memory_channel(channel),
+            Self::LegacyYaesu(r) => r.read_memory_channel(channel).await,
+            _ => bail!("memory channels are not available for this driver"),
+        }
+    }
+    async fn write_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
+        match self {
+            Self::Icom(r) => r.write_memory_channel(channel),
+            Self::Yaesu(r) => r.write_memory_channel(channel),
+            Self::Kenwood(r) => r.write_memory_channel(channel),
+            Self::LegacyYaesu(r) => r.write_memory_channel(channel).await,
+            _ => bail!("memory channels are not available for this driver"),
+        }
+    }
+    async fn send_dtmf(&self, sequence: DtmfSequence) -> Result<()> {
+        match self {
+            Self::Icom(r) => r.send_dtmf(sequence).await,
+            Self::Yaesu(r) => r.send_dtmf(sequence).await,
+            Self::Kenwood(r) => r.send_dtmf(sequence).await,
+            Self::LegacyYaesu(r) => r.send_dtmf(sequence).await,
+            _ => bail!("DTMF is not available for this driver"),
+        }
+    }
     async fn get_meter(&self, id: crate::MeterId) -> Result<Option<u8>> {
         match self {
             Self::Icom(r) => r.get_meter(id).await,
@@ -447,6 +523,24 @@ impl Radio for ConfiguredRadio {
             Self::Yaesu(r) => r.supports_control(id),
             Self::Kenwood(r) => r.supports_control(id),
             Self::LegacyYaesu(r) => r.supports_control(id),
+            _ => false,
+        }
+    }
+    fn supports_control_read(&self, id: crate::ControlId) -> bool {
+        match self {
+            Self::Icom(r) => r.supports_control_read(id),
+            Self::Yaesu(r) => r.supports_control_read(id),
+            Self::Kenwood(r) => r.supports_control_read(id),
+            Self::LegacyYaesu(r) => r.supports_control_read(id),
+            _ => false,
+        }
+    }
+    fn supports_control_write(&self, id: crate::ControlId) -> bool {
+        match self {
+            Self::Icom(r) => r.supports_control_write(id),
+            Self::Yaesu(r) => r.supports_control_write(id),
+            Self::Kenwood(r) => r.supports_control_write(id),
+            Self::LegacyYaesu(r) => r.supports_control_write(id),
             _ => false,
         }
     }
@@ -638,6 +732,10 @@ mod tests {
         let icom = open_model("IC-7300", "/dev/null", 115_200, 0xE0).unwrap();
         assert!(icom.supports_control(crate::ControlId::IpPlus));
         assert!(icom.supports_control(crate::ControlId::NoiseReduction));
+        assert!(!icom.supports_control_read(crate::ControlId::Vfo));
+        assert!(icom.supports_control_write(crate::ControlId::Vfo));
+        assert!(!icom.supports_control_read(crate::ControlId::RawCiV));
+        assert!(!icom.supports_control_write(crate::ControlId::RawCiV));
         assert!(icom.supports_meter(crate::MeterId::Swr));
         assert!(icom.supports_meter(crate::MeterId::Signal));
         assert!(icom.supports_meter(crate::MeterId::Power));
@@ -649,16 +747,24 @@ mod tests {
 
         let ic9700 = open_model("IC-9700", "/dev/null", 115_200, 0xE0).unwrap();
         assert!(ic9700.supports_control(crate::ControlId::MainSub));
+        assert!(ic9700.supports_control_read(crate::ControlId::MainSub));
+        assert!(ic9700.supports_control_write(crate::ControlId::MainSub));
         assert!(ic9700.supports_control(crate::ControlId::ExternalPreamp));
 
         let yaesu = open_model("FTDX10", "/dev/null", 38_400, 0xE0).unwrap();
         assert!(yaesu.supports_control(crate::ControlId::Agc));
+        assert!(yaesu.supports_control_read(crate::ControlId::Agc));
+        assert!(yaesu.supports_control_write(crate::ControlId::Agc));
         assert!(yaesu.supports_control(crate::ControlId::NoiseReductionLevel));
         assert!(yaesu.supports_meter(crate::MeterId::Voltage));
         assert!(!yaesu.supports_meter(crate::MeterId::Temperature));
 
         let kenwood = open_model("TS-890S", "/dev/null", 115_200, 0xE0).unwrap();
         assert!(kenwood.supports_control(crate::ControlId::RfPower));
+        assert!(kenwood.supports_control_read(crate::ControlId::RfPower));
+        assert!(kenwood.supports_control_write(crate::ControlId::RfPower));
+        assert!(kenwood.supports_control_read(crate::ControlId::Split));
+        assert!(kenwood.supports_control_write(crate::ControlId::Split));
         assert!(kenwood.supports_meter(crate::MeterId::Signal));
         assert!(kenwood.supports_meter(crate::MeterId::Swr));
         assert!(!kenwood.supports_meter(crate::MeterId::Alc));

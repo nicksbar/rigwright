@@ -13,7 +13,10 @@ use serialport::{DataBits, FlowControl, Parity, StopBits};
 
 use crate::{
     hal::{Mode, Radio, RadioCapabilities},
-    hal_types::{normalize_meter_level, ControlId, ControlValue, MeterId},
+    hal_types::{
+        normalize_meter_level, ControlId, ControlValue, MemoryChannel, MeterId, RepeaterSettings,
+        RepeaterShift, ToneMode, ToneSettings,
+    },
     models::KenwoodCatModel,
     protocol::ascii_cat,
     transport::{RadioTransport, SerialPortTransport},
@@ -269,6 +272,111 @@ impl KenwoodCatRadio {
                 self.send_set("FT", &transmit.to_string())
             }
         }
+    }
+
+    /// Kenwood PC command references document CN (CTCSS frequency index) and
+    /// CT (tone function) across the supported CAT families. Shift and offset
+    /// are intentionally not synthesized here because their command forms
+    /// differ by model.
+    pub fn get_repeater_settings(&self) -> Result<RepeaterSettings> {
+        let tone_index = parse_payload(&self.query("CN", None, Some(2))?, "CN")?
+            .parse::<u8>()
+            .context("invalid Kenwood CN tone index")?;
+        let mode = match parse_payload(&self.query("CT", None, Some(1))?, "CT")? {
+            "0" => ToneMode::Off,
+            "1" => ToneMode::Encode,
+            "2" => ToneMode::EncodeDecode,
+            value => bail!("invalid Kenwood CT tone mode: {value}"),
+        };
+        Ok(RepeaterSettings {
+            shift: RepeaterShift::Simplex,
+            offset_hz: None,
+            tone: ToneSettings {
+                mode,
+                index: tone_index,
+                frequency_tenths_hz: None,
+                dtcs_code: None,
+                dtcs_reverse: None,
+            },
+        })
+    }
+
+    pub fn set_repeater_settings(&self, settings: RepeaterSettings) -> Result<()> {
+        if !matches!(settings.shift, RepeaterShift::Simplex) || settings.offset_hz.is_some() {
+            bail!("Kenwood repeater shift/offset is not yet model-profiled");
+        }
+        if settings.tone.index > 41 {
+            bail!("Kenwood CTCSS tone index must be 0..=41");
+        }
+        let mode = match settings.tone.mode {
+            ToneMode::Off => "0",
+            ToneMode::Encode => "1",
+            ToneMode::Dtcs => anyhow::bail!("DTCS is not supported by this Kenwood profile"),
+            ToneMode::EncodeDecode => "2",
+        };
+        self.send_set("CN", &format!("{:02}", settings.tone.index))?;
+        self.send_set("CT", mode)
+    }
+
+    pub fn select_memory_channel(&self, channel: u16) -> Result<()> {
+        anyhow::ensure!(
+            self.model() == Some(KenwoodCatModel::Ts890S) && channel <= 119,
+            "TS-890S memory channels are the only Kenwood memory surface currently profiled"
+        );
+        self.send_set("FR", "3")?;
+        self.send_set("MN", &format!("{channel:03}"))
+    }
+
+    pub fn read_memory_channel(&self, channel: u16) -> Result<MemoryChannel> {
+        anyhow::ensure!(
+            self.model() == Some(KenwoodCatModel::Ts890S) && channel <= 119,
+            "TS-890S memory records are the only Kenwood memory surface currently profiled"
+        );
+        let response = self.query("MA0", Some(&format!("{channel:03}")), None)?;
+        decode_ts890_memory(parse_payload(&response, "MA0")?, self.selected_profile()?)
+    }
+
+    pub fn write_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
+        anyhow::ensure!(
+            self.model() == Some(KenwoodCatModel::Ts890S) && channel.channel <= 119,
+            "TS-890S memory records are the only Kenwood memory surface currently profiled"
+        );
+        anyhow::ensure!(
+            channel.frequency_hz <= 99_999_999_999,
+            "Kenwood memory frequency does not fit the documented 11-digit field"
+        );
+        anyhow::ensure!(
+            matches!(channel.repeater.shift, RepeaterShift::Simplex),
+            "Kenwood MA0 memory writes require simplex; split memory needs a separate TX frequency"
+        );
+        let mode = self.selected_profile()?.encode_mode(channel.mode)?;
+        let tone_type = match channel.repeater.tone.mode {
+            ToneMode::Off => '0',
+            ToneMode::Encode => '1',
+            ToneMode::EncodeDecode => '2',
+            ToneMode::Dtcs => anyhow::bail!("DTCS is not supported by this Kenwood profile"),
+        };
+        anyhow::ensure!(
+            channel.repeater.tone.index <= 41,
+            "Kenwood CTCSS index must be 0..=41"
+        );
+        let tx_frequency = channel
+            .transmit_frequency_hz
+            .unwrap_or(channel.frequency_hz);
+        anyhow::ensure!(
+            tx_frequency <= 99_999_999_999,
+            "Kenwood transmit memory frequency does not fit the documented 11-digit field"
+        );
+        let name = channel.name.unwrap_or_default();
+        anyhow::ensure!(
+            name.is_ascii() && name.len() <= 10,
+            "Kenwood channel name must be ASCII and at most 10 characters"
+        );
+        let params = format!(
+            "{:03}{:011}{mode}0{tone_type}00{:02}{:011}{mode}000{name}",
+            channel.channel, channel.frequency_hz, channel.repeater.tone.index, tx_frequency,
+        );
+        self.send_set("MA0", &params)
     }
 
     fn selected_profile(&self) -> Result<&'static KenwoodCatProfile> {
@@ -590,6 +698,34 @@ impl Radio for KenwoodCatRadio {
         }
     }
 
+    async fn get_repeater_settings(&self) -> Result<RepeaterSettings> {
+        KenwoodCatRadio::get_repeater_settings(self)
+    }
+
+    async fn set_repeater_settings(&self, settings: RepeaterSettings) -> Result<()> {
+        KenwoodCatRadio::set_repeater_settings(self, settings)
+    }
+
+    async fn select_memory_channel(&self, channel: u16) -> Result<()> {
+        KenwoodCatRadio::select_memory_channel(self, channel)
+    }
+
+    async fn read_memory_channel(&self, channel: u16) -> Result<MemoryChannel> {
+        KenwoodCatRadio::read_memory_channel(self, channel)
+    }
+
+    async fn write_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
+        KenwoodCatRadio::write_memory_channel(self, channel)
+    }
+
+    fn supports_memory_channels(&self) -> bool {
+        self.model() == Some(KenwoodCatModel::Ts890S)
+    }
+
+    fn supports_repeater_settings(&self) -> bool {
+        self.model().is_some()
+    }
+
     fn supports_control(&self, id: ControlId) -> bool {
         self.profile().is_some_and(|profile| {
             (id == ControlId::RfPower && profile.power_range_watts.is_some())
@@ -640,6 +776,54 @@ fn parse_bool_payload(frame: &[u8], command: &str) -> Result<bool> {
     }
 }
 
+fn decode_ts890_memory(payload: &str, profile: &KenwoodCatProfile) -> Result<MemoryChannel> {
+    anyhow::ensure!(payload.len() >= 36, "TS-890S MA0 response is too short");
+    let channel = parse_field::<u16>(&payload[0..3], "memory channel")?;
+    let frequency_hz = parse_field::<u64>(&payload[3..14], "memory frequency")?;
+    let mode = profile.decode_mode(one_char(&payload[14..15], "memory mode")?)?;
+    let tone_mode = match &payload[16..17] {
+        "0" => ToneMode::Off,
+        "1" => ToneMode::Encode,
+        "2" | "3" => ToneMode::EncodeDecode,
+        value => bail!("invalid TS-890S memory tone mode: {value}"),
+    };
+    let tone_index = parse_field::<u8>(&payload[19..21], "memory CTCSS index")?;
+    let tx_frequency = parse_field::<u64>(&payload[21..32], "memory transmit frequency")?;
+    // MA0 P10 is FM narrow/normal, not repeater-shift direction. Split is
+    // represented independently by P11 and the TX frequency in P8.
+    let shift = RepeaterShift::Simplex;
+    let name = payload[36..].trim().to_owned();
+    Ok(MemoryChannel {
+        channel,
+        name: (!name.is_empty()).then_some(name),
+        frequency_hz,
+        transmit_frequency_hz: (tx_frequency != 0).then_some(tx_frequency),
+        mode,
+        repeater: RepeaterSettings {
+            shift,
+            offset_hz: None,
+            tone: ToneSettings {
+                mode: tone_mode,
+                index: tone_index,
+                frequency_tenths_hz: None,
+                dtcs_code: None,
+                dtcs_reverse: None,
+            },
+        },
+    })
+}
+
+fn parse_field<T>(value: &str, label: &str) -> Result<T>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    value
+        .trim()
+        .parse()
+        .map_err(|error| anyhow!("invalid {label}: {error}"))
+}
+
 fn one_char(payload: &str, context: &str) -> Result<char> {
     let mut chars = payload.chars();
     let value = chars.next().with_context(|| format!("missing {context}"))?;
@@ -684,6 +868,7 @@ fn display_command(request: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kenwood::profile::TS890S_PROFILE;
 
     #[test]
     fn constructors_select_exact_profiles_and_validate_baud() {
@@ -715,6 +900,21 @@ mod tests {
         assert!(!decode_if_status(&frame).unwrap().transmitting);
         frame[28] = b'1';
         assert!(decode_if_status(&frame).unwrap().transmitting);
+    }
+
+    #[test]
+    fn decodes_documented_ts890_memory_record() {
+        let payload = format!(
+            "{:03}{:011}{}0{}00{:02}{:011}{}000{}",
+            1, 14_500_000, '4', '1', 8, 14_500_000, '4', "LOCAL"
+        );
+        let channel = decode_ts890_memory(&payload, &TS890S_PROFILE).unwrap();
+        assert_eq!(channel.channel, 1);
+        assert_eq!(channel.frequency_hz, 14_500_000);
+        assert_eq!(channel.mode, Mode::Fm);
+        assert_eq!(channel.repeater.tone.mode, ToneMode::Encode);
+        assert_eq!(channel.repeater.tone.index, 8);
+        assert_eq!(channel.name.as_deref(), Some("LOCAL"));
     }
 
     #[test]

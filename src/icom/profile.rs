@@ -211,7 +211,7 @@ mod tests {
                     .control(ControlId::ManualNotch)
                     .unwrap()
                     .command_prefix,
-                &[0x16, 0x42]
+                &[0x16, 0x48]
             );
         }
     }

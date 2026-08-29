@@ -1,4 +1,4 @@
-//! FTDX10-specific CAT commands (framework only; hardware validation pending).
+//! FTDX10-specific CAT commands (hardware validated).
 //!
 //! Common frequency-A, mode, PTT, RF-power, split, framing, and raw-query
 //! behavior belongs to `YaesuCatRadio`. This module contains only typed helpers

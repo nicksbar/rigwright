@@ -1,5 +1,68 @@
 # Changelog
 
+## Unreleased — Structured repeater and channel controls
+
+- Add protocol-neutral typed values for CTCSS tone mode/index, repeater shift,
+  memory channels, and validated DTMF sequences.
+- Add capability-gated HAL operations for repeater settings, memory/channel
+  access, and DTMF transmission, including Android and configured-driver
+  delegation.
+- Implement the documented Yaesu FTDX10 `CN`, `CT`, and `OS` repeater
+  operations; other models remain unavailable until their command manuals are
+  individually profiled.
+- Implement Icom CI-V repeater tone state/frequency and documented memory
+  channel selection, plus Kenwood `CN`/`CT` CTCSS controls.
+- Correct Icom tone mappings to the documented `16 42/43` enable flags and
+  `1B 00/01` CTCSS/TSQL frequency records; correct the generic Icom manual
+  notch mapping to `16 48`.
+- Implement Icom `1A 00` memory record reads/writes for channel, frequency,
+  mode/data, tone/TSQL fields, and the documented 10-character memory name.
+- Add documented Icom RIT enable control across all profiled models and XIT
+  enable control for the IC-7300 and IC-7610 profiles.
+- Add protocol-neutral signed RIT offset read/write using the documented Icom
+  `21 00` packed-BCD payload.
+- Record the Icom CI-V DTMF boundary: the profiled guides expose DTMF speed
+  configuration, but no documented CI-V digit-transmit command.
+- Extend Icom VHF/UHF memory records for IC-705 and IC-9700 with band,
+  duplex, DTCS, offset, and 16-character name fields.
+- Add IC-7300/IC-7610 NR-level and manual-notch-position controls, plus the
+  IC-7610 antenna selector control.
+- Add lifecycle-managed unsolicited CI-V event subscriptions for frequency,
+  mode, PTT, receiver, and raw state notifications.
+- Add a generic Icom scope configuration API for span, fixed edges, hold,
+  reference level, sweep speed, center mode, and VBW.
+- Add transport-neutral interleaved I/Q sample blocks and PCM16/PCM24/float
+  decoding helpers; model-specific raw I/Q transport negotiation remains
+  profile-owned.
+- Add an explicit Yaesu hardware-flow-control constructor for CAT RTS-enabled
+  serial interfaces while preserving the no-flow-control default.
+- Automatically read the FTDX10 CAT RTS menu value and adapt the serial
+  adapter's RTS/CTS flow control without requiring a command-line flag.
+- Persist the detected RTS/CTS choice and retry the initial FTDX10 `MD;` mode
+  query once when the radio rejects or times out on the first request.
+- Retry the FTDX10 CAT RTS menu probe itself with RTS/CTS when the initial
+  no-flow-control probe cannot receive a response.
+- Make the modern Yaesu probe complete identity, frequency, mode, and PTT
+  checks independently before returning a combined failure summary.
+- Correct FTDX10 mode reads to include the documented Main-band receiver
+  selector (`MD0;`) instead of issuing the invalid bare `MD;` query.
+- Record the FTDX10 Enhanced CAT path as hardware-validated based on physical
+  radio testing.
+- Implement Kenwood TS-890 memory selection and structured `MA0` memory
+  record read/write support, including channel names and split frequencies.
+- Implement FTDX10 `MR` memory reads and `MT` memory writes for documented
+  frequency, mode, tone, shift, offset, and tag fields.
+
+## 0.1.13 — Directional control capabilities
+
+- Add independent `supports_control_read()` and
+  `supports_control_write()` capability queries.
+- Mark Icom VFO A/B selection as write-only because the documented CI-V
+  selector has no reliable active-VFO readback command.
+- Preserve readable and writable status for the existing Yaesu and Kenwood
+  typed controls.
+- Expose the directional capability contract through the Android adapter.
+
 ## 0.1.12 — IC-7300 telemetry meters
 
 - Add IC-7300 CI-V meter queries for signal, output power, ALC, SWR,

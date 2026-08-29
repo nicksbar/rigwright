@@ -147,8 +147,9 @@ waveform metadata.
 
 ## Validation policy
 
-IC-7300 behavior is hardware-validated. Other model profiles are based on the
-available official command references until tested against physical hardware.
+IC-7300 and FTDX10 behavior are hardware-validated for the exercised CAT
+paths. Other model profiles are based on the available official command
+references until tested against physical hardware.
 Captured protocol fixtures and parser tests are preferred over compatibility
 claims.
 

@@ -17,6 +17,13 @@ pub trait RadioTransport: Read + Write + Send {
     fn clear_input(&mut self) -> std::io::Result<()> {
         Ok(())
     }
+
+    /// Select RTS/CTS hardware flow control when the underlying adapter
+    /// supports it. Transports without serial flow-control configuration may
+    /// leave this as a no-op.
+    fn set_hardware_flow_control(&mut self, _enabled: bool) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 pub(crate) struct SerialPortTransport(pub(crate) Box<dyn SerialPort>);
@@ -47,6 +54,16 @@ impl RadioTransport for SerialPortTransport {
             .clear(ClearBuffer::Input)
             .map_err(std::io::Error::other)
     }
+
+    fn set_hardware_flow_control(&mut self, enabled: bool) -> std::io::Result<()> {
+        self.0
+            .set_flow_control(if enabled {
+                serialport::FlowControl::Hardware
+            } else {
+                serialport::FlowControl::None
+            })
+            .map_err(std::io::Error::other)
+    }
 }
 
 impl<T> RadioTransport for T
@@ -59,5 +76,17 @@ where
 
     fn clear_input(&mut self) -> std::io::Result<()> {
         SerialPort::clear(self, ClearBuffer::Input).map_err(std::io::Error::other)
+    }
+
+    fn set_hardware_flow_control(&mut self, enabled: bool) -> std::io::Result<()> {
+        SerialPort::set_flow_control(
+            self,
+            if enabled {
+                serialport::FlowControl::Hardware
+            } else {
+                serialport::FlowControl::None
+            },
+        )
+        .map_err(std::io::Error::other)
     }
 }

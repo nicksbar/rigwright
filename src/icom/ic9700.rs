@@ -34,6 +34,12 @@ const FREQUENCY_RANGES: &[(u64, u64)] = &[
     (1_240_000_000, 1_300_000_000),
 ];
 const CONTROLS: &[ControlSpec] = &[
+    // `0x21 0x01`: RIT enable/disable.
+    ControlSpec {
+        id: ControlId::Rit,
+        command_prefix: &[0x21, 0x01],
+        encoding: ControlEncoding::Bool,
+    },
     // `0x14 0x0A`: RF transmit power, packed decimal level 0..255.
     // `0x14 0x01`: AF/audio gain, packed decimal level 0..255.
     // `0x14 0x02`: RF gain, packed decimal level 0..255.
@@ -107,7 +113,7 @@ const CONTROLS: &[ControlSpec] = &[
     },
     ControlSpec {
         id: ControlId::ManualNotch,
-        command_prefix: &[0x16, 0x42],
+        command_prefix: &[0x16, 0x48],
         encoding: ControlEncoding::Bool,
     },
     ControlSpec {
