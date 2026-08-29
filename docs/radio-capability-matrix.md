@@ -134,7 +134,7 @@ voltage. Kenwood RM selector meanings differ by model; TS-590SG and TS-2000
 use one SWR selector while TS-890S uses another, so the profile owns the
 selector and native meter maximum.
 
-## Manual surfaces not yet typed into the HAL
+## Manual surfaces not yet fully typed into the HAL
 
 These are intentionally tracked so they do not disappear from the roadmap.
 They are documented radio capabilities, but currently have no safe common
@@ -150,7 +150,9 @@ They are documented radio capabilities, but currently have no safe common
 | Icom NR level and notch position | Model manuals | Enable controls exist; level/position not typed | Not used | Value encoding and model ranges differ |
 | Kenwood AF/RF gain, squelch, AGC, NB, NR | PC command references | Not typed | Not used | TS-590SG, TS-890S, and TS-2000 command families differ |
 | Kenwood ALC/compression/current/voltage/temperature | PC command references | Not typed except signal/SWR | Not displayed | RM selector, range, and response width differ by model |
-| Memory/channel operations | Vendor manuals | Not typed | Not used | Requires a larger stateful API than a scalar control |
+| Memory/channel operations | Vendor manuals | Typed capability API; no vendor implementation yet | Not used | Requires model-specific frame layouts and stateful validation |
+| Repeater tone/shift | Yaesu FTDX10 CAT manual | FTDX10 `CN`/`CT`/`OS` implemented; other models gated off | Not used | Tone indexes and offset fields differ across families |
+| DTMF transmission | Vendor manuals | Validated HAL type/API; no vendor implementation yet | Not used | Command availability and timing differ by model |
 | Antenna selection | Vendor manuals | Not typed | Not used | Main/sub/VFO and tuner routing differ by model |
 | Band-stack and quick-memory operations | Vendor manuals | Not typed | Not used | Requires model-specific state and persistence semantics |
 | Scope configuration and I/Q streaming | Icom manuals, some Yaesu manuals | Icom scope profile exists; I/Q remains metadata-only | Scope use is partial; I/Q not consumed | Waveform transport and receiver geometry are model-specific |

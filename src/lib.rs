@@ -17,8 +17,8 @@ pub mod yaesu;
 pub use android::RadioAndroid;
 pub use hal::{NullRadio, Radio, RadioCapabilities, RadioStatus};
 pub use hal_types::{
-    normalize_meter_level, BaseMode, ControlId, ControlValue, MeterId, Mode, OperatingMode,
-    TunerStatus,
+    normalize_meter_level, BaseMode, ControlId, ControlValue, DtmfSequence, MemoryChannel, MeterId,
+    Mode, OperatingMode, RepeaterSettings, RepeaterShift, ToneMode, ToneSettings, TunerStatus,
 };
 pub use icom::civ_radio::{
     enumerate_serial_port_descriptors, enumerate_serial_ports, IcomCiVRadio, IcomReceiver, IcomVfo,

@@ -8,7 +8,10 @@ use std::{
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 
-use crate::hal::{Mode, NullRadio, Radio, RadioCapabilities, TunerStatus};
+use crate::hal::{
+    DtmfSequence, MemoryChannel, Mode, NullRadio, Radio, RadioCapabilities, RepeaterSettings,
+    TunerStatus,
+};
 use crate::{
     dxlab::DxLabCommanderRadio,
     icom::civ_radio::IcomCiVRadio,
@@ -417,6 +420,60 @@ impl Radio for ConfiguredRadio {
             Self::Kenwood(r) => r.set_control(id, value).await,
             Self::LegacyYaesu(r) => r.set_control(id, value).await,
             _ => bail!("control {id:?} is not available for this driver"),
+        }
+    }
+    async fn get_repeater_settings(&self) -> Result<RepeaterSettings> {
+        match self {
+            Self::Icom(r) => r.get_repeater_settings().await,
+            Self::Yaesu(r) => r.get_repeater_settings(),
+            Self::Kenwood(r) => r.get_repeater_settings().await,
+            Self::LegacyYaesu(r) => r.get_repeater_settings().await,
+            _ => bail!("repeater settings are not available for this driver"),
+        }
+    }
+    async fn set_repeater_settings(&self, settings: RepeaterSettings) -> Result<()> {
+        match self {
+            Self::Icom(r) => r.set_repeater_settings(settings).await,
+            Self::Yaesu(r) => r.set_repeater_settings(settings),
+            Self::Kenwood(r) => r.set_repeater_settings(settings).await,
+            Self::LegacyYaesu(r) => r.set_repeater_settings(settings).await,
+            _ => bail!("repeater settings are not available for this driver"),
+        }
+    }
+    async fn select_memory_channel(&self, channel: u16) -> Result<()> {
+        match self {
+            Self::Icom(r) => r.select_memory_channel(channel).await,
+            Self::Yaesu(r) => r.select_memory_channel(channel).await,
+            Self::Kenwood(r) => r.select_memory_channel(channel).await,
+            Self::LegacyYaesu(r) => r.select_memory_channel(channel).await,
+            _ => bail!("memory channels are not available for this driver"),
+        }
+    }
+    async fn read_memory_channel(&self, channel: u16) -> Result<MemoryChannel> {
+        match self {
+            Self::Icom(r) => r.read_memory_channel(channel).await,
+            Self::Yaesu(r) => r.read_memory_channel(channel).await,
+            Self::Kenwood(r) => r.read_memory_channel(channel).await,
+            Self::LegacyYaesu(r) => r.read_memory_channel(channel).await,
+            _ => bail!("memory channels are not available for this driver"),
+        }
+    }
+    async fn write_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
+        match self {
+            Self::Icom(r) => r.write_memory_channel(channel).await,
+            Self::Yaesu(r) => r.write_memory_channel(channel).await,
+            Self::Kenwood(r) => r.write_memory_channel(channel).await,
+            Self::LegacyYaesu(r) => r.write_memory_channel(channel).await,
+            _ => bail!("memory channels are not available for this driver"),
+        }
+    }
+    async fn send_dtmf(&self, sequence: DtmfSequence) -> Result<()> {
+        match self {
+            Self::Icom(r) => r.send_dtmf(sequence).await,
+            Self::Yaesu(r) => r.send_dtmf(sequence).await,
+            Self::Kenwood(r) => r.send_dtmf(sequence).await,
+            Self::LegacyYaesu(r) => r.send_dtmf(sequence).await,
+            _ => bail!("DTMF is not available for this driver"),
         }
     }
     async fn get_meter(&self, id: crate::MeterId) -> Result<Option<u8>> {

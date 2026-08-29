@@ -34,6 +34,8 @@ pub struct YaesuCatProfile {
     pub power_range_watts: Option<(u16, u16)>,
     /// Whether the `ST` split command is implemented by this profile.
     pub supports_split: bool,
+    /// The model manual documents `CN`, `CT`, and `OS` CAT operations.
+    pub supports_repeater_settings: bool,
 }
 
 impl YaesuCatProfile {
@@ -144,6 +146,7 @@ pub const FT710_PROFILE: YaesuCatProfile = YaesuCatProfile {
     modes: MODERN_HF_MODES,
     power_range_watts: Some((5, 100)),
     supports_split: true,
+    supports_repeater_settings: false,
 };
 
 pub const FTDX10_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -154,6 +157,7 @@ pub const FTDX10_PROFILE: YaesuCatProfile = YaesuCatProfile {
     modes: MODERN_HF_MODES,
     power_range_watts: Some((5, 100)),
     supports_split: true,
+    supports_repeater_settings: true,
 };
 
 pub const FTDX101D_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -164,6 +168,7 @@ pub const FTDX101D_PROFILE: YaesuCatProfile = YaesuCatProfile {
     modes: MODERN_HF_MODES,
     power_range_watts: Some((5, 100)),
     supports_split: true,
+    supports_repeater_settings: false,
 };
 
 pub const FTDX101MP_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -174,6 +179,7 @@ pub const FTDX101MP_PROFILE: YaesuCatProfile = YaesuCatProfile {
     modes: MODERN_HF_MODES,
     power_range_watts: Some((5, 200)),
     supports_split: true,
+    supports_repeater_settings: false,
 };
 
 pub const FT991A_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -184,6 +190,7 @@ pub const FT991A_PROFILE: YaesuCatProfile = YaesuCatProfile {
     modes: FT991A_MODES,
     power_range_watts: Some((5, 100)),
     supports_split: false,
+    supports_repeater_settings: false,
 };
 
 pub fn profile_for_model(model: YaesuCatModel) -> &'static YaesuCatProfile {

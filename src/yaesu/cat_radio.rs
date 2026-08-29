@@ -13,7 +13,9 @@ use serialport::{DataBits, FlowControl, Parity, StopBits};
 
 use crate::{
     hal::{Mode, Radio, RadioCapabilities},
-    hal_types::{ControlId, ControlValue, MeterId},
+    hal_types::{
+        ControlId, ControlValue, MeterId, RepeaterSettings, RepeaterShift, ToneMode, ToneSettings,
+    },
     models::YaesuCatModel,
     protocol::ascii_cat,
     transport::{RadioTransport, SerialPortTransport},
@@ -221,6 +223,60 @@ impl YaesuCatRadio {
             bail!("split control is not profiled for this Yaesu model");
         }
         self.send_set("ST", if enabled { "1" } else { "0" })
+    }
+
+    /// Read the FTDX10-family documented repeater controls.  The CAT manual
+    /// exposes tone as an index and offset as a direction; those native forms
+    /// are preserved in the protocol-neutral value instead of inventing Hz.
+    pub fn get_repeater_settings(&self) -> Result<RepeaterSettings> {
+        if !self.selected_profile()?.supports_repeater_settings {
+            bail!("repeater settings are not documented for this Yaesu model");
+        }
+        let tone_index = parse_payload(&self.query("CN", None, 3)?, "CN")?
+            .parse::<u8>()
+            .context("invalid Yaesu CN tone index")?;
+        let tone_mode = match parse_payload(&self.query("CT", None, 1)?, "CT")? {
+            "0" => ToneMode::Off,
+            "1" => ToneMode::EncodeDecode,
+            "2" => ToneMode::Encode,
+            value => bail!("invalid Yaesu CT tone mode: {value}"),
+        };
+        let shift = match parse_payload(&self.query("OS", None, 1)?, "OS")? {
+            "0" => RepeaterShift::Simplex,
+            "1" => RepeaterShift::Plus,
+            "2" => RepeaterShift::Minus,
+            value => bail!("invalid Yaesu OS repeater shift: {value}"),
+        };
+        Ok(RepeaterSettings {
+            shift,
+            offset_hz: None,
+            tone: ToneSettings {
+                mode: tone_mode,
+                index: tone_index,
+            },
+        })
+    }
+
+    pub fn set_repeater_settings(&self, settings: RepeaterSettings) -> Result<()> {
+        if !self.selected_profile()?.supports_repeater_settings {
+            bail!("repeater settings are not documented for this Yaesu model");
+        }
+        if settings.tone.index > 49 {
+            bail!("Yaesu FTDX10 tone index must be 0..=49");
+        }
+        let tone_mode = match settings.tone.mode {
+            ToneMode::Off => "0",
+            ToneMode::EncodeDecode => "1",
+            ToneMode::Encode => "2",
+        };
+        let shift = match settings.shift {
+            RepeaterShift::Simplex => "0",
+            RepeaterShift::Plus => "1",
+            RepeaterShift::Minus => "2",
+        };
+        self.send_set("CN", &format!("{:03}", settings.tone.index))?;
+        self.send_set("CT", tone_mode)?;
+        self.send_set("OS", shift)
     }
 
     fn selected_profile(&self) -> Result<&'static YaesuCatProfile> {
@@ -497,6 +553,19 @@ impl Radio for YaesuCatRadio {
             }
             (_, value) => bail!("unsupported Yaesu CAT control/value: {id:?} = {value:?}"),
         }
+    }
+
+    async fn get_repeater_settings(&self) -> Result<RepeaterSettings> {
+        YaesuCatRadio::get_repeater_settings(self)
+    }
+
+    async fn set_repeater_settings(&self, settings: RepeaterSettings) -> Result<()> {
+        YaesuCatRadio::set_repeater_settings(self, settings)
+    }
+
+    fn supports_repeater_settings(&self) -> bool {
+        self.profile()
+            .is_some_and(|profile| profile.supports_repeater_settings)
     }
 
     fn supports_meter(&self, id: MeterId) -> bool {

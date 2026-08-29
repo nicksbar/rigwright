@@ -11,7 +11,8 @@ use crate::{
     icom::{CiVTransport, IcomCiVRadio},
     kenwood::KenwoodCatRadio,
     yaesu::{LegacyYaesuRadio, YaesuCatRadio},
-    ControlId, ControlValue, MeterId, Mode, Radio, RadioCapabilities, RadioTransport, TunerStatus,
+    ControlId, ControlValue, DtmfSequence, MemoryChannel, MeterId, Mode, Radio, RadioCapabilities,
+    RadioTransport, RepeaterSettings, TunerStatus,
 };
 
 /// Android radio entry point.
@@ -162,6 +163,34 @@ impl Radio for RadioAndroid {
 
     async fn set_control(&self, id: ControlId, value: ControlValue) -> Result<()> {
         self.radio().set_control(id, value).await
+    }
+
+    async fn get_repeater_settings(&self) -> Result<RepeaterSettings> {
+        self.radio().get_repeater_settings().await
+    }
+    async fn set_repeater_settings(&self, settings: RepeaterSettings) -> Result<()> {
+        self.radio().set_repeater_settings(settings).await
+    }
+    async fn select_memory_channel(&self, channel: u16) -> Result<()> {
+        self.radio().select_memory_channel(channel).await
+    }
+    async fn read_memory_channel(&self, channel: u16) -> Result<MemoryChannel> {
+        self.radio().read_memory_channel(channel).await
+    }
+    async fn write_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
+        self.radio().write_memory_channel(channel).await
+    }
+    async fn send_dtmf(&self, sequence: DtmfSequence) -> Result<()> {
+        self.radio().send_dtmf(sequence).await
+    }
+    fn supports_repeater_settings(&self) -> bool {
+        self.radio().supports_repeater_settings()
+    }
+    fn supports_memory_channels(&self) -> bool {
+        self.radio().supports_memory_channels()
+    }
+    fn supports_send_dtmf(&self) -> bool {
+        self.radio().supports_send_dtmf()
     }
 
     async fn get_meter(&self, id: MeterId) -> Result<Option<u8>> {

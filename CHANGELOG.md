@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — Structured repeater and channel controls
+
+- Add protocol-neutral typed values for CTCSS tone mode/index, repeater shift,
+  memory channels, and validated DTMF sequences.
+- Add capability-gated HAL operations for repeater settings, memory/channel
+  access, and DTMF transmission, including Android and configured-driver
+  delegation.
+- Implement the documented Yaesu FTDX10 `CN`, `CT`, and `OS` repeater
+  operations; other models remain unavailable until their command manuals are
+  individually profiled.
+
 ## 0.1.13 — Directional control capabilities
 
 - Add independent `supports_control_read()` and

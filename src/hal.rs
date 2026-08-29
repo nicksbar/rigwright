@@ -1,7 +1,8 @@
 //! Protocol-neutral radio hardware abstraction layer.
 
 pub use crate::hal_types::{
-    BaseMode, ControlId, ControlValue, MeterId, Mode, OperatingMode, TunerStatus,
+    BaseMode, ControlId, ControlValue, DtmfSequence, MemoryChannel, MeterId, Mode, OperatingMode,
+    RepeaterSettings, RepeaterShift, ToneSettings, TunerStatus,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -54,6 +55,33 @@ pub trait Radio: Send + Sync {
     }
     async fn set_control(&self, _id: ControlId, _value: ControlValue) -> Result<()> {
         Ok(())
+    }
+    async fn get_repeater_settings(&self) -> Result<RepeaterSettings> {
+        anyhow::bail!("repeater tone/offset control is not supported by this radio")
+    }
+    async fn set_repeater_settings(&self, _settings: RepeaterSettings) -> Result<()> {
+        anyhow::bail!("repeater tone/offset control is not supported by this radio")
+    }
+    async fn select_memory_channel(&self, _channel: u16) -> Result<()> {
+        anyhow::bail!("memory/channel control is not supported by this radio")
+    }
+    async fn read_memory_channel(&self, _channel: u16) -> Result<MemoryChannel> {
+        anyhow::bail!("memory/channel read is not supported by this radio")
+    }
+    async fn write_memory_channel(&self, _channel: MemoryChannel) -> Result<()> {
+        anyhow::bail!("memory/channel write is not supported by this radio")
+    }
+    async fn send_dtmf(&self, _sequence: DtmfSequence) -> Result<()> {
+        anyhow::bail!("DTMF control is not supported by this radio")
+    }
+    fn supports_repeater_settings(&self) -> bool {
+        false
+    }
+    fn supports_memory_channels(&self) -> bool {
+        false
+    }
+    fn supports_send_dtmf(&self) -> bool {
+        false
     }
     /// Read a normalized meter level on the HAL's 0..=255 scale.
     async fn get_meter(&self, _id: MeterId) -> Result<Option<u8>> {

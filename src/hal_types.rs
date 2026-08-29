@@ -163,3 +163,91 @@ pub enum ControlValue {
     Text(String),
     Raw(Vec<u8>),
 }
+
+#[cfg(test)]
+mod control_value_tests {
+    use super::DtmfSequence;
+
+    #[test]
+    fn dtmf_sequences_are_strictly_validated() {
+        assert_eq!(
+            DtmfSequence::new("1800DIAL#").unwrap_err().to_string(),
+            "DTMF sequence contains an invalid digit"
+        );
+        assert!(DtmfSequence::new("1800DIAL").is_err());
+        assert_eq!(DtmfSequence::new("*21#AB09").unwrap().as_str(), "*21#AB09");
+        assert!(DtmfSequence::new("").is_err());
+    }
+}
+
+/// Repeater tone operation.  `EncodeDecode` is the common repeater mode
+/// exposed by radios which call it CTCSS ENC/DEC.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToneMode {
+    #[default]
+    Off,
+    Encode,
+    EncodeDecode,
+}
+
+/// A documented analog tone setting.  The index is retained because several
+/// CAT protocols identify tones by an index rather than by frequency and do
+/// not expose a frequency in their readback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ToneSettings {
+    pub mode: ToneMode,
+    pub index: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RepeaterShift {
+    #[default]
+    Simplex,
+    Plus,
+    Minus,
+}
+
+/// Repeater-related state.  `offset_hz` is optional because some radios only
+/// document a plus/minus shift selector through CAT.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RepeaterSettings {
+    pub shift: RepeaterShift,
+    pub offset_hz: Option<u32>,
+    pub tone: ToneSettings,
+}
+
+/// A validated DTMF sequence.  Keeping this typed prevents accidental CAT
+/// command injection and gives every driver the same accepted digit set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DtmfSequence(String);
+
+impl DtmfSequence {
+    pub fn new(value: impl Into<String>) -> anyhow::Result<Self> {
+        let value = value.into();
+        if value.is_empty() || value.len() > 32 {
+            anyhow::bail!("DTMF sequence must contain 1 to 32 digits")
+        }
+        if !value
+            .bytes()
+            .all(|digit| matches!(digit, b'0'..=b'9' | b'A'..=b'D' | b'*' | b'#'))
+        {
+            anyhow::bail!("DTMF sequence contains an invalid digit")
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A radio channel/memory entry.  Drivers may reject fields their model does
+/// not document instead of silently dropping them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryChannel {
+    pub channel: u16,
+    pub name: Option<String>,
+    pub frequency_hz: u64,
+    pub mode: Mode,
+    pub repeater: RepeaterSettings,
+}
