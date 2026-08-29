@@ -84,6 +84,8 @@ pub enum ControlId {
     Notch,
     /// Manual-notch enable/disable; position is a separate model-specific setting.
     ManualNotch,
+    /// Manual-notch center/position, normalized to 0..=255 where supported.
+    ManualNotchPosition,
     DataMode,
     Filter,
     Agc,
@@ -95,6 +97,8 @@ pub enum ControlId {
     Vfo,
     MainSub,
     ExternalPreamp,
+    /// Model-specific antenna connector selection.
+    Antenna,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -188,6 +192,8 @@ pub enum ToneMode {
     Off,
     Encode,
     EncodeDecode,
+    /// Digital tone code squelch (DTCS), used by Icom VHF/UHF memory records.
+    Dtcs,
 }
 
 /// A documented analog tone setting.  The index is retained because several
@@ -197,6 +203,14 @@ pub enum ToneMode {
 pub struct ToneSettings {
     pub mode: ToneMode,
     pub index: u8,
+    /// Icom CI-V represents tone frequencies in tenths of a hertz (for
+    /// example 885 means 88.5 Hz). Other protocols may leave this unset and
+    /// use their documented tone index instead.
+    pub frequency_tenths_hz: Option<u32>,
+    /// Optional Icom DTCS code (000..=999).
+    pub dtcs_code: Option<u16>,
+    /// DTCS polarity: false normal, true reverse.
+    pub dtcs_reverse: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -248,6 +262,7 @@ pub struct MemoryChannel {
     pub channel: u16,
     pub name: Option<String>,
     pub frequency_hz: u64,
+    pub transmit_frequency_hz: Option<u64>,
     pub mode: Mode,
     pub repeater: RepeaterSettings,
 }

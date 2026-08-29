@@ -6,6 +6,17 @@ use anyhow::Result;
 
 const FREQUENCY_RANGES: &[(u64, u64)] = &[(30_000, 74_800_000)];
 const CONTROLS: &[ControlSpec] = &[
+    // `0x21 0x01`: RIT enable/disable; `0x21 0x02`: XIT enable/disable.
+    ControlSpec {
+        id: ControlId::Rit,
+        command_prefix: &[0x21, 0x01],
+        encoding: ControlEncoding::Bool,
+    },
+    ControlSpec {
+        id: ControlId::Xit,
+        command_prefix: &[0x21, 0x02],
+        encoding: ControlEncoding::Bool,
+    },
     // `0x14 0x01`: AF/audio gain, packed decimal level 0..255.
     ControlSpec {
         id: ControlId::AfGain,
@@ -54,6 +65,11 @@ const CONTROLS: &[ControlSpec] = &[
         command_prefix: &[0x16, 0x40],
         encoding: ControlEncoding::Bool,
     },
+    ControlSpec {
+        id: ControlId::NoiseReductionLevel,
+        command_prefix: &[0x14, 0x06],
+        encoding: ControlEncoding::Level255Bcd,
+    },
     // `0x1A 0x07`: IP Plus function setting.
     ControlSpec {
         id: ControlId::IpPlus,
@@ -68,8 +84,13 @@ const CONTROLS: &[ControlSpec] = &[
     },
     ControlSpec {
         id: ControlId::ManualNotch,
-        command_prefix: &[0x16, 0x42],
+        command_prefix: &[0x16, 0x48],
         encoding: ControlEncoding::Bool,
+    },
+    ControlSpec {
+        id: ControlId::ManualNotchPosition,
+        command_prefix: &[0x14, 0x0D],
+        encoding: ControlEncoding::Level255Bcd,
     },
     ControlSpec {
         id: ControlId::Tuner,

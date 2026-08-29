@@ -27,6 +27,17 @@ pub const DOCUMENTED_FEATURES: &[&str] = &[
 
 const FREQUENCY_RANGES: &[(u64, u64)] = &[(30_000, 60_000_000)];
 const CONTROLS: &[ControlSpec] = &[
+    // `0x21 0x01`: RIT enable/disable; `0x21 0x02`: XIT enable/disable.
+    ControlSpec {
+        id: ControlId::Rit,
+        command_prefix: &[0x21, 0x01],
+        encoding: ControlEncoding::Bool,
+    },
+    ControlSpec {
+        id: ControlId::Xit,
+        command_prefix: &[0x21, 0x02],
+        encoding: ControlEncoding::Bool,
+    },
     // `0x14 0x0A`: RF transmit power, packed decimal level 0..255.
     // `0x14 0x01`: AF/audio gain, packed decimal level 0..255.
     // `0x14 0x02`: RF gain, packed decimal level 0..255.
@@ -78,6 +89,11 @@ const CONTROLS: &[ControlSpec] = &[
         encoding: ControlEncoding::Bool,
     },
     ControlSpec {
+        id: ControlId::NoiseReductionLevel,
+        command_prefix: &[0x14, 0x06],
+        encoding: ControlEncoding::Level255Bcd,
+    },
+    ControlSpec {
         id: ControlId::IpPlus,
         command_prefix: &[0x1A, 0x07],
         encoding: ControlEncoding::Bool,
@@ -89,8 +105,18 @@ const CONTROLS: &[ControlSpec] = &[
     },
     ControlSpec {
         id: ControlId::ManualNotch,
-        command_prefix: &[0x16, 0x42],
+        command_prefix: &[0x16, 0x48],
         encoding: ControlEncoding::Bool,
+    },
+    ControlSpec {
+        id: ControlId::ManualNotchPosition,
+        command_prefix: &[0x14, 0x0D],
+        encoding: ControlEncoding::Level255Bcd,
+    },
+    ControlSpec {
+        id: ControlId::Antenna,
+        command_prefix: &[0x12],
+        encoding: ControlEncoding::U8,
     },
     ControlSpec {
         id: ControlId::Tuner,

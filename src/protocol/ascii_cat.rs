@@ -1,10 +1,17 @@
 use anyhow::{bail, Result};
 
-/// Builds the semicolon-terminated two-letter CAT frames used by Yaesu and
-/// Kenwood radios. Vendor modules define the supported commands and payloads.
+/// Builds semicolon-terminated CAT frames used by Yaesu and Kenwood. A small
+/// set of Kenwood commands has a documented numeric suffix, such as `MA0`.
 pub fn encode(command: &str, parameter: Option<&str>) -> Result<Vec<u8>> {
-    if command.len() != 2 || !command.bytes().all(|byte| byte.is_ascii_alphabetic()) {
-        bail!("CAT command must contain exactly two ASCII letters");
+    let valid_command = match command.as_bytes() {
+        [first, second] => first.is_ascii_alphabetic() && second.is_ascii_alphabetic(),
+        [first, second, suffix] => {
+            first.is_ascii_alphabetic() && second.is_ascii_alphabetic() && suffix.is_ascii_digit()
+        }
+        _ => false,
+    };
+    if !valid_command {
+        bail!("CAT command must contain two ASCII letters, optionally followed by a digit");
     }
     let parameter = parameter.unwrap_or_default();
     if !parameter.is_ascii() || parameter.contains(';') {
@@ -37,6 +44,7 @@ mod tests {
     #[test]
     fn encodes_canonical_cat_frame() {
         assert_eq!(encode("fa", Some("014250000")).unwrap(), b"FA014250000;");
+        assert_eq!(encode("ma0", Some("001")).unwrap(), b"MA0001;");
     }
 
     #[test]

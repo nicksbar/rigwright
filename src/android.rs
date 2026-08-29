@@ -121,6 +121,10 @@ impl RadioAndroid {
 
 #[async_trait]
 impl Radio for RadioAndroid {
+    fn event_router(&self) -> Option<crate::RadioEventRouter> {
+        self.radio().event_router()
+    }
+
     async fn get_frequency_hz(&self) -> Result<u64> {
         self.radio().get_frequency_hz().await
     }
@@ -170,6 +174,12 @@ impl Radio for RadioAndroid {
     }
     async fn set_repeater_settings(&self, settings: RepeaterSettings) -> Result<()> {
         self.radio().set_repeater_settings(settings).await
+    }
+    async fn get_rit_offset_hz(&self) -> Result<i32> {
+        self.radio().get_rit_offset_hz().await
+    }
+    async fn set_rit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        self.radio().set_rit_offset_hz(offset_hz).await
     }
     async fn select_memory_channel(&self, channel: u16) -> Result<()> {
         self.radio().select_memory_channel(channel).await

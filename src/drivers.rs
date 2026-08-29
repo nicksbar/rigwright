@@ -299,6 +299,13 @@ impl ConfiguredRadio {
 
 #[async_trait]
 impl Radio for ConfiguredRadio {
+    fn event_router(&self) -> Option<crate::RadioEventRouter> {
+        match self {
+            Self::Icom(r) => r.event_router(),
+            _ => None,
+        }
+    }
+
     async fn get_frequency_hz(&self) -> Result<u64> {
         match self {
             Self::Icom(r) => r.get_frequency_hz().await,
@@ -424,45 +431,57 @@ impl Radio for ConfiguredRadio {
     }
     async fn get_repeater_settings(&self) -> Result<RepeaterSettings> {
         match self {
-            Self::Icom(r) => r.get_repeater_settings().await,
+            Self::Icom(r) => r.get_repeater_settings(),
             Self::Yaesu(r) => r.get_repeater_settings(),
-            Self::Kenwood(r) => r.get_repeater_settings().await,
+            Self::Kenwood(r) => r.get_repeater_settings(),
             Self::LegacyYaesu(r) => r.get_repeater_settings().await,
             _ => bail!("repeater settings are not available for this driver"),
         }
     }
     async fn set_repeater_settings(&self, settings: RepeaterSettings) -> Result<()> {
         match self {
-            Self::Icom(r) => r.set_repeater_settings(settings).await,
+            Self::Icom(r) => r.set_repeater_settings(settings),
             Self::Yaesu(r) => r.set_repeater_settings(settings),
-            Self::Kenwood(r) => r.set_repeater_settings(settings).await,
+            Self::Kenwood(r) => r.set_repeater_settings(settings),
             Self::LegacyYaesu(r) => r.set_repeater_settings(settings).await,
             _ => bail!("repeater settings are not available for this driver"),
         }
     }
+    async fn get_rit_offset_hz(&self) -> Result<i32> {
+        match self {
+            Self::Icom(r) => r.get_rit_offset_hz(),
+            _ => bail!("RIT offset control is not available for this driver"),
+        }
+    }
+    async fn set_rit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        match self {
+            Self::Icom(r) => r.set_rit_offset_hz(offset_hz),
+            _ => bail!("RIT offset control is not available for this driver"),
+        }
+    }
     async fn select_memory_channel(&self, channel: u16) -> Result<()> {
         match self {
-            Self::Icom(r) => r.select_memory_channel(channel).await,
-            Self::Yaesu(r) => r.select_memory_channel(channel).await,
-            Self::Kenwood(r) => r.select_memory_channel(channel).await,
+            Self::Icom(r) => r.select_memory_channel(channel),
+            Self::Yaesu(r) => r.select_memory_channel(channel),
+            Self::Kenwood(r) => r.select_memory_channel(channel),
             Self::LegacyYaesu(r) => r.select_memory_channel(channel).await,
             _ => bail!("memory channels are not available for this driver"),
         }
     }
     async fn read_memory_channel(&self, channel: u16) -> Result<MemoryChannel> {
         match self {
-            Self::Icom(r) => r.read_memory_channel(channel).await,
-            Self::Yaesu(r) => r.read_memory_channel(channel).await,
-            Self::Kenwood(r) => r.read_memory_channel(channel).await,
+            Self::Icom(r) => r.read_memory_channel(channel),
+            Self::Yaesu(r) => r.read_memory_channel(channel),
+            Self::Kenwood(r) => r.read_memory_channel(channel),
             Self::LegacyYaesu(r) => r.read_memory_channel(channel).await,
             _ => bail!("memory channels are not available for this driver"),
         }
     }
     async fn write_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
         match self {
-            Self::Icom(r) => r.write_memory_channel(channel).await,
-            Self::Yaesu(r) => r.write_memory_channel(channel).await,
-            Self::Kenwood(r) => r.write_memory_channel(channel).await,
+            Self::Icom(r) => r.write_memory_channel(channel),
+            Self::Yaesu(r) => r.write_memory_channel(channel),
+            Self::Kenwood(r) => r.write_memory_channel(channel),
             Self::LegacyYaesu(r) => r.write_memory_channel(channel).await,
             _ => bail!("memory channels are not available for this driver"),
         }

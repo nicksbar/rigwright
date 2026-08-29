@@ -1,5 +1,6 @@
 //! Protocol-neutral radio hardware abstraction layer.
 
+pub use crate::events::RadioEventRouter;
 pub use crate::hal_types::{
     BaseMode, ControlId, ControlValue, DtmfSequence, MemoryChannel, MeterId, Mode, OperatingMode,
     RepeaterSettings, RepeaterShift, ToneSettings, TunerStatus,
@@ -33,6 +34,12 @@ pub struct RadioCapabilities {
 /// I/O internally; applications should avoid calling them while holding UI or
 /// other latency-sensitive locks.
 pub trait Radio: Send + Sync {
+    /// Shared unsolicited-event source, when the backend has a persistent
+    /// protocol event router. Consumers should retain the returned router or
+    /// subscription for the lifetime of the connection.
+    fn event_router(&self) -> Option<RadioEventRouter> {
+        None
+    }
     async fn get_frequency_hz(&self) -> Result<u64>;
     async fn set_frequency_hz(&self, hz: u64) -> Result<()>;
     async fn get_mode(&self) -> Result<Mode>;
@@ -61,6 +68,12 @@ pub trait Radio: Send + Sync {
     }
     async fn set_repeater_settings(&self, _settings: RepeaterSettings) -> Result<()> {
         anyhow::bail!("repeater tone/offset control is not supported by this radio")
+    }
+    async fn get_rit_offset_hz(&self) -> Result<i32> {
+        anyhow::bail!("RIT offset control is not supported by this radio")
+    }
+    async fn set_rit_offset_hz(&self, _offset_hz: i32) -> Result<()> {
+        anyhow::bail!("RIT offset control is not supported by this radio")
     }
     async fn select_memory_channel(&self, _channel: u16) -> Result<()> {
         anyhow::bail!("memory/channel control is not supported by this radio")

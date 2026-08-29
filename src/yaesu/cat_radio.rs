@@ -14,7 +14,8 @@ use serialport::{DataBits, FlowControl, Parity, StopBits};
 use crate::{
     hal::{Mode, Radio, RadioCapabilities},
     hal_types::{
-        ControlId, ControlValue, MeterId, RepeaterSettings, RepeaterShift, ToneMode, ToneSettings,
+        ControlId, ControlValue, MemoryChannel, MeterId, RepeaterSettings, RepeaterShift, ToneMode,
+        ToneSettings,
     },
     models::YaesuCatModel,
     protocol::ascii_cat,
@@ -54,6 +55,8 @@ pub struct YaesuCatRadio {
     model: Option<YaesuCatModel>,
     port: String,
     baud_rate: u32,
+    hardware_flow_control: bool,
+    cat_rts_detected: Arc<Mutex<bool>>,
     transport: Arc<Mutex<TransportState>>,
 }
 
@@ -64,6 +67,7 @@ impl std::fmt::Debug for YaesuCatRadio {
             .field("model", &self.model)
             .field("port", &self.port)
             .field("baud_rate", &self.baud_rate)
+            .field("hardware_flow_control", &self.hardware_flow_control)
             .finish_non_exhaustive()
     }
 }
@@ -94,6 +98,20 @@ impl YaesuCatRadio {
         Ok(Self::new_internal(Some(model), port, baud_rate))
     }
 
+    /// Construct a model-backed radio for interfaces where the radio's CAT
+    /// RTS setting is enabled and the USB/serial bridge requires RTS/CTS
+    /// hardware flow control. The normal constructor remains no-flow-control
+    /// because that is the FTDX10 factory/default configuration.
+    pub fn new_for_model_with_hardware_flow_control(
+        model: YaesuCatModel,
+        port: impl Into<String>,
+        baud_rate: u32,
+    ) -> Result<Self> {
+        let mut radio = Self::new_for_model(model, port, baud_rate)?;
+        radio.hardware_flow_control = true;
+        Ok(radio)
+    }
+
     /// Construct a modern Yaesu CAT radio over an externally configured byte
     /// transport, such as Android USB Host or Bluetooth.
     pub fn with_external_transport<T>(
@@ -113,6 +131,8 @@ impl YaesuCatRadio {
                 external: Some(Box::new(transport)),
                 pending: Vec::new(),
             })),
+            hardware_flow_control: false,
+            cat_rts_detected: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -121,6 +141,8 @@ impl YaesuCatRadio {
             model,
             port: port.into(),
             baud_rate,
+            hardware_flow_control: false,
+            cat_rts_detected: Arc::new(Mutex::new(false)),
             transport: Arc::new(Mutex::new(TransportState::default())),
         }
     }
@@ -253,6 +275,9 @@ impl YaesuCatRadio {
             tone: ToneSettings {
                 mode: tone_mode,
                 index: tone_index,
+                frequency_tenths_hz: None,
+                dtcs_code: None,
+                dtcs_reverse: None,
             },
         })
     }
@@ -268,6 +293,7 @@ impl YaesuCatRadio {
             ToneMode::Off => "0",
             ToneMode::EncodeDecode => "1",
             ToneMode::Encode => "2",
+            ToneMode::Dtcs => anyhow::bail!("DTCS is not supported by this Yaesu profile"),
         };
         let shift = match settings.shift {
             RepeaterShift::Simplex => "0",
@@ -277,6 +303,58 @@ impl YaesuCatRadio {
         self.send_set("CN", &format!("{:03}", settings.tone.index))?;
         self.send_set("CT", tone_mode)?;
         self.send_set("OS", shift)
+    }
+
+    /// Select a documented FTDX10 memory channel. Read/write of the complete
+    /// `MR`/`MT` records remains a separate model-specific operation.
+    pub fn select_memory_channel(&self, channel: u16) -> Result<()> {
+        if !self.selected_profile()?.supports_repeater_settings || channel > 99 {
+            bail!("memory channel selection is not documented for this Yaesu model");
+        }
+        self.send_set("MC", &format!("{channel:03}"))
+    }
+
+    pub fn read_memory_channel(&self, channel: u16) -> Result<MemoryChannel> {
+        anyhow::ensure!(
+            self.model() == Some(YaesuCatModel::Ftdx10) && (1..=99).contains(&channel),
+            "FTDX10 memory records are the only Yaesu memory surface currently profiled"
+        );
+        let response = self.query("MR", Some(&format!("{channel:03}")), 0)?;
+        decode_ftdx10_memory(parse_payload(&response, "MR")?, self.selected_profile()?)
+    }
+
+    pub fn write_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
+        anyhow::ensure!(
+            self.model() == Some(YaesuCatModel::Ftdx10) && (1..=99).contains(&channel.channel),
+            "FTDX10 memory records are the only Yaesu memory surface currently profiled"
+        );
+        anyhow::ensure!(
+            channel.frequency_hz <= 999_999_999,
+            "FTDX10 memory frequency exceeds CAT width"
+        );
+        let mode = self.selected_profile()?.encode_mode(channel.mode)?;
+        let tone = match channel.repeater.tone.mode {
+            ToneMode::Off => '0',
+            ToneMode::EncodeDecode => '1',
+            ToneMode::Encode => '2',
+            ToneMode::Dtcs => anyhow::bail!("DTCS is not supported by this Yaesu profile"),
+        };
+        let shift = match channel.repeater.shift {
+            RepeaterShift::Simplex => '0',
+            RepeaterShift::Plus => '1',
+            RepeaterShift::Minus => '2',
+        };
+        let offset = channel.repeater.offset_hz.unwrap_or(0).min(9990);
+        let name = channel.name.unwrap_or_default();
+        anyhow::ensure!(
+            name.is_ascii() && name.len() <= 12,
+            "FTDX10 memory tag must be ASCII and at most 12 characters"
+        );
+        let params = format!(
+            "0{:03}{:09}+{:04}00{}0{}00{}0{}",
+            channel.channel, channel.frequency_hz, offset, mode, tone, shift, name
+        );
+        self.send_set("MT", &params)
     }
 
     fn selected_profile(&self) -> Result<&'static YaesuCatProfile> {
@@ -290,6 +368,7 @@ impl YaesuCatRadio {
         parameters: Option<&str>,
         payload_len: usize,
     ) -> Result<Vec<u8>> {
+        self.ensure_cat_rts_detected(command)?;
         let request = ascii_cat::encode(command, parameters)?;
         let command = command.to_ascii_uppercase();
         self.transact(&request, |frame| {
@@ -298,6 +377,43 @@ impl YaesuCatRadio {
             }
             payload_len == 0 || frame.len() == command.len() + payload_len + 1
         })
+    }
+
+    /// FTDX10 exposes its CAT RTS setting as EX 03-03-10. Read it once over
+    /// CAT and adapt the serial adapter before issuing ordinary queries.
+    /// Other Yaesu profiles do not share this menu address and retain their
+    /// configured/default transport behavior.
+    fn ensure_cat_rts_detected(&self, command: &str) -> Result<()> {
+        if command.eq_ignore_ascii_case("EX") || self.model != Some(YaesuCatModel::Ftdx10) {
+            return Ok(());
+        }
+        if self
+            .cat_rts_detected
+            .lock()
+            .map_err(|_| anyhow!("Yaesu CAT RTS state lock poisoned"))?
+            .to_owned()
+        {
+            return Ok(());
+        }
+
+        let response = self.query("EX", Some("030310"), 7);
+        let enabled = response
+            .ok()
+            .and_then(|frame| parse_payload(&frame, "EX").ok().map(str::to_owned))
+            .and_then(|payload| payload.chars().last())
+            .is_some_and(|value| value == '1');
+        if enabled && !self.hardware_flow_control {
+            self.with_transport(Duration::from_millis(150), |state| {
+                active_transport(state)?
+                    .set_hardware_flow_control(true)
+                    .context("failed to enable Yaesu CAT RTS/CTS flow control")
+            })?;
+        }
+        *self
+            .cat_rts_detected
+            .lock()
+            .map_err(|_| anyhow!("Yaesu CAT RTS state lock poisoned"))? = true;
+        Ok(())
     }
 
     fn write_only(&self, request: &[u8]) -> Result<()> {
@@ -383,7 +499,11 @@ impl YaesuCatRadio {
                     .data_bits(DataBits::Eight)
                     .parity(Parity::None)
                     .stop_bits(StopBits::One)
-                    .flow_control(FlowControl::None)
+                    .flow_control(if self.hardware_flow_control {
+                        FlowControl::Hardware
+                    } else {
+                        FlowControl::None
+                    })
                     .timeout(timeout)
                     .open()
                     .with_context(|| format!("failed to open Yaesu CAT port {}", self.port))?,
@@ -563,7 +683,24 @@ impl Radio for YaesuCatRadio {
         YaesuCatRadio::set_repeater_settings(self, settings)
     }
 
+    async fn select_memory_channel(&self, channel: u16) -> Result<()> {
+        YaesuCatRadio::select_memory_channel(self, channel)
+    }
+
+    async fn read_memory_channel(&self, channel: u16) -> Result<MemoryChannel> {
+        YaesuCatRadio::read_memory_channel(self, channel)
+    }
+
+    async fn write_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
+        YaesuCatRadio::write_memory_channel(self, channel)
+    }
+
     fn supports_repeater_settings(&self) -> bool {
+        self.profile()
+            .is_some_and(|profile| profile.supports_repeater_settings)
+    }
+
+    fn supports_memory_channels(&self) -> bool {
         self.profile()
             .is_some_and(|profile| profile.supports_repeater_settings)
     }
@@ -653,6 +790,60 @@ fn parse_payload<'a>(frame: &'a [u8], command: &str) -> Result<&'a str> {
         .context("unexpected Yaesu CAT response")
 }
 
+fn decode_ftdx10_memory(payload: &str, profile: &YaesuCatProfile) -> Result<MemoryChannel> {
+    anyhow::ensure!(payload.len() >= 25, "FTDX10 MR response is too short");
+    let channel = payload[0..3]
+        .parse::<u16>()
+        .context("invalid FTDX10 memory channel")?;
+    let frequency_hz = payload[3..12]
+        .parse::<u64>()
+        .context("invalid FTDX10 memory frequency")?;
+    let sign = match &payload[12..13] {
+        "+" => 1i32,
+        "-" => -1i32,
+        value => bail!("invalid FTDX10 clarifier direction: {value}"),
+    };
+    let offset = payload[13..17]
+        .parse::<i32>()
+        .context("invalid FTDX10 memory offset")?;
+    let mode = profile.decode_mode(
+        payload[19..20]
+            .chars()
+            .next()
+            .context("missing FTDX10 memory mode")?,
+    )?;
+    let tone = match &payload[21..22] {
+        "0" => ToneMode::Off,
+        "1" => ToneMode::EncodeDecode,
+        "2" => ToneMode::Encode,
+        value => bail!("invalid FTDX10 memory tone mode: {value}"),
+    };
+    let shift = match &payload[24..25] {
+        "0" => RepeaterShift::Simplex,
+        "1" => RepeaterShift::Plus,
+        "2" => RepeaterShift::Minus,
+        value => bail!("invalid FTDX10 memory shift: {value}"),
+    };
+    Ok(MemoryChannel {
+        channel,
+        name: None,
+        frequency_hz,
+        transmit_frequency_hz: None,
+        mode,
+        repeater: RepeaterSettings {
+            shift,
+            offset_hz: Some((offset * sign).unsigned_abs()),
+            tone: ToneSettings {
+                mode: tone,
+                index: 0,
+                frequency_tenths_hz: None,
+                dtcs_code: None,
+                dtcs_reverse: None,
+            },
+        },
+    })
+}
+
 fn validate_complete_command(command: &[u8]) -> Result<()> {
     if command.len() < 3
         || command.last() != Some(&b';')
@@ -711,6 +902,7 @@ fn decode_common_mode(code: char) -> Result<Mode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::yaesu::profile::FTDX10_PROFILE;
 
     #[test]
     fn common_commands_match_official_manual_examples() {
@@ -745,6 +937,20 @@ mod tests {
         assert!(validate_complete_command(b"ID;").is_ok());
         assert!(validate_complete_command(b"ID").is_err());
         assert!(validate_complete_command(b"ID;FA;").is_err());
+    }
+
+    #[test]
+    fn decodes_documented_ftdx10_memory_record() {
+        let payload = format!(
+            "{:03}{:09}+{:04}00{}0{}00{}",
+            1, 14_074_000, 0, '2', '2', '1'
+        );
+        let channel = decode_ftdx10_memory(&payload, &FTDX10_PROFILE).unwrap();
+        assert_eq!(channel.channel, 1);
+        assert_eq!(channel.frequency_hz, 14_074_000);
+        assert_eq!(channel.mode, Mode::Usb);
+        assert_eq!(channel.repeater.tone.mode, ToneMode::Encode);
+        assert_eq!(channel.repeater.shift, RepeaterShift::Plus);
     }
 
     #[test]

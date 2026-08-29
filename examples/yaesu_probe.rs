@@ -1,6 +1,6 @@
 //! Read-only modern Yaesu CAT probe.
 //!
-//! Usage: `cargo run --example yaesu_probe -- FTDX10 /dev/ttyUSB0 38400`
+//! Usage: `cargo run --example yaesu_probe -- FTDX10 /dev/ttyUSB0 38400 [--hardware-flow]`
 
 use anyhow::{Context, Result};
 use rigwright::{Radio, YaesuCatModel, YaesuCatRadio};
@@ -18,11 +18,25 @@ fn main() -> Result<()> {
         .context("usage: yaesu_probe MODEL SERIAL_PORT BAUD")?
         .parse()
         .context("BAUD must be an integer")?;
+    let hardware_flow_control = match arguments.next() {
+        None => false,
+        Some(value) => {
+            anyhow::ensure!(
+                value == "--hardware-flow",
+                "optional flag must be --hardware-flow"
+            );
+            true
+        }
+    };
     anyhow::ensure!(arguments.next().is_none(), "too many arguments");
 
     let model = YaesuCatModel::from_model_name(&model_name)
         .with_context(|| format!("unsupported modern Yaesu model: {model_name}"))?;
-    let radio = YaesuCatRadio::new_for_model(model, port, baud_rate)?;
+    let radio = if hardware_flow_control {
+        YaesuCatRadio::new_for_model_with_hardware_flow_control(model, port, baud_rate)?
+    } else {
+        YaesuCatRadio::new_for_model(model, port, baud_rate)?
+    };
 
     radio.verify_model()?;
     let frequency_hz = futures::executor::block_on(radio.get_frequency_hz())?;

@@ -14,8 +14,13 @@ use std::{
 
 use super::profile::profile_for_model;
 use super::profile::ControlEncoding;
+use crate::events::{RadioEvent, RadioEventRouter, RadioEventSubscription};
 pub use crate::hal_types::{BaseMode, Mode, OperatingMode};
-use crate::hal_types::{ControlId, ControlValue, MeterId, TunerStatus};
+use crate::hal_types::{
+    ControlId, ControlValue, MemoryChannel, MeterId, RepeaterSettings, RepeaterShift, ToneMode,
+    ToneSettings, TunerStatus,
+};
+use crate::models::IcomCivModel;
 
 const CI_V_FRAME_START: u8 = 0xFE;
 const CI_V_FRAME_END: u8 = 0xFD;
@@ -151,6 +156,20 @@ pub enum IcomReceiver {
     Sub,
 }
 
+/// Common scope controls shared by the currently profiled Icom CI-V scope
+/// transports. `None` leaves a setting unchanged.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScopeConfiguration {
+    pub span_hz: Option<u64>,
+    pub fixed_edges_hz: Option<(u64, u64)>,
+    pub fixed_edge_number: Option<u8>,
+    pub hold: Option<bool>,
+    pub reference_level_tenths_db: Option<i16>,
+    pub sweep_speed: Option<u8>,
+    pub center_mode: Option<bool>,
+    pub vbw_wide: Option<bool>,
+}
+
 pub fn enumerate_serial_ports() -> Result<Vec<String>> {
     let mut ports = enumerate_serial_port_descriptors()?
         .into_iter()
@@ -266,6 +285,7 @@ pub struct IcomCiVRadio {
     serial_port: Arc<Mutex<Option<Box<dyn RadioTransport>>>>,
     external_transport: Arc<Mutex<Option<Box<dyn RadioTransport>>>>,
     scope_stream_reader: Arc<Mutex<ScopeStreamReader>>,
+    event_router: RadioEventRouter,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -275,6 +295,72 @@ enum ControlOp {
 }
 
 impl IcomCiVRadio {
+    /// Subscribe to unsolicited CI-V state changes. Events are routed while
+    /// this radio's transport is being read, including reads performed to
+    /// satisfy another command, so subscribers do not need a second worker.
+    pub fn subscribe_events(&self) -> RadioEventSubscription {
+        self.event_router.subscribe()
+    }
+
+    /// Apply the common scope controls supported by the selected Icom model.
+    /// Payload validation stays here at the protocol boundary; model profiles
+    /// still own geometry and whether native scope output is advertised.
+    pub async fn set_scope_configuration(&self, config: ScopeConfiguration) -> Result<()> {
+        anyhow::ensure!(
+            self.supports_scope(),
+            "native CI-V scope is unavailable for this model"
+        );
+        if let Some(value) = config.center_mode {
+            self.transact_ack(&[0x27, 0x14, 0x00, u8::from(value)])?;
+        }
+        if let Some(span) = config.span_hz {
+            anyhow::ensure!(span > 0, "scope span must be positive");
+            let mut payload = vec![0x27, 0x15, 0x00];
+            payload.extend_from_slice(&encode_civ_frequency_bcd(span));
+            self.transact_ack(&payload)?;
+        }
+        if let Some(edge) = config.fixed_edge_number {
+            anyhow::ensure!(
+                (1..=4).contains(&edge),
+                "scope fixed-edge number must be in 1..=4"
+            );
+            self.transact_ack(&[0x27, 0x16, 0x00, edge])?;
+        }
+        if let Some(hold) = config.hold {
+            self.transact_ack(&[0x27, 0x17, 0x00, u8::from(hold)])?;
+        }
+        if let Some(level) = config.reference_level_tenths_db {
+            anyhow::ensure!(
+                (-200..=200).contains(&level) && level % 5 == 0,
+                "scope reference level must be -20.0..=20.0 dB in 0.5 dB steps"
+            );
+            let magnitude = level.unsigned_abs();
+            self.transact_ack(&[
+                0x27,
+                0x19,
+                0x00,
+                decimal_to_bcd((magnitude / 10) as u8),
+                if magnitude % 10 == 5 { 0x50 } else { 0 },
+                u8::from(level < 0),
+            ])?;
+        }
+        if let Some(speed) = config.sweep_speed {
+            anyhow::ensure!(speed <= 2, "scope sweep speed must be in 0..=2");
+            self.transact_ack(&[0x27, 0x1A, 0x00, speed])?;
+        }
+        if let Some(wide) = config.vbw_wide {
+            self.transact_ack(&[0x27, 0x1D, 0x00, u8::from(wide)])?;
+        }
+        if let Some((lower, upper)) = config.fixed_edges_hz {
+            anyhow::ensure!(lower < upper, "scope lower edge must be below upper edge");
+            let mut payload = vec![0x27, 0x1E, 0x00, config.fixed_edge_number.unwrap_or(1)];
+            payload.extend_from_slice(&encode_civ_frequency_bcd(lower));
+            payload.extend_from_slice(&encode_civ_frequency_bcd(upper));
+            self.transact_ack(&payload)?;
+        }
+        Ok(())
+    }
+
     fn set_operating_mode_blocking(
         &self,
         base_mode: BaseMode,
@@ -372,6 +458,7 @@ impl IcomCiVRadio {
             serial_port: Arc::new(Mutex::new(None)),
             external_transport: Arc::new(Mutex::new(Some(Box::new(transport)))),
             scope_stream_reader: Arc::new(Mutex::new(ScopeStreamReader::default())),
+            event_router: RadioEventRouter::default(),
         }
     }
 
@@ -391,6 +478,7 @@ impl IcomCiVRadio {
             serial_port: Arc::new(Mutex::new(None)),
             external_transport: Arc::new(Mutex::new(None)),
             scope_stream_reader: Arc::new(Mutex::new(ScopeStreamReader::default())),
+            event_router: RadioEventRouter::default(),
         }
     }
 
@@ -454,6 +542,220 @@ impl IcomCiVRadio {
                 IcomReceiver::Sub => 1,
             };
         self.transact(&[0x07, value], false).map(|_| ())
+    }
+
+    /// Select an Icom memory channel using the documented CI-V memory-mode
+    /// and memory-channel commands. Complete records are handled separately.
+    pub fn select_memory_channel(&self, channel: u16) -> Result<()> {
+        self.selected_model()?;
+        anyhow::ensure!(
+            (1..=99).contains(&channel),
+            "Icom memory channel must be in the documented range 1..=99"
+        );
+        let bcd = [
+            ((channel % 100 / 10) as u8) << 4 | (channel % 10) as u8,
+            0x00,
+        ];
+        self.transact_ack(&[0x08])?;
+        self.transact_ack(&[0x09, bcd[0], bcd[1]])
+    }
+
+    /// Read the documented CI-V repeater-tone state and frequency.
+    pub fn get_repeater_settings(&self) -> Result<RepeaterSettings> {
+        self.selected_model()?;
+        // CI-V 16/42 and 16/43 are the enable flags; 1B/00 and 1B/01
+        // contain the corresponding CTCSS frequencies.
+        let repeater = self.read_flag_command(&[0x16, 0x42])?;
+        let tone_squelch = self.read_flag_command(&[0x16, 0x43])?;
+        let mode = if tone_squelch {
+            ToneMode::EncodeDecode
+        } else if repeater {
+            ToneMode::Encode
+        } else {
+            ToneMode::Off
+        };
+        let response = self.transact(&[0x1B, 0x00], true)?;
+        let data = response_data_after_prefix(&response, &[0x1B, 0x00])?;
+        Ok(RepeaterSettings {
+            shift: RepeaterShift::Simplex,
+            offset_hz: None,
+            tone: ToneSettings {
+                mode,
+                index: 0,
+                frequency_tenths_hz: Some(decode_tone_frequency(data)?),
+                dtcs_code: None,
+                dtcs_reverse: None,
+            },
+        })
+    }
+
+    pub fn set_repeater_settings(&self, settings: RepeaterSettings) -> Result<()> {
+        self.selected_model()?;
+        let frequency = settings
+            .tone
+            .frequency_tenths_hz
+            .context("Icom CI-V tone frequency is required")?;
+        anyhow::ensure!(frequency <= 9999, "Icom tone frequency exceeds CI-V range");
+        let encoded = encode_tone_frequency(frequency);
+        self.transact_ack(&[0x1B, 0x00, encoded[0], encoded[1], encoded[2]])?;
+        self.transact_ack(&[0x1B, 0x01, encoded[0], encoded[1], encoded[2]])?;
+        self.transact_ack(&[
+            0x16,
+            0x42,
+            u8::from(matches!(
+                settings.tone.mode,
+                ToneMode::Encode | ToneMode::EncodeDecode
+            )),
+        ])?;
+        self.transact_ack(&[
+            0x16,
+            0x43,
+            u8::from(matches!(settings.tone.mode, ToneMode::EncodeDecode)),
+        ])
+    }
+
+    /// Read the signed RIT offset documented by the Icom CI-V `21 00`
+    /// command. The wire value is four packed-BCD bytes in Hz followed by a
+    /// sign byte (`00` positive, `01` negative).
+    pub fn get_rit_offset_hz(&self) -> Result<i32> {
+        self.selected_model()?;
+        let response = self.transact(&[0x21, 0x00], true)?;
+        let data = response_data_after_prefix(&response, &[0x21, 0x00])?;
+        anyhow::ensure!(data.len() >= 5, "Icom RIT response is too short");
+        let magnitude = decode_civ_bcd(&data[..4])?;
+        anyhow::ensure!(magnitude <= 9_999, "Icom RIT offset is out of range");
+        let magnitude = magnitude as i32;
+        match data[4] {
+            0x00 => Ok(magnitude),
+            0x01 => Ok(-magnitude),
+            sign => anyhow::bail!("invalid Icom RIT sign {sign:#04x}"),
+        }
+    }
+
+    pub fn set_rit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        self.selected_model()?;
+        anyhow::ensure!(
+            (-9_999..=9_999).contains(&offset_hz),
+            "Icom RIT offset must be -9999..=9999 Hz"
+        );
+        let magnitude = offset_hz.unsigned_abs();
+        let encoded = encode_civ_bcd_fixed(magnitude, 4)?;
+        let mut payload = vec![0x21, 0x00];
+        payload.extend_from_slice(&encoded);
+        payload.push(u8::from(offset_hz < 0));
+        self.transact_ack(&payload)
+    }
+
+    pub fn read_memory_channel(&self, channel: u16) -> Result<MemoryChannel> {
+        self.selected_model()?;
+        anyhow::ensure!(
+            (1..=99).contains(&channel),
+            "Icom memory channel must be 1..=99"
+        );
+        let channel_bcd = encode_memory_channel(channel);
+        let prefix = [0x1A, 0x00];
+        let response = self.transact(
+            &[prefix[0], prefix[1], channel_bcd[0], channel_bcd[1]],
+            true,
+        )?;
+        decode_icom_memory(&response, &prefix, self.selected_model()?)
+    }
+
+    pub fn write_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
+        self.selected_model()?;
+        anyhow::ensure!(
+            (1..=99).contains(&channel.channel),
+            "Icom memory channel must be 1..=99"
+        );
+        anyhow::ensure!(
+            channel
+                .name
+                .as_deref()
+                .is_none_or(|name| name.is_ascii() && name.len() <= 10),
+            "Icom memory name must be ASCII and at most 10 characters"
+        );
+        let model = self.selected_model()?;
+        if !matches!(model, IcomCivModel::Ic705 | IcomCivModel::Ic9700) {
+            anyhow::ensure!(
+                channel.transmit_frequency_hz.is_none(),
+                "Icom HF memory records do not expose a split transmit frequency"
+            );
+        }
+        let (base_mode, data_mode) = hal_mode_to_icom_operating_mode(channel.mode);
+        let mode = base_mode_to_civ_mode(base_mode).context("unsupported Icom memory mode")?;
+        if matches!(model, IcomCivModel::Ic705 | IcomCivModel::Ic9700) {
+            return self.write_vhf_memory_channel(channel);
+        }
+        anyhow::ensure!(
+            !matches!(channel.repeater.tone.mode, ToneMode::Dtcs),
+            "DTCS memory mode is only available on Icom VHF/UHF profiles"
+        );
+        let tone_type = match channel.repeater.tone.mode {
+            ToneMode::Off => 0,
+            ToneMode::EncodeDecode => 1,
+            ToneMode::Encode => 2,
+            ToneMode::Dtcs => 3,
+        };
+        let tone = encode_tone_frequency(channel.repeater.tone.frequency_tenths_hz.unwrap_or(885));
+        let mut payload = vec![0x1A, 0x00];
+        payload.extend_from_slice(&encode_memory_channel(channel.channel));
+        payload.push(0x00);
+        payload.extend_from_slice(&encode_civ_frequency_bcd(channel.frequency_hz));
+        payload.extend_from_slice(&[mode, u8::from(data_mode), tone_type]);
+        payload.extend_from_slice(&tone);
+        payload.extend_from_slice(&tone);
+        payload.extend_from_slice(channel.name.as_deref().unwrap_or("").as_bytes());
+        self.transact_ack(&payload)
+    }
+
+    fn write_vhf_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
+        let (base_mode, data_mode) = hal_mode_to_icom_operating_mode(channel.mode);
+        let mode = base_mode_to_civ_mode(base_mode).context("unsupported Icom memory mode")?;
+        let tone_type = match channel.repeater.tone.mode {
+            ToneMode::Off => 0,
+            ToneMode::Encode => 1,
+            ToneMode::EncodeDecode => 2,
+            ToneMode::Dtcs => 3,
+        };
+        let duplex = match channel.repeater.shift {
+            RepeaterShift::Simplex => 0,
+            RepeaterShift::Minus => 1,
+            RepeaterShift::Plus => 2,
+        };
+        let tone = encode_tone_frequency(channel.repeater.tone.frequency_tenths_hz.unwrap_or(885));
+        let dtcs = encode_civ_bcd_fixed(channel.repeater.tone.dtcs_code.unwrap_or(0) as u32, 3)?;
+        let offset = encode_civ_bcd_fixed(channel.repeater.offset_hz.unwrap_or(0), 3)?;
+        let mut payload = vec![0x1A, 0x00, 0x00, 0x00]; // memory group
+        payload.extend_from_slice(&encode_memory_channel(channel.channel));
+        payload.extend_from_slice(&[0x00]); // select setting
+        payload.extend_from_slice(&encode_civ_frequency_bcd(channel.frequency_hz));
+        payload.extend_from_slice(&[mode, 0x01, u8::from(data_mode)]);
+        payload.push((duplex << 4) | tone_type);
+        payload.push(0x00); // digital squelch off
+        payload.extend_from_slice(&tone);
+        payload.extend_from_slice(&tone);
+        payload.extend_from_slice(&dtcs);
+        payload.push(0x00); // DV code
+        payload.extend_from_slice(&offset);
+        payload.extend(std::iter::repeat_n(b' ', 24)); // DV call signs
+        let name = channel.name.as_deref().unwrap_or("").as_bytes();
+        payload.extend_from_slice(name);
+        payload.extend(std::iter::repeat_n(
+            b' ',
+            16usize.saturating_sub(name.len()),
+        ));
+        self.transact_ack(&payload)
+    }
+
+    fn read_flag_command(&self, prefix: &[u8]) -> Result<bool> {
+        let response = self.transact(prefix, true)?;
+        let data = response_data_after_prefix(&response, prefix)?;
+        match data.first().copied() {
+            Some(0) => Ok(false),
+            Some(1) => Ok(true),
+            Some(value) => anyhow::bail!("invalid Icom flag value: {value:#04x}"),
+            None => anyhow::bail!("missing Icom flag value"),
+        }
     }
 
     pub fn probe(&self) -> Result<RadioStatus> {
@@ -673,6 +975,8 @@ impl IcomCiVRadio {
                         ) {
                             continue;
                         }
+
+                        publish_civ_event(&self.event_router, &frame);
 
                         if matcher(&frame) {
                             return Ok(frame);
@@ -1345,6 +1649,10 @@ fn decode_scope_division_number(v: u8, maximum: usize) -> Option<u8> {
 
 #[async_trait]
 impl Radio for IcomCiVRadio {
+    fn event_router(&self) -> Option<RadioEventRouter> {
+        Some(self.event_router.clone())
+    }
+
     async fn get_frequency_hz(&self) -> Result<u64> {
         self.get_frequency_blocking()
     }
@@ -1460,6 +1768,34 @@ impl Radio for IcomCiVRadio {
         Ok(())
     }
 
+    async fn select_memory_channel(&self, channel: u16) -> Result<()> {
+        IcomCiVRadio::select_memory_channel(self, channel)
+    }
+
+    async fn get_repeater_settings(&self) -> Result<RepeaterSettings> {
+        IcomCiVRadio::get_repeater_settings(self)
+    }
+
+    async fn set_repeater_settings(&self, settings: RepeaterSettings) -> Result<()> {
+        IcomCiVRadio::set_repeater_settings(self, settings)
+    }
+
+    async fn get_rit_offset_hz(&self) -> Result<i32> {
+        IcomCiVRadio::get_rit_offset_hz(self)
+    }
+
+    async fn set_rit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        IcomCiVRadio::set_rit_offset_hz(self, offset_hz)
+    }
+
+    fn supports_repeater_settings(&self) -> bool {
+        self.model().is_some()
+    }
+
+    fn supports_memory_channels(&self) -> bool {
+        self.model().is_some()
+    }
+
     fn capabilities(&self) -> RadioCapabilities {
         RadioCapabilities {
             can_get_frequency: true,
@@ -1556,6 +1892,79 @@ fn is_nak_frame(frame: &[u8]) -> bool {
         && frame[4] == 0xFA
 }
 
+fn publish_civ_event(router: &RadioEventRouter, frame: &[u8]) {
+    let payload = &frame[4..frame.len() - 1];
+    match payload.first().copied() {
+        Some(0x03) => {
+            if let Some(frequency_hz) = decode_civ_frequency_bcd(&payload[1..]) {
+                router.publish(RadioEvent::FrequencyChanged { frequency_hz });
+            }
+        }
+        Some(0x06) => {
+            if let Some(mode) = decode_event_mode(payload.get(1).copied()) {
+                router.publish(RadioEvent::ModeChanged { mode });
+            }
+        }
+        Some(0x1C) if payload.get(1) == Some(&0x00) => {
+            if let Some(value) = payload.get(2) {
+                router.publish(RadioEvent::PttChanged {
+                    enabled: *value != 0,
+                });
+            }
+        }
+        Some(0x15) => {
+            let id = match payload.get(1).copied() {
+                Some(0x01) => Some(MeterId::Signal),
+                Some(0x02) => Some(MeterId::Power),
+                Some(0x11) => Some(MeterId::Alc),
+                Some(0x12) => Some(MeterId::Swr),
+                Some(0x13) => Some(MeterId::Compression),
+                Some(0x14) => Some(MeterId::Voltage),
+                Some(0x15) => Some(MeterId::Current),
+                Some(0x16) => Some(MeterId::Temperature),
+                _ => None,
+            };
+            if let (Some(id), Some(value)) = (id, decode_level_255_bcd(&payload[2..])) {
+                router.publish(RadioEvent::MeterChanged { id, value });
+            }
+        }
+        Some(0x07)
+            if payload
+                .get(1)
+                .is_some_and(|value| (0xD0..=0xD1).contains(value)) =>
+        {
+            router.publish(RadioEvent::ReceiverChanged {
+                receiver: payload[1] - 0xD0,
+            });
+        }
+        _ => {
+            router.publish(RadioEvent::Raw {
+                payload: payload.to_vec(),
+            });
+        }
+    }
+}
+
+fn decode_event_mode(value: Option<u8>) -> Option<Mode> {
+    Some(match value? {
+        0x00 => Mode::Lsb,
+        0x01 => Mode::Usb,
+        0x02 => Mode::Am,
+        0x03 => Mode::Cw,
+        0x04 => Mode::Rtty,
+        0x05 => Mode::Fm,
+        0x06 => Mode::CwReverse,
+        0x07 => Mode::RttyReverse,
+        0x08 => Mode::Data,
+        0x09 => Mode::Wfm,
+        _ => return None,
+    })
+}
+
+fn decimal_to_bcd(value: u8) -> u8 {
+    ((value / 10) << 4) | (value % 10)
+}
+
 fn format_hex_bytes(bytes: &[u8]) -> String {
     bytes
         .iter()
@@ -1641,6 +2050,209 @@ pub(crate) fn encode_civ_frequency_bcd(hz: u64) -> [u8; 5] {
         *b = (high << 4) | low;
     }
     out
+}
+
+fn encode_tone_frequency(value_tenths_hz: u32) -> [u8; 3] {
+    let mut remaining = value_tenths_hz;
+    let mut out = [0u8; 3];
+    for byte in &mut out {
+        let low = (remaining % 10) as u8;
+        remaining /= 10;
+        let high = (remaining % 10) as u8;
+        remaining /= 10;
+        *byte = (high << 4) | low;
+    }
+    out
+}
+
+fn decode_tone_frequency(data: &[u8]) -> Result<u32> {
+    anyhow::ensure!(data.len() >= 3, "Icom tone frequency response is too short");
+    let mut multiplier = 1u32;
+    let mut value = 0u32;
+    for byte in data.iter().take(3) {
+        let low = byte & 0x0f;
+        let high = (byte >> 4) & 0x0f;
+        anyhow::ensure!(low <= 9 && high <= 9, "invalid Icom tone-frequency BCD");
+        value += u32::from(low) * multiplier;
+        multiplier *= 10;
+        value += u32::from(high) * multiplier;
+        multiplier *= 10;
+    }
+    Ok(value)
+}
+
+fn encode_memory_channel(channel: u16) -> [u8; 2] {
+    [
+        ((channel % 100 / 10) as u8) << 4 | (channel % 10) as u8,
+        ((channel / 100) as u8) << 4,
+    ]
+}
+
+fn decode_icom_memory(
+    response: &[u8],
+    prefix: &[u8],
+    model: IcomCivModel,
+) -> Result<MemoryChannel> {
+    let data = response_data_after_prefix(response, prefix)?;
+    if matches!(model, IcomCivModel::Ic705 | IcomCivModel::Ic9700) {
+        return decode_vhf_memory_data(data);
+    }
+    anyhow::ensure!(data.len() >= 27, "Icom memory record is too short");
+    let channel = decode_memory_channel(&data[0..2])?;
+    let frequency_hz = decode_civ_bcd(&data[3..8])?;
+    let mode = {
+        let base = civ_mode_to_base_mode(data[8]);
+        let data_mode = data[9] != 0;
+        match (base, data_mode) {
+            (_, true) => Mode::Data,
+            (BaseMode::Lsb, false) => Mode::Lsb,
+            (BaseMode::Usb, false) => Mode::Usb,
+            (BaseMode::Cw, false) => Mode::Cw,
+            (BaseMode::Am, false) => Mode::Am,
+            (BaseMode::Fm, false) => Mode::Fm,
+            (BaseMode::Wfm, false) => Mode::Wfm,
+            (BaseMode::Rtty, false) => Mode::Rtty,
+            (BaseMode::CwR, false) => Mode::CwReverse,
+            (BaseMode::RttyR, false) => Mode::RttyReverse,
+            (BaseMode::Unknown(value), _) => {
+                anyhow::bail!("unsupported Icom memory mode {value:#04x}")
+            }
+        }
+    };
+    let tone = match data[10] {
+        0 => ToneMode::Off,
+        1 => ToneMode::EncodeDecode,
+        2 => ToneMode::Encode,
+        value => anyhow::bail!("invalid Icom memory tone mode {value}"),
+    };
+    let name = String::from_utf8_lossy(&data[17..27]).trim_end().to_owned();
+    Ok(MemoryChannel {
+        channel,
+        name: (!name.is_empty()).then_some(name),
+        frequency_hz,
+        transmit_frequency_hz: None,
+        mode,
+        repeater: RepeaterSettings {
+            shift: RepeaterShift::Simplex,
+            offset_hz: None,
+            tone: ToneSettings {
+                mode: tone,
+                index: 0,
+                frequency_tenths_hz: Some(decode_tone_frequency(&data[11..14])?),
+                dtcs_code: None,
+                dtcs_reverse: None,
+            },
+        },
+    })
+}
+
+fn decode_vhf_memory_data(data: &[u8]) -> Result<MemoryChannel> {
+    anyhow::ensure!(data.len() >= 68, "Icom VHF/UHF memory record is too short");
+    let channel = decode_memory_channel(&data[2..4])?;
+    let frequency_hz = decode_civ_bcd(&data[5..10])?;
+    let base = civ_mode_to_base_mode(data[10]);
+    let mode = if data[12] != 0 {
+        Mode::Data
+    } else {
+        match base {
+            BaseMode::Lsb => Mode::Lsb,
+            BaseMode::Usb => Mode::Usb,
+            BaseMode::Cw => Mode::Cw,
+            BaseMode::Am => Mode::Am,
+            BaseMode::Fm => Mode::Fm,
+            BaseMode::Wfm => Mode::Wfm,
+            BaseMode::Rtty => Mode::Rtty,
+            BaseMode::CwR => Mode::CwReverse,
+            BaseMode::RttyR => Mode::RttyReverse,
+            BaseMode::Unknown(value) => anyhow::bail!("unsupported Icom memory mode {value:#04x}"),
+        }
+    };
+    let tone_type = data[13] & 0x0F;
+    let tone = match tone_type {
+        0 => ToneMode::Off,
+        1 => ToneMode::Encode,
+        2 => ToneMode::EncodeDecode,
+        3 => ToneMode::Dtcs,
+        value => anyhow::bail!("invalid Icom VHF/UHF memory tone mode {value}"),
+    };
+    let shift = match data[13] >> 4 {
+        0 => RepeaterShift::Simplex,
+        1 => RepeaterShift::Minus,
+        2 => RepeaterShift::Plus,
+        value => anyhow::bail!("invalid Icom duplex setting {value}"),
+    };
+    let offset = decode_civ_bcd(&data[25..28])? as u32;
+    let dtcs = decode_civ_bcd(&data[21..24])? as u16;
+    let name = String::from_utf8_lossy(&data[52..68]).trim_end().to_owned();
+    Ok(MemoryChannel {
+        channel,
+        name: (!name.is_empty()).then_some(name),
+        frequency_hz,
+        transmit_frequency_hz: match shift {
+            RepeaterShift::Simplex => None,
+            RepeaterShift::Plus => Some(frequency_hz.saturating_add(u64::from(offset))),
+            RepeaterShift::Minus => Some(frequency_hz.saturating_sub(u64::from(offset))),
+        },
+        mode,
+        repeater: RepeaterSettings {
+            shift,
+            offset_hz: Some(offset),
+            tone: ToneSettings {
+                mode: tone,
+                index: 0,
+                frequency_tenths_hz: Some(decode_tone_frequency(&data[15..18])?),
+                dtcs_code: Some(dtcs),
+                // The memory record carries the DTCS code here; polarity is
+                // represented by the separate 1B 02 command and is not the
+                // following DV digital-code byte.
+                dtcs_reverse: None,
+            },
+        },
+    })
+}
+
+fn decode_memory_channel(data: &[u8]) -> Result<u16> {
+    anyhow::ensure!(data.len() >= 2, "Icom memory channel is too short");
+    for byte in data.iter().take(2) {
+        anyhow::ensure!(
+            (byte & 0x0f) <= 9 && (byte >> 4) <= 9,
+            "invalid Icom memory channel BCD"
+        );
+    }
+    Ok(u16::from(data[0] & 0x0f)
+        + u16::from(data[0] >> 4) * 10
+        + u16::from(data[1] & 0x0f) * 100
+        + u16::from(data[1] >> 4) * 1000)
+}
+
+fn decode_civ_bcd(data: &[u8]) -> Result<u64> {
+    let mut value = 0u64;
+    let mut multiplier = 1u64;
+    for byte in data {
+        let low = byte & 0x0f;
+        let high = byte >> 4;
+        anyhow::ensure!(low <= 9 && high <= 9, "invalid Icom frequency BCD");
+        value += u64::from(low) * multiplier;
+        multiplier *= 10;
+        value += u64::from(high) * multiplier;
+        multiplier *= 10;
+    }
+    Ok(value)
+}
+
+fn encode_civ_bcd_fixed(value: u32, bytes: usize) -> Result<Vec<u8>> {
+    let max = 10u32.pow((bytes * 2) as u32) - 1;
+    anyhow::ensure!(value <= max, "value does not fit packed BCD");
+    let mut remaining = value;
+    let mut out = Vec::with_capacity(bytes);
+    for _ in 0..bytes {
+        let low = (remaining % 10) as u8;
+        remaining /= 10;
+        let high = (remaining % 10) as u8;
+        remaining /= 10;
+        out.push((high << 4) | low);
+    }
+    Ok(out)
 }
 
 fn mode_to_civ_mode(mode: Mode) -> Result<u8> {
@@ -1913,6 +2525,68 @@ mod tests {
         assert_eq!(meter_command_prefix(MeterId::Voltage), &[0x15, 0x14]);
         assert_eq!(meter_command_prefix(MeterId::Current), &[0x15, 0x15]);
         assert_eq!(meter_command_prefix(MeterId::Temperature), &[0x15, 0x16]);
+    }
+
+    #[test]
+    fn decodes_documented_icom_memory_record() {
+        let mut payload = vec![0x1A, 0x00, 0x01, 0x00, 0x00];
+        payload.extend_from_slice(&encode_civ_frequency_bcd(14_074_000));
+        payload.extend_from_slice(&[0x01, 0x01, 0x02]);
+        payload.extend_from_slice(&encode_tone_frequency(885));
+        payload.extend_from_slice(&encode_tone_frequency(1000));
+        payload.extend_from_slice(b"FT8 USB   ");
+        payload.push(0xFD);
+        let mut frame = vec![0xFE, 0xFE, 0xE0, 0x94];
+        frame.extend_from_slice(&payload);
+        let memory = decode_icom_memory(&frame, &[0x1A, 0x00], IcomCivModel::Ic7300).unwrap();
+        assert_eq!(memory.channel, 1);
+        assert_eq!(memory.frequency_hz, 14_074_000);
+        assert_eq!(memory.mode, Mode::Data);
+        assert_eq!(memory.name.as_deref(), Some("FT8 USB"));
+        assert_eq!(memory.repeater.tone.mode, ToneMode::Encode);
+        assert_eq!(memory.repeater.tone.frequency_tenths_hz, Some(885));
+    }
+
+    #[test]
+    fn icom_tone_commands_use_documented_flags_and_frequencies() {
+        assert_eq!(encode_tone_frequency(885), [0x85, 0x08, 0x00]);
+        assert_eq!(encode_tone_frequency(1000), [0x00, 0x10, 0x00]);
+    }
+
+    #[test]
+    fn icom_rit_offset_uses_signed_four_byte_bcd() {
+        assert_eq!(encode_civ_bcd_fixed(0, 4).unwrap(), vec![0, 0, 0, 0]);
+        assert_eq!(
+            encode_civ_bcd_fixed(1250, 4).unwrap(),
+            vec![0x50, 0x12, 0, 0]
+        );
+        assert_eq!(
+            encode_civ_bcd_fixed(9_999, 4).unwrap(),
+            vec![0x99, 0x99, 0, 0]
+        );
+    }
+
+    #[test]
+    fn decodes_icom_vhf_memory_duplex_dtcs_and_name_fields() {
+        let mut data = vec![0u8; 68];
+        data[2..4].copy_from_slice(&encode_memory_channel(12));
+        data[5..10].copy_from_slice(&encode_civ_frequency_bcd(146_520_000));
+        data[10] = 0x05; // FM
+        data[13] = 0x23; // duplex plus, DTCS
+        data[15..18].copy_from_slice(&encode_tone_frequency(885));
+        data[21..24].copy_from_slice(&encode_civ_bcd_fixed(23, 3).unwrap());
+        data[25..28].copy_from_slice(&encode_civ_bcd_fixed(600_000, 3).unwrap());
+        data[52..68].copy_from_slice(b"LOCAL-REPEATER  ");
+        let mut frame = vec![0xFE, 0xFE, 0xE0, 0xA4, 0x1A, 0x00];
+        frame.extend_from_slice(&data);
+        frame.push(0xFD);
+        let memory = decode_icom_memory(&frame, &[0x1A, 0x00], IcomCivModel::Ic705).unwrap();
+        assert_eq!(memory.channel, 12);
+        assert_eq!(memory.frequency_hz, 146_520_000);
+        assert_eq!(memory.transmit_frequency_hz, Some(147_120_000));
+        assert_eq!(memory.repeater.tone.mode, ToneMode::Dtcs);
+        assert_eq!(memory.repeater.tone.dtcs_code, Some(23));
+        assert_eq!(memory.name.as_deref(), Some("LOCAL-REPEATER"));
     }
 
     #[test]
