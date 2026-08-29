@@ -31,7 +31,7 @@ reproducible without treating a product-page compatibility claim as evidence:
 | IC-9700 | `IC-9700_ENG_CI-V_4.pdf`, Mar. 2023 | address `A2`; commands `07 D0/D1/D2`, `0F`, `11`, `16 02`, `26`, `27`; combined internal/external preamp; 144/430/1240 MHz bands; 11/475 scope |
 
 The shared Icom profile also exposes IP+ (`1A 07`), auto notch (`16 41`), and
-manual notch enable (`16 42`) as typed controls. SWR is read-only telemetry via
+manual notch enable (`16 48`) as typed controls. SWR is read-only telemetry via
 `MeterId::Swr`, using `15 12`; the driver exposes the result on the HAL's
 normalized 0..255 meter-deflection scale. The IC-7300 manual documents raw
 values of 0 = 1.0:1, 48 = 1.5:1, 80 = 2.0:1, and 120 = 3.0:1, but those ratio
@@ -64,8 +64,10 @@ Enhanced CAT port; the other modern Yaesu profiles remain framework-level.
 
 The shared modern driver implements persistent serial transport, response
 matching in the presence of auto-information frames, frequency, mode, readable
-PTT, raw queries, RF power, and profile-gated split. The profile mode table
-chooses DATA-U for the protocol-neutral `Mode::Data`; other DATA variants still
+PTT, raw queries, RF power, receiver controls, clarifiers, VFO selection,
+tuner control, memory records, repeater settings, and profile-gated event
+subscriptions. The profile mode table chooses DATA-U for the protocol-neutral
+`Mode::Data`; other DATA variants still
 decode as data because the root HAL intentionally has a coarser mode type.
 
 ## Classic Yaesu manual audit
@@ -80,12 +82,15 @@ behavior.
 |---|---|---|
 | FT-817ND | `FT-817ND_OM_ENG_E13771011.pdf` | 17-opcode table; 8N2; 4800/9600/38400 baud; model receive ranges; mode/status codes; `E7`, `F7`, `03`; active-low PTT/split; power commands intentionally not exposed |
 | FT-818 | `FT-818ND_OM_ENG_E13772004_2003u-ES-1.pdf` | Same five-byte family; distinct 0.1-56 MHz low receive range; status layouts; baud rates; power commands intentionally not exposed |
-| FT-857D | `FT-857D_OM_ENG_EH007M108.pdf` | CAT/LINEAR jack; 8N2; segmented receive ranges; FM-N write code; WFM/CW-N status codes; RX/TX bit layouts |
-| FT-897D | `FT-897_OpMan.pdf` | Available FT-897 family manual; CAT/LINEAR menu; segmented receive ranges; FM-N and WFM codes; RX/TX bit layouts |
+| FT-857D | `FT-857D_OM_ENG_EH007M108.pdf` | CAT/LINEAR jack; 8N2; segmented receive ranges; FM-N write code; WFM/CW-N status codes; RX/TX bit layouts; clarifier and repeater opcodes |
+| FT-897D | `FT-897_OpMan.pdf` | Available FT-897 family manual; CAT/LINEAR menu; segmented receive ranges; FM-N and WFM codes; RX/TX bit layouts; shared classic opcode family |
 
-These remain framework-level. In particular, the available FT-897 manual is a
-family reference rather than proof of FT-897D hardware behavior, and classic
-CAT has no model ID query with which to detect an incorrect operator selection.
+Classic CAT has no model ID query with which to detect an incorrect operator
+selection. The driver also exposes the documented VFO toggle and CAT-lock
+commands as explicit classic-driver helpers. The protocol has no memory read/write or unsolicited event opcodes;
+AF/RF gain, squelch, IPO/ATT, DSP filters, and local memory channels therefore
+remain untyped. Repeater and clarifier writes have no documented readback and
+are intentionally advertised as write-only at the control level.
 
 ## Kenwood manual audit
 
@@ -96,28 +101,34 @@ newer radios.
 
 | Model | Manual/reference used | Profile details checked |
 |---|---|---|
-| TS-590SG | `B5A-0180-20.pdf`; `ts590_g_pc_command_en_rev3.pdf`, Jan. 2019 | ID `023`; `FA`/`FB` 11-digit frequency; `FR`/`FT`; `MD` plus `DA`; `IF` RX/TX field; `PC` 5-100 W broad range (AM max 25 W); `SM0` 0-30; 4800-115200 baud |
-| TS-890S | `B5A-4695-00.pdf`; `ts890_pc_command_en_rev1.pdf`, Jan. 2019 | ID `024`; `FA`/`FB`; `OM` with PSK and data variants; direct `TB` split; `PC`; `SM` 0-70; no pollable PTT query; COM/USB baud differences |
+| TS-590SG | `B5A-0180-20.pdf`; `ts590_g_pc_command_en_rev3.pdf`, Jan. 2019 | ID `023`; `FA`/`FB` 11-digit frequency; `FR`/`FT`; `MD` plus `DA`; `IF` RX/TX/RIT/XIT fields; `PC` 5-100 W broad range (AM max 25 W); `SM0` 0-30; `RM` SWR/COMP/ALC; `MC`/`MR`/`MW` memory records; 4800-115200 baud |
+| TS-890S | `B5A-4695-00.pdf`; `ts890_pc_command_en_rev1.pdf`, Jan. 2019 | ID `024`; `FA`/`FB`; `OM` with PSK and data variants; direct `TB` split; `PC`; `SM` 0-70; `RM` SWR/ALC/COMP/ID/VD/TEMP; `RF`/`RT`/`XT` RIT/XIT; no pollable PTT query; COM/USB baud differences |
 | TS-2000 | `B62-1221-70.pdf`, PC Control Command Tables | ID `019`; `FA`/`FB`; `FR`/`FT`; `MD`; `IF` RX/TX field; HF/VHF/UHF/1.2 GHz receive segments; 4800 baud requires two stop bits |
 
 The shared driver verifies `ID`, follows the selected receiver VFO for
 frequency reads/writes, exposes exact watts and normalized HAL power, handles
 model-specific modes and split commands, reads the documented meter layout,
-and matches responses around interleaved Auto Information frames. PTT writes
-are verified on the two models with pollable `IF` status. All three remain
-framework-level until exercised against physical radios.
+implements profiled receiver controls, RIT/XIT, VFO selection, tuner, filters,
+and memory records, and routes interleaved Auto Information frames to the
+shared event router. PTT writes are verified on the two models with pollable
+`IF` status. All three remain framework-level until exercised against physical
+radios.
 All normalized meters use the HAL's 0..255 meter-deflection scale. Yaesu CAT
 profiles expose signal, power, SWR, ALC, compression, current, and voltage
 through the documented `RM1` and `RM3`..`RM8` selectors, plus typed AGC,
 noise-reduction, and noise-reduction-level controls. Kenwood profiles expose
-normalized signal and profile-correct SWR. SWR telemetry uses the HAL's normalized
-0..255 meter-deflection scale. The
+normalized signal, TX power, and profile-correct SWR; TS-590SG additionally
+exposes ALC and compression, while TS-890S additionally exposes ALC,
+compression, current, voltage, and temperature. SWR telemetry uses
+the HAL's normalized 0..255 meter-deflection scale. The
 Kenwood profiles query the documented `RM` SWR meter and normalize their
 model-specific 0..30 or 0..70 dot ranges. Modern Yaesu CAT profiles query
 `RM6`, whose documented response is already 0..255. This is normalized meter
 deflection, not a universal physical SWR-ratio conversion; the manuals do not
 define enough cross-vendor ratio calibration to infer one safely.
 
-The model-aware `ConfiguredRadio` wrapper forwards capability checks for Icom,
-Yaesu, and Kenwood. Generic vendor drivers intentionally report no typed
-optional meters or controls until a concrete model profile is selected.
+The model-aware `ConfiguredRadio` wrapper delegates optional controls, meters,
+clarifiers, tuner, memory, repeater, and event-router behavior to the selected
+vendor backend. It does not own vendor command semantics. Generic vendor
+drivers intentionally report no profile-only typed meters or controls until a
+concrete model profile is selected.

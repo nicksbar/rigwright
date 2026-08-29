@@ -39,7 +39,11 @@ mutex or another latency-sensitive application lock.
 - `NullRadio` is an in-memory backend for tests and offline UI work.
 
 `ConfiguredRadio` is the factory/dispatch enum that forwards the root HAL to
-the selected backend.
+the selected backend. Its match arms are adapter plumbing only: optional
+controls, meters, clarifiers, tuner, memory, repeater, and event-router
+behavior remain owned by the vendor driver and selected model profile. New
+vendor or model rules belong in those driver/profile modules, not in this
+wrapper.
 
 ## Application-facing model catalog
 
@@ -73,7 +77,10 @@ Model files define defaults and documented differences:
 
 Modern Yaesu profiles additionally own the `ID;` value, accepted CAT baud
 rates, receiver-qualified `MD` mappings, `PC` range in watts, and optional
-command families. `YaesuCatRadio` reuses one serial connection and matches
+command families. `YaesuCatRadio` reads `VS;` before frequency and mode
+operations, routing them to the selected `FA`/`FB` and `MD0`/`MD1` surfaces;
+it does not assume VFO-A after startup. The driver reuses one serial
+connection and matches
 semicolon-terminated replies by command so unsolicited auto-information frames
 cannot be mistaken for a requested reply. Modern ASCII CAT and legacy binary
 CAT are intentionally separate engines.
@@ -138,6 +145,11 @@ Spectrum scope and I/Q data are optional capabilities, not requirements of the
 root HAL. A driver must implement and test the actual waveform transport before
 advertising a scope stream. Geometry, metadata layout, and receiver selection
 are model-specific profile data.
+
+Current Icom status is deliberately split: the IC-7300 has a hardware-validated
+CI-V scope stream but no USB I/Q capability in its profile. The IC-7610 profile
+records documented USB I/Q output, while Rigwright 0.1.14 still provides only
+the shared sample decoder; no IC-7610 I/Q transport can be opened by the driver.
 
 All four currently profiled USB waveform formats place a scope selector first
 (fixed `00`, or main/sub), then current division and maximum division. The

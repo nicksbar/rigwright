@@ -12,15 +12,14 @@ use std::{
     time::Instant,
 };
 
-use super::profile::profile_for_model;
 use super::profile::ControlEncoding;
+use super::profile::{meter_command_prefix, profile_for_model, MemoryLayout};
 use crate::events::{RadioEvent, RadioEventRouter, RadioEventSubscription};
 pub use crate::hal_types::{BaseMode, Mode, OperatingMode};
 use crate::hal_types::{
     ControlId, ControlValue, MemoryChannel, MeterId, RepeaterSettings, RepeaterShift, ToneMode,
     ToneSettings, TunerStatus,
 };
-use crate::models::IcomCivModel;
 
 const CI_V_FRAME_START: u8 = 0xFE;
 const CI_V_FRAME_END: u8 = 0xFD;
@@ -376,7 +375,16 @@ impl IcomCiVRadio {
         }
         let mode_byte = base_mode_to_civ_mode(base_mode)
             .with_context(|| format!("unsupported base mode for CI-V set: {base_mode:?}"))?;
-        anyhow::ensure!((1..=3).contains(&filter), "CI-V filter must be in 1..=3");
+        if let Some(model) = self.model {
+            let profile = profile_for_model(model);
+            anyhow::ensure!(
+                profile.control_capabilities.filter_values.contains(&filter),
+                "CI-V filter value is not documented for {}",
+                model.model_name()
+            );
+        } else {
+            anyhow::ensure!((1..=3).contains(&filter), "CI-V filter must be in 1..=3");
+        }
         let data_byte = if data_mode { 0x01 } else { 0x00 };
         let _ = self.transact(&[0x26, 0x00, mode_byte, data_byte, filter], false)?;
         Ok(())
@@ -517,8 +525,14 @@ impl IcomCiVRadio {
     }
 
     /// Select VFO A or B. This uses the global CI-V `0x07` VFO command and
-    /// does not require a model profile.
+    /// The command bytes are shared, while availability is profile-owned.
     pub async fn select_vfo(&self, vfo: IcomVfo) -> Result<()> {
+        let profile = profile_for_model(self.selected_model()?);
+        anyhow::ensure!(
+            profile.control_capabilities.supports_vfo,
+            "VFO selection is not supported for {}",
+            profile.model.model_name()
+        );
         let value = match vfo {
             IcomVfo::A => 0x00,
             IcomVfo::B => 0x01,
@@ -576,9 +590,11 @@ impl IcomCiVRadio {
         };
         let response = self.transact(&[0x1B, 0x00], true)?;
         let data = response_data_after_prefix(&response, &[0x1B, 0x00])?;
+        let shift = self.get_repeater_shift()?;
+        let offset_hz = self.get_duplex_offset_hz()?;
         Ok(RepeaterSettings {
-            shift: RepeaterShift::Simplex,
-            offset_hz: None,
+            shift,
+            offset_hz: Some(offset_hz),
             tone: ToneSettings {
                 mode,
                 index: 0,
@@ -596,7 +612,16 @@ impl IcomCiVRadio {
             .frequency_tenths_hz
             .context("Icom CI-V tone frequency is required")?;
         anyhow::ensure!(frequency <= 9999, "Icom tone frequency exceeds CI-V range");
+        let offset_hz = settings.offset_hz.unwrap_or_default();
+        anyhow::ensure!(
+            offset_hz <= 999_999_999,
+            "Icom duplex offset must be no more than 999999999 Hz"
+        );
         let encoded = encode_tone_frequency(frequency);
+        let mut offset_payload = vec![0x0D];
+        offset_payload.extend_from_slice(&encode_civ_frequency_bcd(u64::from(offset_hz)));
+        self.transact_ack(&offset_payload)?;
+        self.set_repeater_shift(settings.shift)?;
         self.transact_ack(&[0x1B, 0x00, encoded[0], encoded[1], encoded[2]])?;
         self.transact_ack(&[0x1B, 0x01, encoded[0], encoded[1], encoded[2]])?;
         self.transact_ack(&[
@@ -612,6 +637,23 @@ impl IcomCiVRadio {
             0x43,
             u8::from(matches!(settings.tone.mode, ToneMode::EncodeDecode)),
         ])
+    }
+
+    fn get_repeater_shift(&self) -> Result<RepeaterShift> {
+        let response = self.transact(&[0x0F], true)?;
+        let data = response_data_after_prefix(&response, &[0x0F])?;
+        decode_repeater_shift(data.first().copied())
+    }
+
+    fn set_repeater_shift(&self, shift: RepeaterShift) -> Result<()> {
+        self.transact_ack(&[0x0F, encode_repeater_shift(shift)])
+    }
+
+    fn get_duplex_offset_hz(&self) -> Result<u32> {
+        let response = self.transact(&[0x0C], true)?;
+        let data = response_data_after_prefix(&response, &[0x0C])?;
+        let offset = decode_civ_frequency_bcd(data).context("invalid Icom duplex offset")?;
+        u32::try_from(offset).context("Icom duplex offset exceeds HAL range")
     }
 
     /// Read the signed RIT offset documented by the Icom CI-V `21 00`
@@ -647,7 +689,7 @@ impl IcomCiVRadio {
     }
 
     pub fn read_memory_channel(&self, channel: u16) -> Result<MemoryChannel> {
-        self.selected_model()?;
+        let profile = profile_for_model(self.selected_model()?);
         anyhow::ensure!(
             (1..=99).contains(&channel),
             "Icom memory channel must be 1..=99"
@@ -658,11 +700,11 @@ impl IcomCiVRadio {
             &[prefix[0], prefix[1], channel_bcd[0], channel_bcd[1]],
             true,
         )?;
-        decode_icom_memory(&response, &prefix, self.selected_model()?)
+        decode_icom_memory(&response, &prefix, profile.memory_layout)
     }
 
     pub fn write_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
-        self.selected_model()?;
+        let profile = profile_for_model(self.selected_model()?);
         anyhow::ensure!(
             (1..=99).contains(&channel.channel),
             "Icom memory channel must be 1..=99"
@@ -674,8 +716,7 @@ impl IcomCiVRadio {
                 .is_none_or(|name| name.is_ascii() && name.len() <= 10),
             "Icom memory name must be ASCII and at most 10 characters"
         );
-        let model = self.selected_model()?;
-        if !matches!(model, IcomCivModel::Ic705 | IcomCivModel::Ic9700) {
+        if profile.memory_layout == MemoryLayout::Hf {
             anyhow::ensure!(
                 channel.transmit_frequency_hz.is_none(),
                 "Icom HF memory records do not expose a split transmit frequency"
@@ -683,7 +724,7 @@ impl IcomCiVRadio {
         }
         let (base_mode, data_mode) = hal_mode_to_icom_operating_mode(channel.mode);
         let mode = base_mode_to_civ_mode(base_mode).context("unsupported Icom memory mode")?;
-        if matches!(model, IcomCivModel::Ic705 | IcomCivModel::Ic9700) {
+        if profile.memory_layout == MemoryLayout::VhfUhf {
             return self.write_vhf_memory_channel(channel);
         }
         anyhow::ensure!(
@@ -1136,10 +1177,36 @@ impl IcomCiVRadio {
     }
 
     fn get_meter_blocking(&self, id: MeterId) -> Result<u8> {
+        self.get_meter_blocking_with_timeout(id, Duration::from_millis(1_500))
+    }
+
+    fn get_meter_blocking_with_timeout(&self, id: MeterId, timeout: Duration) -> Result<u8> {
+        let profile = profile_for_model(self.selected_model()?);
+        anyhow::ensure!(
+            profile.supports_meter(id),
+            "meter {id:?} is not supported by this Icom profile"
+        );
         let prefix = meter_command_prefix(id);
-        let response = self.transact(prefix, true)?;
+        let frame = self.build_frame_payload(prefix);
+        let response = self.with_serial_port(timeout, |port| {
+            self.write_frame(port, &frame)?;
+            self.read_response_matching(port, timeout, Some(&frame), |response| {
+                frame_matches_request(response, prefix)
+            })
+        })?;
         let data = response_data_after_prefix(&response, prefix)?;
         decode_level_255_bcd(data).context("invalid CI-V meter payload")
+    }
+
+    /// Read a meter without allowing a missing response to monopolize a
+    /// shared scope/CI-V worker. Meter polling is intentionally allowed to use
+    /// a shorter timeout than normal CAT operations.
+    pub async fn get_meter_with_timeout(
+        &self,
+        id: MeterId,
+        timeout: Duration,
+    ) -> Result<Option<u8>> {
+        Ok(Some(self.get_meter_blocking_with_timeout(id, timeout)?))
     }
 
     fn set_tuner_enabled_blocking(&self, enabled: bool) -> Result<()> {
@@ -1176,6 +1243,26 @@ impl IcomCiVRadio {
         op: ControlOp,
         value: Option<ControlValue>,
     ) -> Result<Option<ControlValue>> {
+        let profile = profile_for_model(self.selected_model()?);
+        if id == ControlId::Attenuator {
+            if let Some(ControlValue::U8(db)) = value.as_ref() {
+                anyhow::ensure!(
+                    profile.attenuator_values.contains(db),
+                    "attenuator setting {db} dB is not documented for {}",
+                    profile.model.model_name()
+                );
+            }
+        }
+        if id == ControlId::Preamp {
+            if let Some(ControlValue::U8(level)) = value.as_ref() {
+                anyhow::ensure!(
+                    *level <= profile.preamp_max_level,
+                    "preamp level {level} exceeds {} levels for {}",
+                    profile.preamp_max_level,
+                    profile.model.model_name()
+                );
+            }
+        }
         if matches!(
             id,
             ControlId::Vfo | ControlId::MainSub | ControlId::ExternalPreamp
@@ -1187,7 +1274,10 @@ impl IcomCiVRadio {
             return self.run_model_specific_control(id, op, value);
         }
         if id == ControlId::DataMode {
-            self.selected_model()?;
+            anyhow::ensure!(
+                profile.control_capabilities.supports_data_mode,
+                "DataMode is not supported by this Icom profile"
+            );
             return match op {
                 ControlOp::Set => {
                     let enabled = match value.context("missing control value for set operation")? {
@@ -1227,12 +1317,19 @@ impl IcomCiVRadio {
         }
 
         if id == ControlId::Filter {
-            self.selected_model()?;
+            anyhow::ensure!(
+                !profile.control_capabilities.filter_values.is_empty(),
+                "Filter is not supported by this Icom profile"
+            );
             return match op {
                 ControlOp::Set => {
                     let filter = match value.context("missing control value for set operation")? {
-                        ControlValue::U8(v) if (1..=3).contains(&v) => v,
-                        _ => anyhow::bail!("Filter control expects U8 value in 1..=3"),
+                        ControlValue::U8(v)
+                            if profile.control_capabilities.filter_values.contains(&v) =>
+                        {
+                            v
+                        }
+                        _ => anyhow::bail!("Filter control expects a documented profile value"),
                     };
                     let response = self.transact(&[0x26, 0x00], true)?;
                     let details = parse_mode_details(&response)
@@ -1252,31 +1349,7 @@ impl IcomCiVRadio {
             };
         }
 
-        if id == ControlId::Attenuator {
-            let profile = profile_for_model(self.selected_model()?);
-            if let Some(ControlValue::U8(db)) = value.as_ref() {
-                if !profile.attenuator_values.contains(db) {
-                    anyhow::bail!(
-                        "attenuator setting {db} dB is not documented for {}",
-                        self.selected_model()?.model_name()
-                    );
-                }
-            }
-        }
-        if id == ControlId::Preamp {
-            let profile = profile_for_model(self.selected_model()?);
-            if let Some(ControlValue::U8(level)) = value.as_ref() {
-                if *level > profile.preamp_max_level {
-                    anyhow::bail!(
-                        "preamp level {level} exceeds {} levels for {}",
-                        profile.preamp_max_level,
-                        self.selected_model()?.model_name()
-                    );
-                }
-            }
-        }
-
-        let spec = profile_for_model(self.selected_model()?)
+        let spec = profile
             .control(id)
             .with_context(|| format!("unsupported CI-V control: {id:?}"))?;
 
@@ -1577,22 +1650,6 @@ impl IcomCiVRadio {
     }
 }
 
-/// IC-7300 documented meter query prefixes. Values use the common CI-V
-/// 0000..0255 packed-decimal response encoding; physical units are model/UI
-/// concerns and must not be inferred from the normalized byte alone.
-fn meter_command_prefix(id: MeterId) -> &'static [u8] {
-    match id {
-        MeterId::Signal => &[0x15, 0x01],
-        MeterId::Power => &[0x15, 0x02],
-        MeterId::Alc => &[0x15, 0x11],
-        MeterId::Swr => &[0x15, 0x12],
-        MeterId::Compression => &[0x15, 0x13],
-        MeterId::Voltage => &[0x15, 0x14],
-        MeterId::Current => &[0x15, 0x15],
-        MeterId::Temperature => &[0x15, 0x16],
-    }
-}
-
 fn parse_scope_waveform_segment(
     frame: &[u8],
     geometry: Option<crate::models::IcomScopeGeometry>,
@@ -1716,18 +1773,9 @@ impl Radio for IcomCiVRadio {
     }
 
     fn supports_meter(&self, id: MeterId) -> bool {
-        self.model().is_some()
-            && matches!(
-                id,
-                MeterId::Signal
-                    | MeterId::Power
-                    | MeterId::Swr
-                    | MeterId::Alc
-                    | MeterId::Compression
-                    | MeterId::Voltage
-                    | MeterId::Current
-                    | MeterId::Temperature
-            )
+        self.model()
+            .map(profile_for_model)
+            .is_some_and(|profile| profile.supports_meter(id))
     }
 
     fn supports_control(&self, id: ControlId) -> bool {
@@ -1735,17 +1783,16 @@ impl Radio for IcomCiVRadio {
             return false;
         };
         let profile = profile_for_model(model);
-        profile.control(id).is_some()
-            || matches!(
-                id,
-                ControlId::DataMode | ControlId::Filter | ControlId::RawCiV | ControlId::Vfo
-            )
-            || (id == ControlId::MainSub && profile.main_sub.is_some())
-            || (id == ControlId::ExternalPreamp && profile.external_preamp.is_some())
+        profile.supports_control(id)
     }
 
     fn supports_control_read(&self, id: ControlId) -> bool {
-        self.supports_control(id) && !matches!(id, ControlId::RawCiV | ControlId::Vfo)
+        let Some(model) = self.model() else {
+            return false;
+        };
+        self.supports_control(id)
+            && id != ControlId::RawCiV
+            && (id != ControlId::Vfo || profile_for_model(model).control_capabilities.vfo_readable)
     }
 
     fn supports_control_write(&self, id: ControlId) -> bool {
@@ -1789,11 +1836,15 @@ impl Radio for IcomCiVRadio {
     }
 
     fn supports_repeater_settings(&self) -> bool {
-        self.model().is_some()
+        self.model()
+            .map(profile_for_model)
+            .is_some_and(|profile| profile.supports_repeater_settings)
     }
 
     fn supports_memory_channels(&self) -> bool {
-        self.model().is_some()
+        self.model()
+            .map(profile_for_model)
+            .is_some_and(|profile| profile.supports_memory_channels)
     }
 
     fn capabilities(&self) -> RadioCapabilities {
@@ -1914,14 +1965,14 @@ fn publish_civ_event(router: &RadioEventRouter, frame: &[u8]) {
         }
         Some(0x15) => {
             let id = match payload.get(1).copied() {
-                Some(0x01) => Some(MeterId::Signal),
-                Some(0x02) => Some(MeterId::Power),
-                Some(0x11) => Some(MeterId::Alc),
+                Some(0x02) => Some(MeterId::Signal),
+                Some(0x11) => Some(MeterId::Power),
                 Some(0x12) => Some(MeterId::Swr),
-                Some(0x13) => Some(MeterId::Compression),
-                Some(0x14) => Some(MeterId::Voltage),
-                Some(0x15) => Some(MeterId::Current),
-                Some(0x16) => Some(MeterId::Temperature),
+                Some(0x13) => Some(MeterId::Alc),
+                Some(0x14) => Some(MeterId::Compression),
+                Some(0x15) => Some(MeterId::Voltage),
+                Some(0x16) => Some(MeterId::Current),
+                Some(0x17) => Some(MeterId::Temperature),
                 _ => None,
             };
             if let (Some(id), Some(value)) = (id, decode_level_255_bcd(&payload[2..])) {
@@ -2081,6 +2132,24 @@ fn decode_tone_frequency(data: &[u8]) -> Result<u32> {
     Ok(value)
 }
 
+fn decode_repeater_shift(value: Option<u8>) -> Result<RepeaterShift> {
+    match value {
+        Some(0x10) | Some(0x00) | Some(0x01) => Ok(RepeaterShift::Simplex),
+        Some(0x11) => Ok(RepeaterShift::Minus),
+        Some(0x12) => Ok(RepeaterShift::Plus),
+        Some(value) => anyhow::bail!("invalid Icom repeater shift: {value:#04x}"),
+        None => anyhow::bail!("missing Icom repeater shift"),
+    }
+}
+
+fn encode_repeater_shift(shift: RepeaterShift) -> u8 {
+    match shift {
+        RepeaterShift::Simplex => 0x10,
+        RepeaterShift::Minus => 0x11,
+        RepeaterShift::Plus => 0x12,
+    }
+}
+
 fn encode_memory_channel(channel: u16) -> [u8; 2] {
     [
         ((channel % 100 / 10) as u8) << 4 | (channel % 10) as u8,
@@ -2091,10 +2160,10 @@ fn encode_memory_channel(channel: u16) -> [u8; 2] {
 fn decode_icom_memory(
     response: &[u8],
     prefix: &[u8],
-    model: IcomCivModel,
+    layout: MemoryLayout,
 ) -> Result<MemoryChannel> {
     let data = response_data_after_prefix(response, prefix)?;
-    if matches!(model, IcomCivModel::Ic705 | IcomCivModel::Ic9700) {
+    if layout == MemoryLayout::VhfUhf {
         return decode_vhf_memory_data(data);
     }
     anyhow::ensure!(data.len() >= 27, "Icom memory record is too short");
@@ -2389,6 +2458,77 @@ fn decode_level_255_bcd(bytes: &[u8]) -> Option<u8> {
 mod tests {
     use super::*;
     use crate::icom::ic7300::decimal_to_bcd;
+    use std::io::{Read, Write};
+    use std::sync::{Arc, Mutex};
+
+    struct TestTransport {
+        reads: VecDeque<Vec<u8>>,
+        writes: Arc<Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl TestTransport {
+        fn response(radio_address: u8, controller_address: u8, payload: &[u8]) -> Vec<u8> {
+            let mut frame = vec![
+                CI_V_FRAME_START,
+                CI_V_FRAME_START,
+                controller_address,
+                radio_address,
+            ];
+            frame.extend_from_slice(payload);
+            frame.push(CI_V_FRAME_END);
+            frame
+        }
+
+        fn ack(radio_address: u8, controller_address: u8) -> Vec<u8> {
+            Self::response(radio_address, controller_address, &[0xFB])
+        }
+
+        fn with_reads(reads: Vec<Vec<u8>>) -> (Self, Arc<Mutex<Vec<Vec<u8>>>>) {
+            let writes = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    reads: reads.into_iter().collect(),
+                    writes: Arc::clone(&writes),
+                },
+                writes,
+            )
+        }
+    }
+
+    impl Read for TestTransport {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let Some(mut frame) = self.reads.pop_front() else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "test transport has no scripted response",
+                ));
+            };
+            let bytes = frame.len().min(buffer.len());
+            buffer[..bytes].copy_from_slice(&frame[..bytes]);
+            if bytes < frame.len() {
+                frame.drain(..bytes);
+                self.reads.push_front(frame);
+            }
+            Ok(bytes)
+        }
+    }
+
+    impl Write for TestTransport {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.writes.lock().unwrap().push(bytes.to_vec());
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl RadioTransport for TestTransport {
+        fn set_timeout(&mut self, _timeout: Duration) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn parses_live_response_frame_from_radio() {
@@ -2486,6 +2626,240 @@ mod tests {
     }
 
     #[test]
+    fn generic_and_profiled_controls_have_distinct_capability_surfaces() {
+        let generic = IcomCiVRadio::new_generic("", 115_200, 0xE0, 0x94);
+        assert!(!generic.supports_control(ControlId::RfPower));
+        assert!(!generic.supports_meter(MeterId::Signal));
+
+        for model in [
+            crate::models::IcomCivModel::Ic705,
+            crate::models::IcomCivModel::Ic7300,
+            crate::models::IcomCivModel::Ic7610,
+            crate::models::IcomCivModel::Ic9700,
+        ] {
+            let radio = IcomCiVRadio::new_for_model(model, "", 115_200, 0xE0, 0x94);
+            assert!(radio.supports_control(ControlId::RfPower), "{model:?}");
+            assert!(radio.supports_control(ControlId::Rit), "{model:?}");
+            assert!(radio.supports_meter(MeterId::Signal), "{model:?}");
+            assert!(radio.supports_control_read(ControlId::RfPower));
+            assert!(radio.supports_control_write(ControlId::RfPower));
+            assert!(!radio.supports_control_read(ControlId::RawCiV));
+        }
+
+        assert!(!IcomCiVRadio::new_for_model(
+            crate::models::IcomCivModel::Ic705,
+            "",
+            115_200,
+            0xE0,
+            0x94,
+        )
+        .supports_control(ControlId::ExternalPreamp));
+        assert!(IcomCiVRadio::new_for_model(
+            crate::models::IcomCivModel::Ic9700,
+            "",
+            115_200,
+            0xE0,
+            0xA2,
+        )
+        .supports_control(ControlId::ExternalPreamp));
+    }
+
+    #[test]
+    fn profiled_set_controls_emit_exact_model_and_common_ci_v_frames() {
+        let (transport, writes) = TestTransport::with_reads(vec![TestTransport::ack(0x94, 0xE0)]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+        futures::executor::block_on(radio.set_control(ControlId::RfPower, ControlValue::U8(50)))
+            .unwrap();
+        assert_eq!(
+            writes.lock().unwrap().as_slice(),
+            [vec![0xFE, 0xFE, 0x94, 0xE0, 0x14, 0x0A, 0x00, 0x50, 0xFD]]
+        );
+
+        let (transport, writes) = TestTransport::with_reads(vec![TestTransport::ack(0x94, 0xE0)]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+        futures::executor::block_on(radio.set_control(ControlId::Xit, ControlValue::Bool(true)))
+            .unwrap();
+        assert_eq!(
+            writes.lock().unwrap().as_slice(),
+            [vec![0xFE, 0xFE, 0x94, 0xE0, 0x21, 0x02, 0x01, 0xFD]]
+        );
+
+        let (transport, writes) = TestTransport::with_reads(vec![TestTransport::ack(0x98, 0xE0)]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7610),
+            0xE0,
+            0x98,
+            transport,
+        );
+        futures::executor::block_on(radio.set_control(ControlId::Antenna, ControlValue::U8(1)))
+            .unwrap();
+        assert_eq!(
+            writes.lock().unwrap().as_slice(),
+            [vec![0xFE, 0xFE, 0x98, 0xE0, 0x12, 0x01, 0xFD]]
+        );
+
+        let (transport, writes) = TestTransport::with_reads(vec![TestTransport::ack(0xA2, 0xE0)]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic9700),
+            0xE0,
+            0xA2,
+            transport,
+        );
+        futures::executor::block_on(radio.set_control(ControlId::Agc, ControlValue::U8(2)))
+            .unwrap();
+        assert_eq!(
+            writes.lock().unwrap().as_slice(),
+            [vec![0xFE, 0xFE, 0xA2, 0xE0, 0x16, 0x12, 0x02, 0xFD]]
+        );
+    }
+
+    #[test]
+    fn profiled_get_controls_and_meters_decode_exact_ci_v_payloads() {
+        let (transport, writes) = TestTransport::with_reads(vec![
+            TestTransport::response(0x94, 0xE0, &[0x14, 0x0A, 0x00, 0x50]),
+            TestTransport::response(0x94, 0xE0, &[0x15, 0x02, 0x00, 0x48]),
+        ]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+        let power = futures::executor::block_on(radio.get_control(ControlId::RfPower))
+            .unwrap()
+            .unwrap();
+        assert_eq!(power, ControlValue::U8(50));
+        assert_eq!(
+            futures::executor::block_on(radio.get_meter(MeterId::Signal)).unwrap(),
+            Some(48)
+        );
+        assert_eq!(
+            writes.lock().unwrap().as_slice(),
+            [
+                vec![0xFE, 0xFE, 0x94, 0xE0, 0x14, 0x0A, 0xFD],
+                vec![0xFE, 0xFE, 0x94, 0xE0, 0x15, 0x02, 0xFD],
+            ]
+        );
+    }
+
+    #[test]
+    fn ignores_usb_echo_back_before_civ_data_response() {
+        let echo = TestTransport::response(0xE0, 0x94, &[0x15, 0x02]);
+        let response = TestTransport::response(0x94, 0xE0, &[0x15, 0x02, 0x00, 0x48]);
+        let (transport, writes) = TestTransport::with_reads(vec![echo, response]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_meter(MeterId::Signal)).unwrap(),
+            Some(48)
+        );
+        assert_eq!(
+            writes.lock().unwrap().as_slice(),
+            [vec![0xFE, 0xFE, 0x94, 0xE0, 0x15, 0x02, 0xFD]]
+        );
+    }
+
+    #[test]
+    fn preserves_civ_nak_after_usb_echo_back() {
+        let echo = TestTransport::response(0xE0, 0x94, &[0x14, 0x0A, 0x00, 0x50]);
+        let nak = TestTransport::response(0x94, 0xE0, &[0xFA, 0x06]);
+        let (transport, _) = TestTransport::with_reads(vec![echo, nak]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+
+        let error = futures::executor::block_on(
+            radio.set_control(ControlId::RfPower, ControlValue::U8(50)),
+        )
+        .expect_err("CI-V NAK must not be hidden by echo filtering");
+        assert!(error.to_string().contains("radio rejected CI-V command"));
+    }
+
+    #[test]
+    fn model_value_boundaries_reject_before_transport() {
+        for (model, attenuator, invalid_attenuator, max_preamp) in [
+            (crate::models::IcomCivModel::Ic705, 20, 10, 2_u8),
+            (crate::models::IcomCivModel::Ic7300, 20, 10, 1_u8),
+            (crate::models::IcomCivModel::Ic7610, 45, 5, 2_u8),
+            (crate::models::IcomCivModel::Ic9700, 10, 20, 1_u8),
+        ] {
+            let (transport, writes) = TestTransport::with_reads(Vec::new());
+            let radio = IcomCiVRadio::with_transport(
+                Some(model),
+                0xE0,
+                match model {
+                    crate::models::IcomCivModel::Ic705 => 0xA4,
+                    crate::models::IcomCivModel::Ic7300 => 0x94,
+                    crate::models::IcomCivModel::Ic7610 => 0x98,
+                    crate::models::IcomCivModel::Ic9700 => 0xA2,
+                },
+                transport,
+            );
+            assert!(futures::executor::block_on(
+                radio.set_control(ControlId::Attenuator, ControlValue::U8(invalid_attenuator),)
+            )
+            .is_err());
+            assert!(futures::executor::block_on(radio.set_control(
+                ControlId::Preamp,
+                ControlValue::U8(max_preamp.saturating_add(1)),
+            ))
+            .is_err());
+            assert!(futures::executor::block_on(
+                radio.set_control(ControlId::Filter, ControlValue::U8(4),)
+            )
+            .is_err());
+            assert!(
+                writes.lock().unwrap().is_empty(),
+                "{model:?} sent invalid CAT"
+            );
+
+            let (transport, writes) = TestTransport::with_reads(vec![TestTransport::ack(
+                match model {
+                    crate::models::IcomCivModel::Ic705 => 0xA4,
+                    crate::models::IcomCivModel::Ic7300 => 0x94,
+                    crate::models::IcomCivModel::Ic7610 => 0x98,
+                    crate::models::IcomCivModel::Ic9700 => 0xA2,
+                },
+                0xE0,
+            )]);
+            let radio = IcomCiVRadio::with_transport(
+                Some(model),
+                0xE0,
+                match model {
+                    crate::models::IcomCivModel::Ic705 => 0xA4,
+                    crate::models::IcomCivModel::Ic7300 => 0x94,
+                    crate::models::IcomCivModel::Ic7610 => 0x98,
+                    crate::models::IcomCivModel::Ic9700 => 0xA2,
+                },
+                transport,
+            );
+            futures::executor::block_on(
+                radio.set_control(ControlId::Attenuator, ControlValue::U8(attenuator)),
+            )
+            .unwrap();
+            assert_eq!(writes.lock().unwrap().len(), 1, "{model:?}");
+        }
+    }
+
+    #[test]
     fn ic7300_scope_controls_reject_other_models_before_transport() {
         let radio = IcomCiVRadio::new_for_model(
             crate::models::IcomCivModel::Ic7610,
@@ -2517,14 +2891,14 @@ mod tests {
 
     #[test]
     fn ic7300_meter_queries_match_manual_command_table() {
-        assert_eq!(meter_command_prefix(MeterId::Signal), &[0x15, 0x01]);
-        assert_eq!(meter_command_prefix(MeterId::Power), &[0x15, 0x02]);
-        assert_eq!(meter_command_prefix(MeterId::Alc), &[0x15, 0x11]);
+        assert_eq!(meter_command_prefix(MeterId::Signal), &[0x15, 0x02]);
+        assert_eq!(meter_command_prefix(MeterId::Power), &[0x15, 0x11]);
         assert_eq!(meter_command_prefix(MeterId::Swr), &[0x15, 0x12]);
-        assert_eq!(meter_command_prefix(MeterId::Compression), &[0x15, 0x13]);
-        assert_eq!(meter_command_prefix(MeterId::Voltage), &[0x15, 0x14]);
-        assert_eq!(meter_command_prefix(MeterId::Current), &[0x15, 0x15]);
-        assert_eq!(meter_command_prefix(MeterId::Temperature), &[0x15, 0x16]);
+        assert_eq!(meter_command_prefix(MeterId::Alc), &[0x15, 0x13]);
+        assert_eq!(meter_command_prefix(MeterId::Compression), &[0x15, 0x14]);
+        assert_eq!(meter_command_prefix(MeterId::Voltage), &[0x15, 0x15]);
+        assert_eq!(meter_command_prefix(MeterId::Current), &[0x15, 0x16]);
+        assert_eq!(meter_command_prefix(MeterId::Temperature), &[0x15, 0x17]);
     }
 
     #[test]
@@ -2538,7 +2912,7 @@ mod tests {
         payload.push(0xFD);
         let mut frame = vec![0xFE, 0xFE, 0xE0, 0x94];
         frame.extend_from_slice(&payload);
-        let memory = decode_icom_memory(&frame, &[0x1A, 0x00], IcomCivModel::Ic7300).unwrap();
+        let memory = decode_icom_memory(&frame, &[0x1A, 0x00], MemoryLayout::Hf).unwrap();
         assert_eq!(memory.channel, 1);
         assert_eq!(memory.frequency_hz, 14_074_000);
         assert_eq!(memory.mode, Mode::Data);
@@ -2567,6 +2941,30 @@ mod tests {
     }
 
     #[test]
+    fn repeater_shift_mapping_matches_icom_ci_v_values() {
+        assert_eq!(
+            decode_repeater_shift(Some(0x10)).unwrap(),
+            RepeaterShift::Simplex
+        );
+        assert_eq!(
+            decode_repeater_shift(Some(0x11)).unwrap(),
+            RepeaterShift::Minus
+        );
+        assert_eq!(
+            decode_repeater_shift(Some(0x12)).unwrap(),
+            RepeaterShift::Plus
+        );
+        assert_eq!(
+            decode_repeater_shift(Some(0x00)).unwrap(),
+            RepeaterShift::Simplex
+        );
+        assert_eq!(encode_repeater_shift(RepeaterShift::Simplex), 0x10);
+        assert_eq!(encode_repeater_shift(RepeaterShift::Minus), 0x11);
+        assert_eq!(encode_repeater_shift(RepeaterShift::Plus), 0x12);
+        assert!(decode_repeater_shift(Some(0x13)).is_err());
+    }
+
+    #[test]
     fn decodes_icom_vhf_memory_duplex_dtcs_and_name_fields() {
         let mut data = vec![0u8; 68];
         data[2..4].copy_from_slice(&encode_memory_channel(12));
@@ -2580,7 +2978,7 @@ mod tests {
         let mut frame = vec![0xFE, 0xFE, 0xE0, 0xA4, 0x1A, 0x00];
         frame.extend_from_slice(&data);
         frame.push(0xFD);
-        let memory = decode_icom_memory(&frame, &[0x1A, 0x00], IcomCivModel::Ic705).unwrap();
+        let memory = decode_icom_memory(&frame, &[0x1A, 0x00], MemoryLayout::VhfUhf).unwrap();
         assert_eq!(memory.channel, 12);
         assert_eq!(memory.frequency_hz, 146_520_000);
         assert_eq!(memory.transmit_frequency_hz, Some(147_120_000));
@@ -2939,6 +3337,495 @@ mod tests {
         assert_eq!(
             detect_likely_radio_model(0x0C26, 0x0001, "Icom Inc.", "USB Audio CODEC"),
             Some("Icom CI-V radio".to_string())
+        );
+    }
+
+    #[test]
+    fn exercises_common_command_paths_and_model_overrides() {
+        let response = |payload: &[u8]| TestTransport::response(0x94, 0xE0, payload);
+        let (transport, writes) = TestTransport::with_reads(vec![
+            response(&[0x03, 0x00, 0x40, 0x07, 0x14, 0x00]),
+            response(&[0x26, 0x00, 0x01, 0x01, 0x02]),
+            TestTransport::ack(0x94, 0xE0),
+            response(&[0x1C, 0x00, 0x01]),
+            TestTransport::ack(0x94, 0xE0),
+            response(&[0x1C, 0x01, 0x02]),
+            response(&[0x26, 0x00, 0x01, 0x01, 0x03]),
+            TestTransport::ack(0x94, 0xE0),
+        ]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_074_000
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_mode()).unwrap(),
+            Mode::Data
+        );
+        futures::executor::block_on(radio.set_ptt(true)).unwrap();
+        assert!(futures::executor::block_on(radio.get_ptt()).unwrap());
+        futures::executor::block_on(radio.set_control(ControlId::Tuner, ControlValue::Bool(true)))
+            .unwrap();
+        assert_eq!(
+            futures::executor::block_on(radio.get_tuner_status()).unwrap(),
+            Some(TunerStatus {
+                enabled: true,
+                tuning: true
+            })
+        );
+        futures::executor::block_on(radio.set_mode(Mode::Usb)).unwrap();
+        let writes = writes.lock().unwrap();
+        assert!(writes.iter().any(|frame| frame.ends_with(&[0x03, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x1C, 0x00, 0x01, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x1C, 0x01, 0x01, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x26, 0x00, 0x01, 0x00, 0x03, 0xFD])));
+    }
+
+    #[test]
+    fn exercises_vfo_receiver_external_preamp_rit_and_tuner_commands() {
+        let response = |payload: &[u8]| TestTransport::response(0xA2, 0xE0, payload);
+        let (transport, writes) = TestTransport::with_reads(vec![
+            TestTransport::ack(0xA2, 0xE0),
+            TestTransport::ack(0xA2, 0xE0),
+            response(&[0x16, 0x02, 0x03]),
+            response(&[0x16, 0x02, 0x03]),
+            TestTransport::ack(0xA2, 0xE0),
+            response(&[0x21, 0x00, 0x50, 0x12, 0x00, 0x00, 0x01]),
+            TestTransport::ack(0xA2, 0xE0),
+            TestTransport::ack(0xA2, 0xE0),
+            response(&[0x1C, 0x01, 0x00]),
+        ]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic9700),
+            0xE0,
+            0xA2,
+            transport,
+        );
+        futures::executor::block_on(radio.set_control(ControlId::Vfo, ControlValue::U8(1)))
+            .unwrap();
+        futures::executor::block_on(radio.select_receiver(IcomReceiver::Sub)).unwrap();
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::ExternalPreamp)).unwrap(),
+            Some(ControlValue::Bool(true))
+        );
+        futures::executor::block_on(
+            radio.set_control(ControlId::ExternalPreamp, ControlValue::Bool(false)),
+        )
+        .unwrap();
+        assert_eq!(radio.get_rit_offset_hz().unwrap(), -1250);
+        radio.set_rit_offset_hz(567).unwrap();
+        radio.start_tuner_blocking().unwrap();
+        assert!(!radio.get_tuner_status_blocking().unwrap().enabled);
+        let writes = writes.lock().unwrap();
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x07, 0x01, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x07, 0xD1, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x16, 0x02, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x16, 0x02, 0x01, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x16, 0x02, 0x01, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x1C, 0x01, 0x02, 0xFD])));
+    }
+
+    #[test]
+    fn exercises_repeater_memory_frequency_power_and_filter_io() {
+        let response = |payload: &[u8]| TestTransport::response(0x94, 0xE0, payload);
+        let ack = || TestTransport::ack(0x94, 0xE0);
+        let mut reads = vec![
+            response(&[0x16, 0x42, 0x01]),
+            response(&[0x16, 0x43, 0x00]),
+            response(&[0x1B, 0x00, 0x85, 0x08, 0x00]),
+            response(&[0x0F, 0x12]),
+            response(&[0x0C, 0x00, 0x00, 0x06, 0x00]),
+        ];
+        reads.extend((0..6).map(|_| ack()));
+        reads.push(ack());
+        reads.push(ack());
+        reads.push(response(&[0x26, 0x00, 0x01, 0x00, 0x02]));
+        reads.push(ack());
+        reads.push(response(&[0x26, 0x00, 0x01, 0x00, 0x02]));
+        reads.push(ack());
+        let (transport, writes) = TestTransport::with_reads(reads);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+        let repeater = radio.get_repeater_settings().unwrap();
+        assert_eq!(repeater.shift, RepeaterShift::Plus);
+        assert_eq!(repeater.tone.mode, ToneMode::Encode);
+        assert_eq!(repeater.offset_hz, Some(60_000));
+        radio
+            .set_repeater_settings(RepeaterSettings {
+                shift: RepeaterShift::Minus,
+                offset_hz: Some(600_000),
+                tone: ToneSettings {
+                    mode: ToneMode::EncodeDecode,
+                    frequency_tenths_hz: Some(885),
+                    ..ToneSettings::default()
+                },
+            })
+            .unwrap();
+        futures::executor::block_on(radio.set_frequency_hz(14_074_000)).unwrap();
+        futures::executor::block_on(radio.set_power(false)).unwrap();
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::Filter)).unwrap(),
+            Some(ControlValue::U8(2))
+        );
+        futures::executor::block_on(radio.set_control(ControlId::Filter, ControlValue::U8(3)))
+            .unwrap();
+        let writes = writes.lock().unwrap();
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x0F, 0x11, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x18, 0x00, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x05, 0x00, 0x40, 0x07, 0x14, 0x00, 0xFD])));
+    }
+
+    #[test]
+    fn rejects_nak_and_invalid_raw_frames_without_hiding_protocol_errors() {
+        let (transport, _) =
+            TestTransport::with_reads(vec![TestTransport::response(0x94, 0xE0, &[0xFA])]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+        let error = futures::executor::block_on(radio.set_ptt(true)).unwrap_err();
+        assert!(error.to_string().contains("rejected CI-V command"));
+        let (transport, _) = TestTransport::with_reads(Vec::new());
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+        assert!(
+            futures::executor::block_on(radio.protocol_write_read(&[0xFE, 0x00, 0xFD])).is_err()
+        );
+        assert!(futures::executor::block_on(radio.get_power()).is_err());
+    }
+
+    #[test]
+    fn exercises_scope_configuration_and_selection_validation() {
+        let ack = || TestTransport::ack(0x94, 0xE0);
+        let (transport, writes) = TestTransport::with_reads((0..9).map(|_| ack()).collect());
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+        futures::executor::block_on(radio.set_scope_configuration(ScopeConfiguration {
+            center_mode: Some(true),
+            span_hz: Some(200_000),
+            fixed_edge_number: Some(2),
+            hold: Some(false),
+            reference_level_tenths_db: Some(-55),
+            sweep_speed: Some(2),
+            vbw_wide: Some(true),
+            fixed_edges_hz: Some((14_000_000, 14_200_000)),
+        }))
+        .unwrap();
+        futures::executor::block_on(radio.select_vfo(IcomVfo::A)).unwrap();
+        assert!(writes.lock().unwrap().len() == 9);
+
+        let unsupported = IcomCiVRadio::new_for_model(
+            crate::models::IcomCivModel::Ic9700,
+            "",
+            115_200,
+            0xE0,
+            0xA2,
+        );
+        assert!(
+            futures::executor::block_on(unsupported.set_scope_configuration(ScopeConfiguration {
+                span_hz: Some(0),
+                ..ScopeConfiguration::default()
+            }))
+            .is_err()
+        );
+        assert!(
+            futures::executor::block_on(radio.set_scope_configuration(ScopeConfiguration {
+                fixed_edge_number: Some(5),
+                ..ScopeConfiguration::default()
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn exercises_hf_memory_read_write_and_channel_selection() {
+        let mut payload = vec![0x1A, 0x00, 0x07, 0x00, 0x00];
+        payload.extend_from_slice(&encode_civ_frequency_bcd(14_074_000));
+        payload.extend_from_slice(&[0x01, 0x01, 0x02]);
+        payload.extend_from_slice(&encode_tone_frequency(885));
+        payload.extend_from_slice(&encode_tone_frequency(1000));
+        payload.extend_from_slice(b"FIELD TEST");
+        let (transport, writes) = TestTransport::with_reads(vec![
+            TestTransport::ack(0x94, 0xE0),
+            TestTransport::ack(0x94, 0xE0),
+            TestTransport::response(0x94, 0xE0, &payload),
+            TestTransport::ack(0x94, 0xE0),
+        ]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+        radio.select_memory_channel(7).unwrap();
+        let memory = radio.read_memory_channel(7).unwrap();
+        assert_eq!(memory.frequency_hz, 14_074_000);
+        assert_eq!(memory.name.as_deref(), Some("FIELD TEST"));
+        radio
+            .write_memory_channel(MemoryChannel {
+                channel: 7,
+                name: Some("FIELD TEST".to_string()),
+                frequency_hz: 14_074_000,
+                transmit_frequency_hz: None,
+                mode: Mode::Data,
+                repeater: RepeaterSettings {
+                    tone: ToneSettings {
+                        mode: ToneMode::Encode,
+                        frequency_tenths_hz: Some(885),
+                        ..ToneSettings::default()
+                    },
+                    ..RepeaterSettings::default()
+                },
+            })
+            .unwrap();
+        assert_eq!(writes.lock().unwrap().len(), 4);
+
+        let (transport, _) = TestTransport::with_reads(Vec::new());
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+        assert!(radio.select_memory_channel(0).is_err());
+        assert!(radio
+            .write_memory_channel(MemoryChannel {
+                channel: 1,
+                name: Some("é".to_string()),
+                frequency_hz: 14_074_000,
+                transmit_frequency_hz: None,
+                mode: Mode::Usb,
+                repeater: RepeaterSettings::default(),
+            })
+            .is_err());
+    }
+
+    #[test]
+    fn exercises_native_scope_stream_lifecycle_over_transport() {
+        let mut reads = vec![
+            TestTransport::ack(0x94, 0xE0),
+            TestTransport::ack(0x94, 0xE0),
+        ];
+        for division in 1..=11 {
+            let mut payload = vec![0x27, 0x00, 0x00, decimal_to_bcd(division), 0x11];
+            let count = if division == 1 {
+                0
+            } else if division == 11 {
+                25
+            } else {
+                50
+            };
+            payload.extend(std::iter::repeat_n(42, count));
+            reads.push(TestTransport::response(0x94, 0xE0, &payload));
+        }
+        reads.push(TestTransport::ack(0x94, 0xE0));
+        let (transport, writes) = TestTransport::with_reads(reads);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+        let bins =
+            futures::executor::block_on(radio.enable_spectrum_stream(Duration::from_millis(50)))
+                .unwrap();
+        assert_eq!(bins.len(), 475);
+        assert_eq!(radio.scope_stream_counters(), (11, 1, 0));
+        futures::executor::block_on(radio.disable_spectrum_stream()).unwrap();
+        assert!(writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.ends_with(&[0x27, 0x10, 0x01, 0xFD])));
+        assert!(writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.ends_with(&[0x27, 0x11, 0x01, 0xFD])));
+        assert!(writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.ends_with(&[0x27, 0x11, 0x00, 0xFD])));
+    }
+
+    #[test]
+    fn exercises_on_demand_scope_waveform_request_and_empty_drain() {
+        let mut reads = Vec::new();
+        for division in 1..=11 {
+            let mut payload = vec![0x27, 0x00, 0x00, decimal_to_bcd(division), 0x11];
+            let count = if division == 1 {
+                0
+            } else if division == 11 {
+                25
+            } else {
+                50
+            };
+            payload.extend(std::iter::repeat_n(80, count));
+            reads.push(TestTransport::response(0x94, 0xE0, &payload));
+        }
+        let (transport, writes) = TestTransport::with_reads(reads);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+        let bins = futures::executor::block_on(radio.request_scope_waveform_bins()).unwrap();
+        assert_eq!(bins.len(), 475);
+        assert_eq!(
+            futures::executor::block_on(
+                radio.drain_scope_waveform_sweeps(Duration::from_millis(1))
+            )
+            .unwrap(),
+            Vec::<Vec<u8>>::new()
+        );
+        assert!(writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.ends_with(&[0x27, 0x00, 0xFD])));
+    }
+
+    #[test]
+    fn exercises_probe_and_vhf_uhf_memory_encoding() {
+        let (transport, writes) = TestTransport::with_reads(vec![
+            TestTransport::response(0xA4, 0xE0, &[0x03, 0x00, 0x40, 0x07, 0x14, 0x00]),
+            TestTransport::response(0xA4, 0xE0, &[0x04, 0x01]),
+            TestTransport::ack(0xA4, 0xE0),
+        ]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic705),
+            0xE0,
+            0xA4,
+            transport,
+        );
+        let status = radio.probe().unwrap();
+        assert_eq!(status.frequency_hz, Some(14_074_000));
+        assert_eq!(status.mode, Some("USB".to_string()));
+        radio
+            .write_memory_channel(MemoryChannel {
+                channel: 12,
+                name: Some("VHF TEST".to_string()),
+                frequency_hz: 145_500_000,
+                transmit_frequency_hz: Some(145_500_000),
+                mode: Mode::Fm,
+                repeater: RepeaterSettings {
+                    shift: RepeaterShift::Plus,
+                    offset_hz: Some(600_000),
+                    tone: ToneSettings {
+                        mode: ToneMode::Dtcs,
+                        dtcs_code: Some(125),
+                        dtcs_reverse: Some(true),
+                        ..ToneSettings::default()
+                    },
+                },
+            })
+            .unwrap();
+        assert!(writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.len() > 70 && frame[4..6] == [0x1A, 0x00]));
+
+        let (transport, _) = TestTransport::with_reads(vec![
+            TestTransport::response(0xA4, 0xE0, &[0x03, 0x00, 0x40, 0x07, 0x14, 0x00]),
+            TestTransport::response(0xA4, 0xE0, &[0x04, 0x01]),
+        ]);
+        let stream_radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic705),
+            0xE0,
+            0xA4,
+            transport,
+        );
+        assert_eq!(
+            futures::executor::block_on(stream_radio.probe_stream_status())
+                .unwrap()
+                .mode,
+            Some("USB".to_string())
+        );
+        assert_eq!(
+            IcomCiVRadio::new_for_model_default_address(
+                crate::models::IcomCivModel::Ic7300,
+                "",
+                115_200,
+                0xE0,
+            )
+            .radio_address(),
+            0x94
+        );
+    }
+
+    #[test]
+    fn exercises_ic7300_specific_scope_controls_and_validation() {
+        let (transport, writes) =
+            TestTransport::with_reads((0..8).map(|_| TestTransport::ack(0x94, 0xE0)).collect());
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+        futures::executor::block_on(radio.set_scope_sweep_speed(2)).unwrap();
+        futures::executor::block_on(radio.set_scope_hold(true)).unwrap();
+        futures::executor::block_on(radio.set_scope_reference_level_tenths_db(-55)).unwrap();
+        futures::executor::block_on(radio.set_scope_center_fixed_mode(true)).unwrap();
+        futures::executor::block_on(radio.set_scope_fixed_edge_number(2)).unwrap();
+        futures::executor::block_on(
+            radio.set_scope_fixed_edge_frequencies(2, 14_000_000, 14_200_000),
+        )
+        .unwrap();
+        futures::executor::block_on(radio.set_scope_span_hz(500_000)).unwrap();
+        futures::executor::block_on(radio.set_scope_vbw_wide(true)).unwrap();
+        assert_eq!(writes.lock().unwrap().len(), 8);
+        assert!(futures::executor::block_on(radio.set_scope_sweep_speed(3)).is_err());
+        assert!(futures::executor::block_on(radio.set_scope_fixed_edge_number(5)).is_err());
+        assert!(futures::executor::block_on(radio.set_scope_reference_level_tenths_db(3)).is_err());
+        assert!(
+            futures::executor::block_on(radio.set_scope_fixed_edge_frequencies(1, 10, 9)).is_err()
         );
     }
 

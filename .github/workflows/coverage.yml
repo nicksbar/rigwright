@@ -1,0 +1,59 @@
+name: Coverage
+
+"on":
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  llvm:
+    name: Tests and LLVM coverage
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Install native and LLVM dependencies
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev llvm
+      - name: Install Rust coverage tools
+        run: |
+          rustup component add llvm-tools-preview
+          cargo install cargo-llvm-cov --locked
+      - name: Run the complete test suite
+        run: cargo test --locked --all-features --all-targets
+      - name: Enforce Icom coverage threshold
+        run: |
+          set -o pipefail
+          cargo llvm-cov --locked --all-features --workspace --summary-only | tee coverage-summary.txt
+          bash scripts/check-icom-coverage.sh coverage-summary.txt
+      - name: Enforce changed production-file coverage
+        env:
+          GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: bash scripts/check-changed-coverage.sh coverage-summary.txt
+      - name: Generate HTML coverage report
+        run: cargo llvm-cov --locked --all-features --workspace --html --output-dir target/llvm-cov
+      - name: Publish test and coverage summary
+        if: always()
+        run: |
+          {
+            echo '## Test and LLVM coverage'
+            echo
+            echo 'The test output and coverage report are available in this check.'
+            echo
+            echo '### Coverage summary'
+            echo
+            if [[ -f coverage-summary.txt ]]; then
+              cat coverage-summary.txt
+              bash scripts/check-icom-coverage.sh coverage-summary.txt
+            else
+              echo 'Coverage summary was not generated.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload HTML coverage report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: rigwright-llvm-coverage
+          path: target/llvm-cov/html
+          if-no-files-found: error

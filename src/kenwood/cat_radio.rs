@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 
 use crate::{
+    events::{RadioEvent, RadioEventRouter},
     hal::{Mode, Radio, RadioCapabilities},
     hal_types::{
         normalize_meter_level, ControlId, ControlValue, MemoryChannel, MeterId, RepeaterSettings,
@@ -23,7 +24,8 @@ use crate::{
 };
 
 use super::profile::{
-    profile_for_model, KenwoodCatProfile, KenwoodModeCommand, KenwoodSplitCommand,
+    profile_for_model, KenwoodCatProfile, KenwoodMemorySurface, KenwoodModeCommand,
+    KenwoodRitXitLayout, KenwoodSplitCommand,
 };
 
 const RESPONSE_TIMEOUT: Duration = Duration::from_millis(1_200);
@@ -58,6 +60,7 @@ pub struct KenwoodCatRadio {
     port: String,
     baud_rate: u32,
     transport: Arc<Mutex<TransportState>>,
+    event_router: RadioEventRouter,
 }
 
 impl std::fmt::Debug for KenwoodCatRadio {
@@ -113,6 +116,7 @@ impl KenwoodCatRadio {
                 external: Some(Box::new(transport)),
                 pending: Vec::new(),
             })),
+            event_router: RadioEventRouter::default(),
         }
     }
 
@@ -126,6 +130,7 @@ impl KenwoodCatRadio {
             port: port.into(),
             baud_rate,
             transport: Arc::new(Mutex::new(TransportState::default())),
+            event_router: RadioEventRouter::default(),
         }
     }
 
@@ -135,6 +140,18 @@ impl KenwoodCatRadio {
 
     pub fn baud_rate(&self) -> u32 {
         self.baud_rate
+    }
+
+    /// Enable or disable Kenwood Auto Information output on this connection.
+    /// TS-890S uses value 2 so the setting is not persisted across power cycles;
+    /// the older command families use the documented 0/1 form.
+    pub fn set_auto_information(&self, enabled: bool) -> Result<()> {
+        let value = if enabled {
+            self.selected_profile()?.ai_on_value
+        } else {
+            "0"
+        };
+        self.send_set("AI", value)
     }
 
     pub fn profile(&self) -> Option<&'static KenwoodCatProfile> {
@@ -206,19 +223,10 @@ impl KenwoodCatRadio {
 
     pub fn get_meter(&self) -> Result<u16> {
         let profile = self.selected_profile()?;
-        let (parameters, payload_len) = match profile.model {
-            KenwoodCatModel::Ts890S => (None, 4),
-            _ => (Some("0"), 5),
-        };
-        let response = self.query("SM", parameters, Some(payload_len))?;
+        let parameters = (profile.sm_value_start != 0).then_some("0");
+        let response = self.query("SM", parameters, Some(profile.sm_payload_len))?;
         let payload = parse_payload(&response, "SM")?;
-        let value = if profile.model == KenwoodCatModel::Ts890S {
-            payload
-        } else {
-            payload
-                .strip_prefix('0')
-                .context("unexpected Kenwood SM receiver selector")?
-        };
+        let value = &payload[profile.sm_value_start..];
         let value: u16 = value.parse().context("invalid Kenwood SM response")?;
         if value > profile.meter_max {
             bail!("Kenwood SM response exceeds the profiled meter range: {value}");
@@ -228,23 +236,29 @@ impl KenwoodCatRadio {
 
     pub(crate) fn get_swr_meter(&self) -> Result<u8> {
         let profile = self.selected_profile()?;
+        if profile.swr_meter_requires_selection {
+            self.send_set("RM", "21")?;
+        }
+        self.get_rm_meter(profile.swr_rm_selector, profile.swr_meter_max)
+    }
+
+    fn get_rm_meter(&self, selector: char, maximum: u16) -> Result<u8> {
         let response = self.query("RM", None, Some(5))?;
         let payload = parse_payload(&response, "RM")?;
         let meter_type = payload
             .chars()
             .next()
             .context("missing Kenwood RM meter selector")?;
-        if meter_type != profile.swr_rm_selector {
+        if meter_type != selector {
             bail!(
-                "Kenwood RM response meter {meter_type} is not the profiled SWR meter {}: {payload}",
-                profile.swr_rm_selector
+                "Kenwood RM response meter {meter_type} is not the requested meter {selector}: {payload}"
             );
         }
         let value: u16 = payload[1..]
             .parse()
-            .context("invalid Kenwood RM SWR response")?;
-        normalize_meter_level(value, profile.swr_meter_max)
-            .context("Kenwood RM SWR response exceeds the profiled meter range")
+            .context("invalid Kenwood RM response")?;
+        normalize_meter_level(value, maximum)
+            .context("Kenwood RM response exceeds the profiled range")
     }
 
     pub(crate) fn get_signal_meter(&self) -> Result<u8> {
@@ -252,6 +266,125 @@ impl KenwoodCatRadio {
         let value = self.get_meter()?;
         normalize_meter_level(value, profile.meter_max)
             .context("Kenwood SM response exceeds the profiled meter range")
+    }
+
+    fn get_noise_blanker(&self) -> Result<bool> {
+        let spec = self
+            .selected_profile()?
+            .control(ControlId::NoiseBlanker)
+            .context("Kenwood noise blanker is not profiled")?;
+        Ok(self.get_flag_or_level_with_len(spec.command, spec.response_len)? != 0)
+    }
+
+    fn get_flag_or_level_with_len(&self, command: &str, payload_len: usize) -> Result<u8> {
+        let response = self.query(command, None, Some(payload_len))?;
+        let payload = parse_payload(&response, command)?;
+        payload
+            .chars()
+            .next()
+            .and_then(|value| value.to_digit(10))
+            .map(|value| value as u8)
+            .context("invalid Kenwood control response")
+    }
+
+    fn set_noise_blanker(&self, enabled: bool) -> Result<()> {
+        let command = self
+            .selected_profile()?
+            .control(ControlId::NoiseBlanker)
+            .context("Kenwood noise blanker is not profiled")?
+            .command;
+        self.send_set(command, if enabled { "1" } else { "0" })
+    }
+
+    fn set_flag_or_level(&self, command: &str, value: u8) -> Result<()> {
+        self.send_set(command, &value.to_string())
+    }
+
+    fn get_ts890_meter(&self, selector: char) -> Result<u8> {
+        // TS-890S meters are initially configured as "do not read" after
+        // power-on. Select this meter for reading before requesting its value.
+        self.send_set("RM", &format!("{selector}1"))?;
+        let response = self.query("RM", None, Some(5))?;
+        let payload = parse_payload(&response, "RM")?;
+        anyhow::ensure!(
+            payload.starts_with(selector),
+            "unexpected TS-890S RM meter: {payload}"
+        );
+        let value: u16 = payload[1..]
+            .parse()
+            .context("invalid TS-890S meter response")?;
+        normalize_meter_level(value, 70).context("TS-890S meter exceeds 0..70")
+    }
+
+    fn get_level_control(&self, id: ControlId) -> Result<u8> {
+        let spec = self
+            .selected_profile()?
+            .control(id)
+            .filter(|_| {
+                matches!(
+                    id,
+                    ControlId::AfGain | ControlId::RfGain | ControlId::Squelch
+                )
+            })
+            .context("Kenwood control is not a level control")?;
+        let response = self.query(spec.command, None, Some(spec.response_len))?;
+        let payload = parse_payload(&response, spec.command)?;
+        let value = if spec.response_len > 3 {
+            &payload[1..]
+        } else {
+            payload
+        };
+        value.parse().context("invalid Kenwood normalized level")
+    }
+
+    fn get_agc(&self) -> Result<u8> {
+        let spec = self
+            .selected_profile()?
+            .control(ControlId::Agc)
+            .context("AGC is not profiled for this Kenwood model")?;
+        self.get_flag_or_level_with_len(spec.command, spec.response_len)
+    }
+
+    fn get_filter(&self) -> Result<u8> {
+        let spec = self
+            .selected_profile()?
+            .control(ControlId::Filter)
+            .context("Kenwood filter selection is not profiled")?;
+        self.get_flag_or_level_with_len(spec.command, spec.response_len)
+    }
+
+    fn set_filter(&self, value: u8) -> Result<()> {
+        let spec = self
+            .selected_profile()?
+            .control(ControlId::Filter)
+            .context("Kenwood filter selection is not profiled")?;
+        if spec.max_value.is_some_and(|maximum| value <= maximum)
+            && !(spec.max_value == Some(2) && spec.command == "FL" && value == 0)
+        {
+            self.send_set(spec.command, &value.to_string())
+        } else {
+            bail!("invalid or unprofiled Kenwood IF filter selection: {value}")
+        }
+    }
+
+    fn set_level_control(&self, id: ControlId, value: u8) -> Result<()> {
+        let parameter = format!("{value:03}");
+        let spec = self
+            .selected_profile()?
+            .control(id)
+            .filter(|_| {
+                matches!(
+                    id,
+                    ControlId::AfGain | ControlId::RfGain | ControlId::Squelch
+                )
+            })
+            .context("Kenwood control is not a level control")?;
+        let parameters = if spec.response_len > 3 {
+            format!("0{parameter}")
+        } else {
+            parameter
+        };
+        self.send_set(spec.command, &parameters)
     }
 
     pub fn get_split(&self) -> Result<bool> {
@@ -272,6 +405,79 @@ impl KenwoodCatRadio {
                 self.send_set("FT", &transmit.to_string())
             }
         }
+    }
+
+    fn read_if_rit_xit(&self) -> Result<(i32, bool, bool)> {
+        if self.selected_profile()?.rit_xit_layout == KenwoodRitXitLayout::RfAndFunctionState {
+            let response = self.query("RF", None, Some(5))?;
+            let rf = parse_payload(&response, "RF")?;
+            anyhow::ensure!(rf.len() == 5, "invalid TS-890S RF response");
+            let magnitude: i32 = rf[1..].parse().context("invalid TS-890S RIT/XIT offset")?;
+            let offset = match &rf[0..1] {
+                "0" => magnitude,
+                "1" => -magnitude,
+                value => bail!("invalid TS-890S RIT/XIT direction: {value}"),
+            };
+            let rit = parse_bool_payload(&self.query("RT", None, Some(1))?, "RT")?;
+            let xit = parse_bool_payload(&self.query("XT", None, Some(1))?, "XT")?;
+            return Ok((offset, rit, xit));
+        }
+        let response = self.query("IF", None, None)?;
+        let payload = parse_payload(&response, "IF")?;
+        anyhow::ensure!(payload.len() >= 23, "Kenwood IF response is too short");
+        let offset: i32 = payload[16..21]
+            .parse()
+            .context("invalid Kenwood RIT/XIT offset")?;
+        Ok((
+            offset,
+            payload.as_bytes()[21] == b'1',
+            payload.as_bytes()[22] == b'1',
+        ))
+    }
+
+    fn set_rit_xit_offset(&self, offset_hz: i32) -> Result<()> {
+        anyhow::ensure!(
+            (-9_999..=9_999).contains(&offset_hz),
+            "Kenwood RIT/XIT offset must fit ±9999 Hz"
+        );
+        self.send_set("RC", "")?;
+        if offset_hz >= 0 {
+            self.send_set("RU", &format!("{offset_hz:05}"))
+        } else {
+            self.send_set("RD", &format!("{:05}", offset_hz.unsigned_abs()))
+        }
+    }
+
+    pub fn get_rit_offset_hz(&self) -> Result<i32> {
+        Ok(self.read_if_rit_xit()?.0)
+    }
+
+    pub fn set_rit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        self.send_set("RT", "1")?;
+        self.set_rit_xit_offset(offset_hz)
+    }
+
+    pub fn get_xit_offset_hz(&self) -> Result<i32> {
+        Ok(self.read_if_rit_xit()?.0)
+    }
+
+    pub fn set_xit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        self.send_set("XT", "1")?;
+        self.set_rit_xit_offset(offset_hz)
+    }
+
+    pub fn start_tuner(&self) -> Result<()> {
+        self.send_set("AC", "111")
+    }
+
+    pub fn get_tuner_status(&self) -> Result<crate::hal_types::TunerStatus> {
+        let response = self.query("AC", None, Some(3))?;
+        let payload = parse_payload(&response, "AC")?;
+        anyhow::ensure!(payload.len() == 3, "invalid Kenwood tuner response");
+        Ok(crate::hal_types::TunerStatus {
+            enabled: payload.as_bytes()[0] == b'1',
+            tuning: payload.as_bytes()[2] == b'1',
+        })
     }
 
     /// Kenwood PC command references document CN (CTCSS frequency index) and
@@ -320,31 +526,53 @@ impl KenwoodCatRadio {
 
     pub fn select_memory_channel(&self, channel: u16) -> Result<()> {
         anyhow::ensure!(
-            self.model() == Some(KenwoodCatModel::Ts890S) && channel <= 119,
-            "TS-890S memory channels are the only Kenwood memory surface currently profiled"
+            self.selected_profile()?.memory_surface != KenwoodMemorySurface::None && channel <= 119,
+            "this Kenwood profile does not expose channels 0..119"
         );
-        self.send_set("FR", "3")?;
-        self.send_set("MN", &format!("{channel:03}"))
+        match self.selected_profile()?.memory_surface {
+            KenwoodMemorySurface::Ts890 => {
+                self.send_set("FR", "3")?;
+                self.send_set("MN", &format!("{channel:03}"))
+            }
+            KenwoodMemorySurface::Ts590 => {
+                self.send_set("FR", "2")?;
+                self.send_set("MC", &format!("{channel:03}"))
+            }
+            KenwoodMemorySurface::None => unreachable!(),
+        }
     }
 
     pub fn read_memory_channel(&self, channel: u16) -> Result<MemoryChannel> {
         anyhow::ensure!(
-            self.model() == Some(KenwoodCatModel::Ts890S) && channel <= 119,
-            "TS-890S memory records are the only Kenwood memory surface currently profiled"
+            self.selected_profile()?.memory_surface != KenwoodMemorySurface::None && channel <= 119,
+            "this Kenwood profile does not expose memory records"
         );
-        let response = self.query("MA0", Some(&format!("{channel:03}")), None)?;
-        decode_ts890_memory(parse_payload(&response, "MA0")?, self.selected_profile()?)
+        match self.selected_profile()?.memory_surface {
+            KenwoodMemorySurface::Ts890 => {
+                let response = self.query("MA0", Some(&format!("{channel:03}")), None)?;
+                decode_ts890_memory(parse_payload(&response, "MA0")?, self.selected_profile()?)
+            }
+            KenwoodMemorySurface::Ts590 => {
+                let response = self.query("MR", Some(&format!("0{channel:03}")), None)?;
+                decode_ts590_memory(parse_payload(&response, "MR")?, self.selected_profile()?)
+            }
+            KenwoodMemorySurface::None => unreachable!(),
+        }
     }
 
     pub fn write_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
         anyhow::ensure!(
-            self.model() == Some(KenwoodCatModel::Ts890S) && channel.channel <= 119,
-            "TS-890S memory records are the only Kenwood memory surface currently profiled"
+            self.selected_profile()?.memory_surface != KenwoodMemorySurface::None
+                && channel.channel <= 119,
+            "this Kenwood profile does not expose memory writes"
         );
         anyhow::ensure!(
             channel.frequency_hz <= 99_999_999_999,
             "Kenwood memory frequency does not fit the documented 11-digit field"
         );
+        if self.selected_profile()?.memory_surface == KenwoodMemorySurface::Ts590 {
+            return self.write_ts590_memory_channel(channel);
+        }
         anyhow::ensure!(
             matches!(channel.repeater.shift, RepeaterShift::Simplex),
             "Kenwood MA0 memory writes require simplex; split memory needs a separate TX frequency"
@@ -377,6 +605,37 @@ impl KenwoodCatRadio {
             channel.channel, channel.frequency_hz, channel.repeater.tone.index, tx_frequency,
         );
         self.send_set("MA0", &params)
+    }
+
+    fn write_ts590_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
+        let mode = self.selected_profile()?.encode_mode(channel.mode)?;
+        anyhow::ensure!(
+            channel.repeater.tone.index <= 42,
+            "Kenwood tone index must be 0..=42"
+        );
+        let split = channel.transmit_frequency_hz.is_some();
+        let frequency = channel
+            .transmit_frequency_hz
+            .unwrap_or(channel.frequency_hz);
+        let tone = match channel.repeater.tone.mode {
+            ToneMode::Off => '0',
+            ToneMode::Encode => '1',
+            ToneMode::EncodeDecode => '2',
+            ToneMode::Dtcs => bail!("DTCS is not supported by the TS-590SG memory format"),
+        };
+        let name = channel.name.unwrap_or_default();
+        anyhow::ensure!(
+            name.is_ascii() && name.len() <= 8,
+            "TS-590SG memory name must be ASCII and at most 8 characters"
+        );
+        let params = format!(
+            "{}{channel_number:03}{frequency:011}{mode}0{tone}00{tone_index:02}00000000000000000{name}",
+            if split { '1' } else { '0' },
+            channel_number = channel.channel,
+            tone_index = channel.repeater.tone.index,
+        );
+        self.send_set("MW", &params)?;
+        Ok(())
     }
 
     fn selected_profile(&self) -> Result<&'static KenwoodCatProfile> {
@@ -463,7 +722,7 @@ impl KenwoodCatRadio {
                             display_command(request)
                         ),
                         _ if matcher(&frame) => return Ok(frame),
-                        _ => {} // Ignore interleaved Auto Information frames.
+                        _ => self.publish_unsolicited(&frame),
                     }
                 }
 
@@ -531,6 +790,38 @@ impl KenwoodCatRadio {
         result
     }
 
+    fn publish_unsolicited(&self, frame: &[u8]) {
+        // Keep the raw frame available even when a model-specific command is
+        // not yet mapped to a typed HAL event. This is important with AI on:
+        // silently discarding state changes makes polling clients stale.
+        let Some(payload) = frame.strip_suffix(b";") else {
+            return;
+        };
+        if payload.starts_with(b"FA") || payload.starts_with(b"FB") {
+            if payload.len() == 13 {
+                if let Ok(text) = std::str::from_utf8(&payload[2..]) {
+                    if let Ok(frequency_hz) = text.parse() {
+                        self.event_router
+                            .publish(RadioEvent::FrequencyChanged { frequency_hz });
+                        return;
+                    }
+                }
+            }
+        } else if payload == b"TX0" || payload == b"TX1" {
+            self.event_router.publish(RadioEvent::PttChanged {
+                enabled: payload[2] == b'1',
+            });
+            return;
+        } else if payload == b"RX" {
+            self.event_router
+                .publish(RadioEvent::PttChanged { enabled: false });
+            return;
+        }
+        self.event_router.publish(RadioEvent::Raw {
+            payload: frame.to_vec(),
+        });
+    }
+
     fn watts_to_normalized(&self, watts: u16) -> Result<u8> {
         let (minimum, maximum) = self
             .selected_profile()?
@@ -555,6 +846,10 @@ impl KenwoodCatRadio {
 
 #[async_trait]
 impl Radio for KenwoodCatRadio {
+    fn event_router(&self) -> Option<RadioEventRouter> {
+        Some(self.event_router.clone())
+    }
+
     async fn get_frequency_hz(&self) -> Result<u64> {
         let command = self.frequency_command()?;
         parse_payload(&self.query(command, None, Some(11))?, command)?
@@ -668,6 +963,32 @@ impl Radio for KenwoodCatRadio {
 
     async fn get_control(&self, id: ControlId) -> Result<Option<ControlValue>> {
         match id {
+            ControlId::AfGain | ControlId::RfGain | ControlId::Squelch => {
+                Ok(Some(ControlValue::U8(self.get_level_control(id)?)))
+            }
+            ControlId::NoiseReduction | ControlId::Notch | ControlId::Preamp => {
+                let spec = self
+                    .selected_profile()?
+                    .control(id)
+                    .context("Kenwood control is not profiled")?;
+                Ok(Some(if id == ControlId::Preamp {
+                    ControlValue::U8(
+                        self.get_flag_or_level_with_len(spec.command, spec.response_len)?,
+                    )
+                } else {
+                    ControlValue::Bool(
+                        self.get_flag_or_level_with_len(spec.command, spec.response_len)? != 0,
+                    )
+                }))
+            }
+            ControlId::NoiseBlanker => Ok(Some(ControlValue::Bool(self.get_noise_blanker()?))),
+            ControlId::Filter => Ok(Some(ControlValue::U8(self.get_filter()?))),
+            ControlId::Agc if self.selected_profile()?.control(ControlId::Agc).is_some() => {
+                Ok(Some(ControlValue::U8(self.get_agc()?)))
+            }
+            ControlId::Rit => Ok(Some(ControlValue::Bool(self.read_if_rit_xit()?.1))),
+            ControlId::Xit => Ok(Some(ControlValue::Bool(self.read_if_rit_xit()?.2))),
+            ControlId::Vfo => Ok(Some(ControlValue::Vfo(self.read_vfo("FR")?))),
             ControlId::RfPower => Ok(Some(ControlValue::U8(
                 self.watts_to_normalized(self.get_power_watts()?)?,
             ))),
@@ -678,18 +999,89 @@ impl Radio for KenwoodCatRadio {
 
     async fn get_meter(&self, id: MeterId) -> Result<Option<u8>> {
         match id {
-            MeterId::Signal => Ok(Some(self.get_signal_meter()?)),
+            MeterId::Signal | MeterId::Power => Ok(Some(self.get_signal_meter()?)),
             MeterId::Swr => Ok(Some(self.get_swr_meter()?)),
-            _ => bail!("Kenwood meter {id:?} is not implemented for this profile"),
+            id => {
+                let spec = self
+                    .selected_profile()?
+                    .meter(id)
+                    .context("Kenwood meter is not profiled")?;
+                Ok(Some(
+                    if self.selected_profile()?.swr_meter_requires_selection {
+                        self.get_ts890_meter(spec.selector)?
+                    } else {
+                        self.get_rm_meter(spec.selector, spec.maximum)?
+                    },
+                ))
+            }
         }
     }
 
     fn supports_meter(&self, id: MeterId) -> bool {
-        self.model().is_some() && matches!(id, MeterId::Signal | MeterId::Swr)
+        self.profile().is_some_and(|profile| {
+            matches!(id, MeterId::Signal | MeterId::Power | MeterId::Swr)
+                || profile.meter(id).is_some()
+        })
     }
 
     async fn set_control(&self, id: ControlId, value: ControlValue) -> Result<()> {
         match (id, value) {
+            (ControlId::AfGain, ControlValue::U8(value))
+            | (ControlId::RfGain, ControlValue::U8(value))
+            | (ControlId::Squelch, ControlValue::U8(value)) => self.set_level_control(id, value),
+            (ControlId::Preamp, ControlValue::U8(value)) => {
+                let spec = self
+                    .selected_profile()?
+                    .control(id)
+                    .context("Kenwood control is not profiled")?;
+                anyhow::ensure!(
+                    spec.max_value.is_none_or(|maximum| value <= maximum),
+                    "Kenwood control value is outside the model profile"
+                );
+                self.set_flag_or_level(spec.command, value)
+            }
+            (ControlId::NoiseReduction, ControlValue::Bool(enabled))
+            | (ControlId::Notch, ControlValue::Bool(enabled)) => {
+                let spec = self
+                    .selected_profile()?
+                    .control(id)
+                    .context("Kenwood control is not profiled")?;
+                self.set_flag_or_level(spec.command, u8::from(enabled))
+            }
+            (ControlId::NoiseBlanker, ControlValue::Bool(enabled)) => {
+                self.set_noise_blanker(enabled)
+            }
+            (ControlId::Filter, ControlValue::U8(value)) => self.set_filter(value),
+            (ControlId::Agc, ControlValue::U8(value)) => {
+                let spec = self
+                    .selected_profile()?
+                    .control(ControlId::Agc)
+                    .context("AGC is not profiled")?;
+                anyhow::ensure!(
+                    spec.max_value.is_none_or(|maximum| value <= maximum),
+                    "Kenwood AGC value is outside the model profile"
+                );
+                self.set_flag_or_level(spec.command, value)
+            }
+            (ControlId::Rit, ControlValue::Bool(enabled)) => {
+                let command = self
+                    .selected_profile()?
+                    .control(ControlId::Rit)
+                    .context("RIT is not profiled")?
+                    .command;
+                self.send_set(command, u8::from(enabled).to_string().as_str())
+            }
+            (ControlId::Xit, ControlValue::Bool(enabled)) => {
+                let command = self
+                    .selected_profile()?
+                    .control(ControlId::Xit)
+                    .context("XIT is not profiled")?
+                    .command;
+                self.send_set(command, u8::from(enabled).to_string().as_str())
+            }
+            (ControlId::Vfo, ControlValue::Vfo(vfo)) if vfo <= 1 => {
+                self.send_set("FR", &vfo.to_string())
+            }
             (ControlId::RfPower, ControlValue::U8(level)) => {
                 self.set_power_watts(self.normalized_to_watts(level)?)
             }
@@ -706,6 +1098,30 @@ impl Radio for KenwoodCatRadio {
         KenwoodCatRadio::set_repeater_settings(self, settings)
     }
 
+    async fn get_rit_offset_hz(&self) -> Result<i32> {
+        KenwoodCatRadio::get_rit_offset_hz(self)
+    }
+
+    async fn set_rit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        KenwoodCatRadio::set_rit_offset_hz(self, offset_hz)
+    }
+
+    async fn get_xit_offset_hz(&self) -> Result<i32> {
+        KenwoodCatRadio::get_xit_offset_hz(self)
+    }
+
+    async fn set_xit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        KenwoodCatRadio::set_xit_offset_hz(self, offset_hz)
+    }
+
+    async fn start_tuner(&self) -> Result<()> {
+        KenwoodCatRadio::start_tuner(self)
+    }
+
+    async fn get_tuner_status(&self) -> Result<Option<crate::hal_types::TunerStatus>> {
+        Ok(Some(KenwoodCatRadio::get_tuner_status(self)?))
+    }
+
     async fn select_memory_channel(&self, channel: u16) -> Result<()> {
         KenwoodCatRadio::select_memory_channel(self, channel)
     }
@@ -719,7 +1135,8 @@ impl Radio for KenwoodCatRadio {
     }
 
     fn supports_memory_channels(&self) -> bool {
-        self.model() == Some(KenwoodCatModel::Ts890S)
+        self.profile()
+            .is_some_and(|profile| profile.memory_surface != KenwoodMemorySurface::None)
     }
 
     fn supports_repeater_settings(&self) -> bool {
@@ -728,7 +1145,12 @@ impl Radio for KenwoodCatRadio {
 
     fn supports_control(&self, id: ControlId) -> bool {
         self.profile().is_some_and(|profile| {
-            (id == ControlId::RfPower && profile.power_range_watts.is_some())
+            ((matches!(
+                id,
+                ControlId::AfGain | ControlId::RfGain | ControlId::Squelch
+            )) || (id == ControlId::RfPower && profile.power_range_watts.is_some()))
+                || profile.control(id).is_some()
+                || id == ControlId::Vfo
                 || id == ControlId::Split
         })
     }
@@ -813,6 +1235,42 @@ fn decode_ts890_memory(payload: &str, profile: &KenwoodCatProfile) -> Result<Mem
     })
 }
 
+fn decode_ts590_memory(payload: &str, profile: &KenwoodCatProfile) -> Result<MemoryChannel> {
+    // MR payload: P1, three-digit channel, 11-digit frequency, mode/data,
+    // tone fields, filter state, and an optional eight-character name.
+    anyhow::ensure!(payload.len() >= 39, "TS-590SG MR response is too short");
+    let split = payload.as_bytes()[0] == b'1';
+    let channel = parse_field::<u16>(&payload[1..4], "memory channel")?;
+    let frequency_hz = parse_field::<u64>(&payload[4..15], "memory frequency")?;
+    let mode = profile.decode_mode(one_char(&payload[15..16], "memory mode")?)?;
+    let tone_mode = match &payload[17..18] {
+        "0" => ToneMode::Off,
+        "1" => ToneMode::Encode,
+        "2" | "3" => ToneMode::EncodeDecode,
+        value => bail!("invalid TS-590SG memory tone mode: {value}"),
+    };
+    let tone_index = parse_field::<u8>(&payload[20..22], "memory CTCSS index")?;
+    let name = payload[39..].trim().to_owned();
+    Ok(MemoryChannel {
+        channel,
+        name: (!name.is_empty()).then_some(name),
+        frequency_hz,
+        transmit_frequency_hz: split.then_some(frequency_hz),
+        mode,
+        repeater: RepeaterSettings {
+            shift: RepeaterShift::Simplex,
+            offset_hz: None,
+            tone: ToneSettings {
+                mode: tone_mode,
+                index: tone_index,
+                frequency_tenths_hz: None,
+                dtcs_code: None,
+                dtcs_reverse: None,
+            },
+        },
+    })
+}
+
 fn parse_field<T>(value: &str, label: &str) -> Result<T>
 where
     T: std::str::FromStr,
@@ -868,7 +1326,80 @@ fn display_command(request: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kenwood::profile::TS890S_PROFILE;
+    use crate::kenwood::profile::{TS590SG_PROFILE, TS890S_PROFILE};
+    use std::collections::VecDeque;
+    use std::io::{Read, Write};
+    use std::sync::{Arc, Mutex};
+
+    struct ScriptedTransport {
+        input: VecDeque<Vec<u8>>,
+        output: Arc<Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl ScriptedTransport {
+        fn with_reads(reads: Vec<Vec<u8>>) -> (Self, Arc<Mutex<Vec<Vec<u8>>>>) {
+            let output = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    input: reads.into_iter().collect(),
+                    output: Arc::clone(&output),
+                },
+                output,
+            )
+        }
+
+        fn response(payload: &[u8]) -> Vec<u8> {
+            let mut frame = payload.to_vec();
+            frame.push(b';');
+            frame
+        }
+    }
+
+    impl Read for ScriptedTransport {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let Some(mut frame) = self.input.pop_front() else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "test transport has no scripted response",
+                ));
+            };
+            let count = frame.len().min(buffer.len());
+            buffer[..count].copy_from_slice(&frame[..count]);
+            if count < frame.len() {
+                frame.drain(..count);
+                self.input.push_front(frame);
+            }
+            Ok(count)
+        }
+    }
+
+    impl Write for ScriptedTransport {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.output.lock().unwrap().push(buffer.to_vec());
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl RadioTransport for ScriptedTransport {
+        fn set_timeout(&mut self, _timeout: Duration) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn test_radio(
+        model: KenwoodCatModel,
+        reads: Vec<Vec<u8>>,
+    ) -> (KenwoodCatRadio, Arc<Mutex<Vec<Vec<u8>>>>) {
+        let (transport, writes) = ScriptedTransport::with_reads(reads);
+        (
+            KenwoodCatRadio::with_external_transport(Some(model), 115_200, transport),
+            writes,
+        )
+    }
 
     #[test]
     fn constructors_select_exact_profiles_and_validate_baud() {
@@ -918,6 +1449,22 @@ mod tests {
     }
 
     #[test]
+    fn decodes_documented_ts590_memory_record() {
+        let payload = format!(
+            "1{:03}{:011}{}0{}00{:02}00000000000000000{}",
+            7, 14_074_000, '2', '2', 8, "LOCAL"
+        );
+        let channel = decode_ts590_memory(&payload, &TS590SG_PROFILE).unwrap();
+        assert_eq!(channel.channel, 7);
+        assert_eq!(channel.frequency_hz, 14_074_000);
+        assert_eq!(channel.transmit_frequency_hz, Some(14_074_000));
+        assert_eq!(channel.mode, Mode::Usb);
+        assert_eq!(channel.repeater.tone.mode, ToneMode::EncodeDecode);
+        assert_eq!(channel.repeater.tone.index, 8);
+        assert_eq!(channel.name.as_deref(), Some("LOCAL"));
+    }
+
+    #[test]
     fn parser_preserves_partial_auto_information_frames() {
         let mut pending = b"FA00014074000;MD2;IF000".to_vec();
         let frames = take_complete_frames(&mut pending);
@@ -930,5 +1477,417 @@ mod tests {
         assert!(validate_complete_command(b"ID;").is_ok());
         assert!(validate_complete_command(b"ID").is_err());
         assert!(validate_complete_command(b"ID;FA;").is_err());
+    }
+
+    #[test]
+    fn model_specific_ai_values_are_emitted_without_waiting_for_an_ack() {
+        let (transport, writes) = ScriptedTransport::with_reads(Vec::new());
+        let ts590 = KenwoodCatRadio::with_external_transport(
+            Some(KenwoodCatModel::Ts590Sg),
+            115_200,
+            transport,
+        );
+        ts590.set_auto_information(true).unwrap();
+        ts590.set_auto_information(false).unwrap();
+        assert_eq!(
+            writes.lock().unwrap().as_slice(),
+            [b"AI2;".to_vec(), b"AI0;".to_vec()]
+        );
+
+        let (transport, writes) = ScriptedTransport::with_reads(Vec::new());
+        let ts2000 = KenwoodCatRadio::with_external_transport(
+            Some(KenwoodCatModel::Ts2000),
+            4_800,
+            transport,
+        );
+        ts2000.set_auto_information(true).unwrap();
+        assert_eq!(writes.lock().unwrap().as_slice(), [b"AI1;".to_vec()]);
+    }
+
+    #[test]
+    fn query_skips_unsolicited_frames_and_preserves_the_requested_response() {
+        let (transport, writes) = ScriptedTransport::with_reads(vec![
+            ScriptedTransport::response(b"MD2"),
+            ScriptedTransport::response(b"FR0"),
+            ScriptedTransport::response(b"FA00014074000"),
+        ]);
+        let radio = KenwoodCatRadio::with_external_transport(
+            Some(KenwoodCatModel::Ts590Sg),
+            115_200,
+            transport,
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_074_000
+        );
+        assert_eq!(
+            writes.lock().unwrap().as_slice(),
+            [b"FR;".to_vec(), b"FA;".to_vec()]
+        );
+    }
+
+    #[test]
+    fn kenwood_protocol_error_frames_are_reported_and_do_not_poison_pending_data() {
+        for (error_frame, expected) in [
+            (b"?;".as_slice(), "rejected"),
+            (b"E;".as_slice(), "communication error"),
+            (b"O;".as_slice(), "receive-buffer overrun"),
+        ] {
+            let (transport, _) = ScriptedTransport::with_reads(vec![
+                error_frame.to_vec(),
+                ScriptedTransport::response(b"FR0"),
+                ScriptedTransport::response(b"FA00014074000"),
+            ]);
+            let radio = KenwoodCatRadio::with_external_transport(
+                Some(KenwoodCatModel::Ts590Sg),
+                115_200,
+                transport,
+            );
+            let error = futures::executor::block_on(radio.get_frequency_hz())
+                .expect_err("Kenwood protocol error must be surfaced");
+            assert!(error.to_string().contains(expected), "{error}");
+            assert_eq!(
+                futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+                14_074_000
+            );
+        }
+    }
+
+    #[test]
+    fn ts590_ptt_write_is_verified_from_the_documented_if_rx_tx_field() {
+        let mut payload = vec![b'0'; 35];
+        payload[26] = b'1';
+        let mut if_frame = b"IF".to_vec();
+        if_frame.extend_from_slice(&payload);
+        let (transport, writes) =
+            ScriptedTransport::with_reads(vec![ScriptedTransport::response(&if_frame)]);
+        let radio = KenwoodCatRadio::with_external_transport(
+            Some(KenwoodCatModel::Ts590Sg),
+            115_200,
+            transport,
+        );
+
+        futures::executor::block_on(radio.set_ptt(true)).unwrap();
+        assert_eq!(
+            writes.lock().unwrap().as_slice(),
+            [b"TX0;".to_vec(), b"IF;".to_vec()]
+        );
+    }
+
+    #[test]
+    fn ts890_does_not_claim_pollable_ptt_status() {
+        let radio = KenwoodCatRadio::new_for_model(KenwoodCatModel::Ts890S, "", 115_200).unwrap();
+        assert!(!radio.capabilities().can_get_ptt);
+        assert!(futures::executor::block_on(radio.get_ptt()).is_err());
+    }
+
+    #[test]
+    fn ts590_common_controls_meters_and_power_use_documented_fields() {
+        let response = |payload: &[u8]| ScriptedTransport::response(payload);
+        let if_response = |rit: bool, xit: bool, transmitting: bool| {
+            let mut payload = vec![b'0'; 27];
+            payload[16..21].copy_from_slice(b"00125");
+            payload[21] = if rit { b'1' } else { b'0' };
+            payload[22] = if xit { b'1' } else { b'0' };
+            payload[26] = if transmitting { b'1' } else { b'0' };
+            let mut frame = b"IF".to_vec();
+            frame.extend_from_slice(&payload);
+            response(&frame)
+        };
+        let (radio, _) = test_radio(
+            KenwoodCatModel::Ts590Sg,
+            vec![
+                response(b"PC100"),
+                response(b"PS1"),
+                response(b"SM00030"),
+                response(b"RM10015"),
+                response(b"RM30012"),
+                response(b"SM00030"),
+                response(b"AG0128"),
+                response(b"RG255"),
+                response(b"SQ0100"),
+                response(b"NB1"),
+                response(b"NR1"),
+                response(b"NT11"),
+                response(b"FL2"),
+                if_response(true, false, false),
+                if_response(false, false, false),
+                response(b"FR0"),
+                response(b"FR0"),
+                response(b"FT1"),
+                if_response(false, false, true),
+                response(b"CN08"),
+                response(b"CT2"),
+                response(b"AC101"),
+            ],
+        );
+
+        assert_eq!(radio.get_power_watts().unwrap(), 100);
+        assert!(radio.get_power_state().unwrap());
+        assert_eq!(radio.get_meter().unwrap(), 30);
+        assert_eq!(radio.get_swr_meter().unwrap(), 128);
+        assert_eq!(radio.get_rm_meter('3', 30).unwrap(), 102);
+        assert_eq!(radio.get_signal_meter().unwrap(), 255);
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::AfGain)).unwrap(),
+            Some(ControlValue::U8(128))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::RfGain)).unwrap(),
+            Some(ControlValue::U8(255))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::Squelch)).unwrap(),
+            Some(ControlValue::U8(100))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::NoiseBlanker)).unwrap(),
+            Some(ControlValue::Bool(true))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::NoiseReduction)).unwrap(),
+            Some(ControlValue::Bool(true))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::Notch)).unwrap(),
+            Some(ControlValue::Bool(true))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::Filter)).unwrap(),
+            Some(ControlValue::U8(2))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::Rit)).unwrap(),
+            Some(ControlValue::Bool(true))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::Xit)).unwrap(),
+            Some(ControlValue::Bool(false))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::Vfo)).unwrap(),
+            Some(ControlValue::Vfo(0))
+        );
+        assert!(radio.get_split().unwrap());
+        assert!(futures::executor::block_on(radio.get_ptt()).unwrap());
+        assert_eq!(
+            radio.get_repeater_settings().unwrap().tone.mode,
+            ToneMode::EncodeDecode
+        );
+        assert!(radio.get_tuner_status().unwrap().tuning);
+    }
+
+    #[test]
+    fn profiled_set_controls_cover_kenwood_command_families() {
+        let (radio, writes) = test_radio(KenwoodCatModel::Ts590Sg, Vec::new());
+        futures::executor::block_on(radio.set_control(ControlId::AfGain, ControlValue::U8(12)))
+            .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::RfGain, ControlValue::U8(34)))
+            .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::Squelch, ControlValue::U8(56)))
+            .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::Preamp, ControlValue::U8(1)))
+            .unwrap();
+        futures::executor::block_on(
+            radio.set_control(ControlId::NoiseReduction, ControlValue::Bool(true)),
+        )
+        .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::Notch, ControlValue::Bool(false)))
+            .unwrap();
+        futures::executor::block_on(
+            radio.set_control(ControlId::NoiseBlanker, ControlValue::Bool(true)),
+        )
+        .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::Filter, ControlValue::U8(2)))
+            .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::Rit, ControlValue::Bool(true)))
+            .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::Xit, ControlValue::Bool(false)))
+            .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::Vfo, ControlValue::Vfo(1)))
+            .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::RfPower, ControlValue::U8(128)))
+            .unwrap();
+        radio.set_power_watts(50).unwrap();
+        radio.set_power_state(false).unwrap();
+        radio.start_tuner().unwrap();
+        radio
+            .set_repeater_settings(RepeaterSettings {
+                tone: ToneSettings {
+                    mode: ToneMode::Encode,
+                    index: 8,
+                    ..ToneSettings::default()
+                },
+                ..RepeaterSettings::default()
+            })
+            .unwrap();
+        assert!(writes.lock().unwrap().len() >= 16);
+    }
+
+    #[test]
+    fn ts890_uses_om_tb_rf_and_selected_rm_meter_semantics() {
+        let response = |payload: &[u8]| ScriptedTransport::response(payload);
+        let (radio, writes) = test_radio(
+            KenwoodCatModel::Ts890S,
+            vec![
+                response(b"FR1"),
+                response(b"OM1D"),
+                response(b"TB1"),
+                response(b"RF11250"),
+                response(b"RT1"),
+                response(b"XT0"),
+                response(b"RM20040"),
+                response(b"RM60070"),
+                response(b"AC001"),
+                response(b"CN08"),
+                response(b"CT1"),
+                response(b"FR1"),
+            ],
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_mode()).unwrap(),
+            Mode::Data
+        );
+        assert!(radio.get_split().unwrap());
+        assert_eq!(radio.get_rit_offset_hz().unwrap(), -1250);
+        assert_eq!(
+            futures::executor::block_on(Radio::get_meter(&radio, MeterId::Swr)).unwrap(),
+            Some(146)
+        );
+        assert_eq!(
+            futures::executor::block_on(Radio::get_meter(&radio, MeterId::Temperature)).unwrap(),
+            Some(255)
+        );
+        assert!(!radio.get_tuner_status().unwrap().enabled);
+        assert_eq!(
+            radio.get_repeater_settings().unwrap().tone.mode,
+            ToneMode::Encode
+        );
+
+        futures::executor::block_on(radio.set_mode(Mode::Usb)).unwrap();
+        radio.set_split(false).unwrap();
+        futures::executor::block_on(radio.set_frequency_hz(14_074_000)).unwrap();
+        assert!(writes.lock().unwrap().iter().any(|frame| frame == b"OM02;"));
+        assert!(writes.lock().unwrap().iter().any(|frame| frame == b"TB0;"));
+    }
+
+    #[test]
+    fn memory_repeater_and_validation_paths_are_model_scoped() {
+        let response = |payload: &[u8]| ScriptedTransport::response(payload);
+        let ts590_memory = format!("MR1{:03}{:011}20020800000000000000000LOCAL;", 7, 14_074_000);
+        let (ts590, writes) = test_radio(
+            KenwoodCatModel::Ts590Sg,
+            vec![
+                response(ts590_memory.as_bytes()),
+                response(b"CN08"),
+                response(b"CT2"),
+            ],
+        );
+        ts590.select_memory_channel(7).unwrap();
+        assert_eq!(ts590.read_memory_channel(7).unwrap().channel, 7);
+        assert_eq!(ts590.get_repeater_settings().unwrap().tone.index, 8);
+        ts590
+            .set_repeater_settings(RepeaterSettings {
+                tone: ToneSettings {
+                    mode: ToneMode::EncodeDecode,
+                    index: 8,
+                    ..ToneSettings::default()
+                },
+                ..RepeaterSettings::default()
+            })
+            .unwrap();
+        ts590
+            .write_memory_channel(MemoryChannel {
+                channel: 7,
+                name: Some("LOCAL".to_owned()),
+                frequency_hz: 14_074_000,
+                transmit_frequency_hz: Some(14_075_000),
+                mode: Mode::Usb,
+                repeater: RepeaterSettings::default(),
+            })
+            .unwrap();
+        assert!(writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.starts_with(b"MW")));
+
+        let (ts890, writes) = test_radio(
+            KenwoodCatModel::Ts890S,
+            vec![response(
+                format!(
+                    "MA0{:03}{:011}{}0{}00{:02}{:011}{}000{}",
+                    1, 14_500_000, '4', '1', 8, 14_500_000, '4', "LOCAL"
+                )
+                .as_bytes(),
+            )],
+        );
+        ts890.select_memory_channel(1).unwrap();
+        assert_eq!(ts890.read_memory_channel(1).unwrap().channel, 1);
+        ts890
+            .write_memory_channel(MemoryChannel {
+                channel: 1,
+                name: Some("LOCAL".to_owned()),
+                frequency_hz: 14_500_000,
+                transmit_frequency_hz: None,
+                mode: Mode::Fm,
+                repeater: RepeaterSettings::default(),
+            })
+            .unwrap();
+        assert!(writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.starts_with(b"MA0")));
+
+        assert!(ts590.select_memory_channel(120).is_err());
+        assert!(ts590.set_power_watts(1).is_err());
+        assert!(ts590
+            .set_repeater_settings(RepeaterSettings {
+                shift: RepeaterShift::Plus,
+                ..RepeaterSettings::default()
+            })
+            .is_err());
+        assert!(ts590
+            .set_repeater_settings(RepeaterSettings {
+                tone: ToneSettings {
+                    mode: ToneMode::Dtcs,
+                    ..ToneSettings::default()
+                },
+                ..RepeaterSettings::default()
+            })
+            .is_err());
+    }
+
+    #[test]
+    fn ts2000_uses_classic_md_and_fr_ft_semantics() {
+        let response = |payload: &[u8]| ScriptedTransport::response(payload);
+        let (radio, writes) = test_radio(
+            KenwoodCatModel::Ts2000,
+            vec![
+                response(b"MD2"),
+                response(b"FR0"),
+                response(b"FR0"),
+                response(b"FT1"),
+                response(b"FR0"),
+                response(b"FR0"),
+            ],
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_mode()).unwrap(),
+            Mode::Usb
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::Vfo)).unwrap(),
+            Some(ControlValue::Vfo(0))
+        );
+        assert!(radio.get_split().unwrap());
+        futures::executor::block_on(radio.set_mode(Mode::Usb)).unwrap();
+        radio.set_split(false).unwrap();
+        assert!(writes.lock().unwrap().iter().any(|frame| frame == b"MD2;"));
+        assert!(writes.lock().unwrap().iter().any(|frame| frame == b"FT0;"));
+        assert!(futures::executor::block_on(radio.set_frequency_hz(145_000_000)).is_ok());
+        assert!(futures::executor::block_on(radio.set_frequency_hz(1_301_000_000)).is_err());
     }
 }

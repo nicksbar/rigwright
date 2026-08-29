@@ -29,9 +29,9 @@ units, or model behavior differ.
 | Radio power write | `set_power` | H/P/V behavior validated on IC-7300 | H/P | — | H/P | Q |
 | Radio power read | `get_power` | —; CI-V power is write-only | H/P | — | H/P | Q/pending-state handling |
 | Raw protocol | `protocol_write_read` | H/P | H/P | H/P | H/P | Not a normal UI control |
-| Tuner start/status | `start_tuner`, `get_tuner_status` | H/P/V for profiled Icoms | — | — | — | Q: tuner and SWR sweep workflow |
+| Tuner start/status | `start_tuner`, `get_tuner_status` | H/P/V for profiled Icoms | H/P | H/P | H/P | Q: tuner and SWR sweep workflow |
 | Spectrum waveform | backend-specific scope API | H/P; model geometry differs | — | — | — | Q where native scope is enabled |
-| I/Q stream | model/backend-specific | Shared I/Q sample block and interleaved PCM/float decoder; IC-7610 transport negotiation remains profile-owned | — | — | — | Not currently consumed |
+| I/Q stream | model/backend-specific | Shared I/Q sample block decoder only; IC-7610 documents USB I/Q output, but Rigwright does not yet own/open that transport | — | — | — | Not currently consumed |
 
 ### Universal HAL caveat
 
@@ -49,29 +49,40 @@ the final column.
 
 | HAL control | Value | Icom CI-V | Modern Yaesu | Classic Yaesu | Kenwood | QSONaut native use |
 |---|---|---:|---:|---:|---:|---|
-| `AfGain` | normalized `U8` 0–255 | RW/P all four profiles | M, not typed | M, not typed | M, not typed | Q slider |
-| `RfGain` | normalized `U8` 0–255 | RW/P all four profiles | M, not typed | M, not typed | M, not typed | Q slider |
-| `Squelch` | normalized `U8` 0–255 | RW/P all four profiles | M, not typed | M, not typed | M, not typed | Q slider |
+| `AfGain` | normalized `U8` 0–255 | RW/P all four profiles | M, not typed | M, not typed | RW/P all three profiles | Q slider |
+| `RfGain` | normalized `U8` 0–255 | RW/P all four profiles | M, not typed | M, not typed | RW/P all three profiles | Q slider |
+| `Squelch` | normalized `U8` 0–255 | RW/P all four profiles | M, not typed | M, not typed | RW/P all three profiles | Q slider |
 | `RfPower` | normalized `U8` 0–255 | RW/P all four profiles | RW/P modern profiles; exact watts also available | M, not typed; power write intentionally absent | RW/P all three profiles; exact watts also available | Q slider and SWR sweep power |
-| `Preamp` | model-specific `U8` | RW/P all four profiles | M, not typed | M, not typed | M, not typed | Q compact control |
+| `Preamp` | model-specific `U8` | RW/P all four profiles | M, not typed | M, not typed | RW/P all three profiles | Q compact control |
 | `ExternalPreamp` | model-specific `U8` | RW/P IC-9700 only | M, not typed | M, not typed | M, not typed | Not currently used |
 | `Attenuator` | model-specific `U8` | RW/P all four profiles | M, not typed | M, not typed | M, not typed | Q compact control |
-| `NoiseBlanker` | `Bool` | RW/P all four profiles | M, not typed | M, not typed | M, not typed | Q toggle |
-| `NoiseReduction` | `Bool` | RW/P all four profiles | RW/P modern profiles | M, not typed | M, not typed | Q toggle |
+| `NoiseBlanker` | `Bool` | RW/P all four profiles | M, not typed | M, not typed | RW/P all three profiles | Q toggle |
+| `NoiseReduction` | `Bool` | RW/P all four profiles | RW/P modern profiles | M, not typed | RW/P all three profiles | Q toggle |
 | `NoiseReductionLevel` | `U8` 1–15 | M, not typed | RW/P modern profiles | M, not typed | M, not typed | Q level control where advertised |
 | `IpPlus` | `Bool` | RW/P all four profiles | M, not typed | — | M, not typed | Q toggle |
-| `Notch` | `Bool` | RW/P all four profiles | M, not typed | M, not typed | M, not typed | Q toggle |
+| `Notch` | `Bool` | RW/P all four profiles | M, not typed | M, not typed | RW/P all three profiles | Q toggle |
 | `ManualNotch` | `Bool` | RW/P all four profiles | M, not typed | M, not typed | M, not typed | Q toggle; position not typed |
 | `DataMode` | `Bool` | RW/P all four profiles | M, not typed | M, not typed | TS-590SG/TS-890S model behavior exists but not typed as this control | Q mode/status support |
-| `Filter` | model-specific `U8` | RW/P all four profiles | M, not typed | M, not typed | M, not typed | Q filter control |
-| `Agc` | model-specific `U8` | RW/P IC-705, IC-7300, and IC-9700; manual-only on IC-7610 | RW/P modern profiles | M, not typed | M, not typed | Q compact control |
-| `Rit` | Icom `21 01`; model-specific elsewhere | R/W on all profiled Icom models | M | M | M | Icom profile implementation |
-| `Xit` | Icom `21 02` where documented | R/W on IC-7300/IC-7610 profiles | M | M | M | Model-specific; not exposed on IC-705/IC-9700 |
+| `Filter` | model-specific `U8` | RW/P all four profiles | M, not typed | M, not typed | RW/P TS-590SG and TS-890S | Q filter control |
+| `Agc` | model-specific `U8` | RW/P IC-705, IC-7300, and IC-9700; manual-only on IC-7610 | RW/P modern profiles | M, not typed | RW/P TS-890S | Q compact control |
+| `Rit` | Icom `21 01`; model-specific elsewhere | R/W on all profiled Icom models | M | M | RW/P all three profiles | Icom profile implementation |
+| `Xit` | Icom `21 02` where documented | R/W on IC-7300/IC-7610 profiles | M | M | RW/P all three profiles | Model-specific; not exposed on IC-705/IC-9700 |
 | `Split` | `Bool` | RW/P all four profiles | RW/P profiles with documented split | RW/P all four profiles | RW/P all three profiles | Q profile/control path, limited banner use |
-| `Tuner` | `Bool` enable/status | RW/P all four profiles | M, not typed | M, not typed | M, not typed | Q enable/disable and sweep safety |
-| `Vfo` | model-specific selector | W/P Icom profiles; A/B readback is not documented | M, not typed | M, not typed | M, not typed | Q write-only selector with local state |
+| `Tuner` | `Bool` enable/status | RW/P all four profiles | M, not typed | M, not typed | RW/P all three profiles | Q enable/disable and sweep safety |
+| `Vfo` | model-specific selector | W/P Icom profiles; A/B readback is not documented | M, not typed | M, not typed | RW/P all three profiles | Q write-only selector with local state |
 | `MainSub` | receiver selector | RW/P IC-7610 and IC-9700 | M, not typed | — | M, not typed | Not currently used |
 | `RawCiV` | raw bytes | H/P Icom only | — | — | — | Not a normal UI control |
+
+Icom control-boundary tests cover both sides of the profile boundary. A
+model-neutral CI-V instance advertises neither profile controls nor meters and
+rejects typed model controls before transport. Each profiled model is checked
+for inherited common controls, model-only controls, read/write direction, and
+meter availability. Fake-transport tests additionally verify exact CI-V
+frames for inherited RF power and the IC-7300 XIT override. Decoder tests
+cover both HF and VHF/UHF memory layouts, signed RIT offsets, repeater flags,
+meter BCD values, and all four scope geometries. These are protocol and
+regression tests; they do not promote the framework-level IC-705, IC-7610, or
+IC-9700 profiles to physical-hardware validation.
 
 ### Control interpretation notes
 
@@ -84,12 +95,14 @@ current example. Applications should use `supports_control_read()` and
 - Icom controls are declarative CI-V profile entries. The exact command
   prefixes and allowed values remain model-specific even when the HAL name is
   shared.
-- Modern Yaesu typed controls currently cover RF power, split, AGC, NR enable,
-  and NR level. The CAT manuals contain more functions, but they are not yet
-  in the root HAL for Yaesu.
+- Modern Yaesu typed controls cover AF/RF gain, squelch, RF power, preamp/IPO,
+  attenuator, NB, auto/manual notch, filter width, AGC, NR, RIT/XIT, tuner, VFO
+  selection, and split across the current modern profiles. Repeater (`CN`/`CT`/`OS`)
+  and memory (`MC`/`MR`/`MT`) operations are also profile-gated.
 - Classic Yaesu has a separate five-byte binary protocol. It supports split,
-  frequency, mode, PTT, and status operations in Rigwright; it does not inherit
-  modern Yaesu CAT controls.
+  write-only RIT/clarifier and repeater shift/tone/offset operations, explicit
+  VFO toggle and CAT-lock helpers, frequency, mode, PTT, and normalized RX/TX
+  status meters in Rigwright; it does not inherit modern Yaesu CAT controls.
 - Kenwood has verified RF power, split, frequency, mode, PTT where pollable,
   signal meter, and SWR meter. Its manual surfaces are broader than the
   current typed profile.
@@ -106,11 +119,13 @@ and `RawCiV` where the selected profile permits them.
 | IC-7300 | Same as IC-705; this is the hardware-validated Icom profile |
 | IC-7610 | AF gain, RF gain, squelch, RF power, preamp, attenuator, NB, NR, IP+, auto notch, manual notch, tuner, split, data mode, filter, VFO, main/sub, raw CI-V; AGC is manual-only and not typed in this profile |
 | IC-9700 | IC-705 set plus external preamp and main/sub |
-| FTDX10 | RF power, split, AGC, NR enable, NR level; hardware-validated CAT path |
-| FT-710, FTDX101D, FTDX101MP | RF power, split, AGC, NR enable, NR level |
-| FT-991A | RF power, AGC, NR enable, NR level; split is manual-only in the current profile |
-| FT-817ND, FT-818, FT-857D, FT-897D | Split only; other documented CAT surfaces remain untyped |
-| TS-590SG, TS-890S, TS-2000 | RF power and split |
+| FTDX10 | Full modern typed-control set, repeater controls, full memory records; hardware-validated CAT path |
+| FT-710, FTDX101D, FTDX101MP | Full modern typed-control set, repeater controls, full memory records |
+| FT-991A | Full modern typed-control set, repeater controls, full memory records; split remains manual-only in the current profile |
+| FT-817ND, FT-818, FT-857D, FT-897D | Split (read/write), RIT/clarifier and repeater shift/tone/offset (write-only), VFO toggle, CAT lock |
+| TS-590SG | AF/RF gain, squelch, RF power, preamp, NB, NR, notch, filter A/B, RIT/XIT, VFO, split, tuner, signal/power/SWR/ALC/COMP meters, AI, and memory records |
+| TS-890S | AF/RF gain, squelch, RF power, preamp, NB, NR, notch, filter A/B/C, AGC, RIT/XIT, VFO, split, tuner, signal/power/SWR/ALC/COMP/current/voltage/temperature meters, AI, and memory records |
+| TS-2000 | AF/RF gain, squelch, RF power, preamp, NB, NR, notch, RIT/XIT, VFO, split, tuner, signal/power/SWR meters, and AI; filter and memory records remain unprofiled |
 
 ## Normalized meters
 
@@ -120,14 +135,14 @@ documented ratio anchors, but those anchors are not shared by Yaesu or Kenwood.
 
 | HAL meter | Icom CI-V | Modern Yaesu CAT | Classic Yaesu CAT | Kenwood | QSONaut native use |
 |---|---:|---:|---:|---:|---|
-| `Signal` | R/P via `15 01`; IC-7300 V | R/P via `RM1` | M, not typed | R/P via `SM`, profile max 30 or 70 | Q normalized meter panel where advertised |
-| `Power` | R/P via `15 02`; IC-7300 V | R/P via `RM5` | M, not typed | M, not typed | Q normalized meter panel where advertised |
+| `Signal` | R/P via `15 02`; IC-7300 V | R/P via `RM1` | R/P via `E7`, 0-15 | R/P via `SM`, profile max 30 or 70 | Q normalized meter panel where advertised |
+| `Power` | R/P via `15 11`; IC-7300 V | R/P via `RM5` | R/P via `F7`, 0-15 | R/P via `SM` (TX), profile max 30 or 70 | Q normalized meter panel where advertised |
 | `Swr` | R/P via `15 12`; IC-7300 V | R/P via `RM6` | M, not typed | R/P via `RM`; selector and range profile-specific | Q live meter and stepped SWR chart |
-| `Alc` | R/P via `15 11`; IC-7300 V | R/P via `RM4` | M, not typed | M, not typed | Q normalized meter panel where advertised |
-| `Compression` | R/P via `15 13`; IC-7300 V | R/P via `RM3` | M, not typed | M, not typed | Q normalized meter panel where advertised |
-| `Current` | R/P via `15 15`; IC-7300 V | R/P via `RM7` | M, not typed | M, not typed | Q normalized meter panel where advertised |
-| `Voltage` | R/P via `15 14`; IC-7300 V | R/P via `RM8` | M, not typed | M, not typed | Q normalized meter panel where advertised |
-| `Temperature` | R/P via `15 16`; IC-7300 V | Manual/protocol surface varies; intentionally not profiled | M, not typed | TS-890S manual surface exists; not typed | Q only if a future profile advertises it |
+| `Alc` | R/P via `15 13`; IC-7300 V | R/P via `RM4` | M, not typed | R/P TS-890S via `RM1` | Q normalized meter panel where advertised |
+| `Compression` | R/P via `15 14`; IC-7300 V | R/P via `RM3` | M, not typed | R/P TS-890S via `RM3` | Q normalized meter panel where advertised |
+| `Current` | R/P via `15 16`; IC-7300 V | R/P via `RM7` | M, not typed | R/P TS-890S via `RM4` | Q normalized meter panel where advertised |
+| `Voltage` | R/P via `15 15`; IC-7300 V | R/P via `RM8` | M, not typed | R/P TS-890S via `RM5` | Q normalized meter panel where advertised |
+| `Temperature` | R/P via `15 17`; IC-7300 V | Manual/protocol surface varies; intentionally not profiled | M, not typed | R/P TS-890S via `RM6` | Q only if a future profile advertises it |
 
 Yaesu `RM` selector meanings are documented by the modern CAT manuals: `1`
 signal, `3` compression, `4` ALC, `5` power, `6` SWR, `7` current, and `8`
@@ -143,21 +158,23 @@ They are documented radio capabilities, but currently have no safe common
 
 | Surface | Manual coverage | Current Rigwright status | QSONaut status | Why it remains open |
 |---|---|---|---|---|
-| RIT/XIT offset and enable | All modern vendor families | Icom RIT enable plus signed RIT offset read/write implemented; Icom XIT enable implemented where documented | Not used | XIT offset and non-Icom payloads remain family-specific |
-| Yaesu AF/RF gain and squelch | Modern CAT manuals | Not typed | UI cannot safely use them through Yaesu | Query/set field formats need profile commands and ranges |
-| Yaesu NB, filter, tuner, antenna selection | Modern CAT manuals | Not typed | Not used for modern Yaesu | Several commands are mode/model dependent |
+| RIT/XIT offset and enable | All modern vendor families | Icom RIT enable plus signed RIT offset read/write implemented; Icom XIT enable implemented where documented, with no separate XIT offset command documented | Not used | XIT offset and non-Icom payloads remain family-specific |
+| Yaesu AF/RF gain and squelch | Modern CAT manuals | Profiled `AG`/`RG`/`SQ` controls | Not yet consumed | Native ranges are normalized by the driver |
+| Yaesu NB, filter, tuner, antenna selection | Modern CAT manuals | Profiled `NB`, `SH`, and `AC`; antenna selection remains untyped | Not yet consumed | Several antenna and filter variants remain model dependent |
+| Yaesu preamp/attenuator/notch | Modern CAT manuals | Profiled `PA`, `RA`, `BC`, and `BP` controls | Not yet consumed | Exact physical labels remain model/UI concerns |
+| Yaesu RIT/XIT and VFO selection | Modern CAT manuals | Profiled `RT`/`XT`, `CF`, and `VS`; VFO readback is supported | Not yet consumed | Clarifier payload is shared, while UI should retain RX/TX enable state separately |
 | Yaesu ALC/compression/current/voltage presentation | Modern CAT manuals | Meter IDs implemented | Not displayed | QSONaut must add polling, labels, and TX safety policy |
 | Icom signal, output power, ALC, compression, voltage/current/temperature | CI-V/model manuals | Profile-gated CI-V `15` meter queries implemented and normalized to `0..=255` | Consumed by the native meter panel | Physical-unit labels/scales remain model/UI concerns |
 | Icom NR level and manual-notch position | IC-7300/IC-7610 CI-V manuals | Profiled `14 06` NR level and `14 0D` manual-notch position controls implemented for IC-7300/IC-7610 | Not yet consumed | IC-705/IC-9700 do not advertise the same HF notch surface |
-| Kenwood AF/RF gain, squelch, AGC, NB, NR | PC command references | Not typed | Not used | TS-590SG, TS-890S, and TS-2000 command families differ |
-| Kenwood ALC/compression/current/voltage/temperature | PC command references | Not typed except signal/SWR | Not displayed | RM selector, range, and response width differ by model |
-| Memory/channel operations | Vendor manuals | Icom `08`/`09` selection and model-specific `1A 00` records: HF mode/data/CTCSS/name plus IC-705/IC-9700 band, duplex, DTCS, offset, and 16-char name fields; Yaesu FTDX10 `MC`/`MR`/`MT`; Kenwood TS-890 `FR`/`MN` plus `MA0` records | Not used | Icom program-scan, call, DV routing, and satellite records remain separate surfaces |
-| Repeater tone/shift | IC-7300, IC-705, IC-9700 and Yaesu FTDX10 CAT manuals | Icom CTCSS flags/frequencies, VHF/UHF DTCS memory fields, duplex shift/offset memory fields, and signed RIT offset; FTDX10 `CN`/`CT`/`OS`; Kenwood `CN`/`CT` tone | Not used | Live Icom DTCS/duplex command APIs still need to be surfaced separately from memory records |
+| Kenwood AF/RF gain, squelch, AGC, NB, NR, filter | PC command references | Typed: gain/squelch/NB/NR for all three; TS-890S AGC; TS-590SG A/B and TS-890S A/B/C filter selection | Not used | Noise-reduction depth and detailed roofing-filter bandwidths remain model-specific |
+| Kenwood ALC/compression/current/voltage/temperature | PC command references | TS-590SG ALC/COMP and TS-890S ALC/COMP/current/voltage/temperature via profiled RM selectors | Not displayed | Meters are normalized deflection, not physical units |
+| Memory/channel operations | Vendor manuals | Icom `08`/`09` selection and model-specific `1A 00` records: HF mode/data/CTCSS/name plus IC-705/IC-9700 band, duplex, DTCS, offset, and 16-char name fields; modern Yaesu `MC`/`MR`/`MT`; Kenwood TS-590SG `MC`/`MR`/`MW` and TS-890 `FR`/`MN` plus `MA0` records | Not used | Icom program-scan, call, DV routing, and satellite records remain separate surfaces |
+| Repeater tone/shift | IC-7300, IC-705, IC-9700 and modern Yaesu CAT manuals | Icom CTCSS flags/frequencies, live duplex shift/offset (`0C`/`0D` and `0F`), VHF/UHF DTCS memory fields, and signed RIT offset; modern Yaesu `CN`/`CT`/`OS` with main-band selector; Kenwood `CN`/`CT` tone | Not used | Icom live DTCS and model-specific auto-repeater settings remain separate surfaces; Yaesu offset frequency is carried by memory/configuration rather than `OS` |
 | DTMF transmission | Vendor manuals | Validated HAL type/API; Icom references document DTMF speed but no CI-V digit-transmit payload | Not used | Do not confuse Icom voice-memory command `28` with DTMF transmission |
 | Antenna selection | Icom IC-7610 CI-V manual | IC-7610 `12` antenna selector is now profile-exposed as a typed U8 control; antenna-memory bands remain untyped | Not used | Antenna-memory records are frequency-range keyed |
 | Band-stack and quick-memory operations | Vendor manuals | Not typed | Not used | Requires model-specific state and persistence semantics |
-| Scope configuration and I/Q streaming | Icom manuals, some Yaesu manuals | Generic Icom scope configuration API plus shared I/Q sample decoding; raw I/Q transport remains model-specific | Scope use is partial; I/Q not consumed | Waveform transport and receiver geometry are model-specific |
-| Auto-information subscriptions | Vendor command references | Icom CI-V lifecycle-managed event router with typed frequency/mode/PTT/receiver events and raw fallback | Not yet consumed as the general UI event source | Continuous background read ownership and vendor subscription commands remain application/profile work |
+| Scope configuration and I/Q streaming | Icom manuals, some Yaesu manuals | Generic Icom scope configuration API plus shared I/Q sample decoding; IC-7300 has CI-V scope only; IC-7610 IQ is documented metadata only until a driver transport exists | Scope use is partial; I/Q not consumed | Waveform transport and receiver geometry are model-specific |
+| Auto-information subscriptions | Vendor command references | Icom CI-V lifecycle-managed event router with typed frequency/mode/PTT/receiver events and raw fallback; Kenwood `AI` enable with typed frequency/PTT and raw fallback | Yaesu `AI` enable plus typed frequency/mode/PTT events and raw fallback | QSONaut still needs a general UI event consumer |
 
 ## QSONaut consumption summary
 

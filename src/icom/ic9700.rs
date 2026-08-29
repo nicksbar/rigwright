@@ -1,9 +1,11 @@
 //! Icom IC-9700 model profile (framework only; hardware validation pending).
 
 use super::profile::{
-    ControlEncoding, ControlSpec, ExternalPreampSpec, IcomCivProfile, MainSubSpec, ScopeSpec,
+    ControlCapabilities, ControlEncoding, ControlSpec, ExternalPreampSpec, IcomCivProfile,
+    MainSubSpec, MemoryLayout, ScopeSpec,
 };
 use crate::controls::ControlId;
+use crate::hal_types::MeterId;
 use crate::models::{find_model, RadioModelProfile};
 
 pub fn profile() -> &'static RadioModelProfile {
@@ -35,11 +37,6 @@ const FREQUENCY_RANGES: &[(u64, u64)] = &[
 ];
 const CONTROLS: &[ControlSpec] = &[
     // `0x21 0x01`: RIT enable/disable.
-    ControlSpec {
-        id: ControlId::Rit,
-        command_prefix: &[0x21, 0x01],
-        encoding: ControlEncoding::Bool,
-    },
     // `0x14 0x0A`: RF transmit power, packed decimal level 0..255.
     // `0x14 0x01`: AF/audio gain, packed decimal level 0..255.
     // `0x14 0x02`: RF gain, packed decimal level 0..255.
@@ -52,36 +49,6 @@ const CONTROLS: &[ControlSpec] = &[
     // `0x16 0x40`: noise reduction enable/disable.
     // `0x0F`: split operation enable/disable (the value is not a subcommand).
     ControlSpec {
-        id: ControlId::RfPower,
-        command_prefix: &[0x14, 0x0A],
-        encoding: ControlEncoding::Level255Bcd,
-    },
-    ControlSpec {
-        id: ControlId::AfGain,
-        command_prefix: &[0x14, 0x01],
-        encoding: ControlEncoding::Level255Bcd,
-    },
-    ControlSpec {
-        id: ControlId::RfGain,
-        command_prefix: &[0x14, 0x02],
-        encoding: ControlEncoding::Level255Bcd,
-    },
-    ControlSpec {
-        id: ControlId::Squelch,
-        command_prefix: &[0x14, 0x03],
-        encoding: ControlEncoding::Level255Bcd,
-    },
-    ControlSpec {
-        id: ControlId::Attenuator,
-        command_prefix: &[0x11],
-        encoding: ControlEncoding::U8,
-    },
-    ControlSpec {
-        id: ControlId::Preamp,
-        command_prefix: &[0x16, 0x02],
-        encoding: ControlEncoding::U8,
-    },
-    ControlSpec {
         id: ControlId::ExternalPreamp,
         command_prefix: &[0x16, 0x02],
         encoding: ControlEncoding::U8,
@@ -90,41 +57,6 @@ const CONTROLS: &[ControlSpec] = &[
         id: ControlId::Agc,
         command_prefix: &[0x16, 0x12],
         encoding: ControlEncoding::U8,
-    },
-    ControlSpec {
-        id: ControlId::NoiseBlanker,
-        command_prefix: &[0x16, 0x22],
-        encoding: ControlEncoding::Bool,
-    },
-    ControlSpec {
-        id: ControlId::NoiseReduction,
-        command_prefix: &[0x16, 0x40],
-        encoding: ControlEncoding::Bool,
-    },
-    ControlSpec {
-        id: ControlId::IpPlus,
-        command_prefix: &[0x1A, 0x07],
-        encoding: ControlEncoding::Bool,
-    },
-    ControlSpec {
-        id: ControlId::Notch,
-        command_prefix: &[0x16, 0x41],
-        encoding: ControlEncoding::Bool,
-    },
-    ControlSpec {
-        id: ControlId::ManualNotch,
-        command_prefix: &[0x16, 0x48],
-        encoding: ControlEncoding::Bool,
-    },
-    ControlSpec {
-        id: ControlId::Tuner,
-        command_prefix: &[0x1C, 0x01],
-        encoding: ControlEncoding::Bool,
-    },
-    ControlSpec {
-        id: ControlId::Split,
-        command_prefix: &[0x0F],
-        encoding: ControlEncoding::Bool,
     },
 ];
 const ATTENUATOR_VALUES: &[u8] = &[0, 10];
@@ -143,6 +75,16 @@ const EXTERNAL_PREAMP: ExternalPreampSpec = ExternalPreampSpec {
     command_prefix: &[0x16, 0x02],
     enabled_mask: 0x02,
 };
+const METERS: &[MeterId] = &[
+    MeterId::Signal,
+    MeterId::Power,
+    MeterId::Swr,
+    MeterId::Alc,
+    MeterId::Compression,
+    MeterId::Voltage,
+    MeterId::Current,
+    MeterId::Temperature,
+];
 
 pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     model: crate::models::IcomCivModel::Ic9700,
@@ -163,4 +105,26 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     attenuator_values: ATTENUATOR_VALUES,
     preamp_max_level: 1,
     supports_iq_output: false,
+    meters: METERS,
+    control_capabilities: ControlCapabilities {
+        supports_data_mode: true,
+        filter_values: &[1, 2, 3],
+        supports_vfo: true,
+        vfo_readable: false,
+    },
+    memory_layout: MemoryLayout::VhfUhf,
+    supports_repeater_settings: true,
+    supports_memory_channels: true,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exposes_the_ic9700_catalog_profile() {
+        assert_eq!(profile().model, "IC-9700");
+        assert!(!DOCUMENTED_CONTROLS.is_empty());
+        assert!(DOCUMENTED_FEATURES.contains(&"satellite mode"));
+    }
+}

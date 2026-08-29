@@ -12,10 +12,11 @@ use async_trait::async_trait;
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 
 use crate::{
+    events::{RadioEvent, RadioEventRouter, RadioEventSubscription},
     hal::{Mode, Radio, RadioCapabilities},
     hal_types::{
         ControlId, ControlValue, MemoryChannel, MeterId, RepeaterSettings, RepeaterShift, ToneMode,
-        ToneSettings,
+        ToneSettings, TunerStatus,
     },
     models::YaesuCatModel,
     protocol::ascii_cat,
@@ -26,6 +27,7 @@ use super::profile::{profile_for_model, YaesuCatProfile};
 
 const RESPONSE_TIMEOUT: Duration = Duration::from_millis(1_200);
 const MAX_FRAME_LEN: usize = 512;
+const RM_RESPONSE_PAYLOAD_LEN: usize = 7;
 
 #[derive(Default)]
 struct TransportState {
@@ -58,6 +60,7 @@ pub struct YaesuCatRadio {
     hardware_flow_control: Arc<Mutex<bool>>,
     cat_rts_detected: Arc<Mutex<bool>>,
     transport: Arc<Mutex<TransportState>>,
+    event_router: RadioEventRouter,
 }
 
 impl std::fmt::Debug for YaesuCatRadio {
@@ -107,8 +110,8 @@ impl YaesuCatRadio {
 
     /// Construct a model-backed radio for interfaces where the radio's CAT
     /// RTS setting is enabled and the USB/serial bridge requires RTS/CTS
-    /// hardware flow control. The normal constructor remains no-flow-control
-    /// because that is the FTDX10 factory/default configuration.
+    /// hardware flow control. The normal constructor starts without a local
+    /// flow-control assumption and auto-detects the FTDX10 CAT RTS setting.
     pub fn new_for_model_with_hardware_flow_control(
         model: YaesuCatModel,
         port: impl Into<String>,
@@ -143,6 +146,7 @@ impl YaesuCatRadio {
             })),
             hardware_flow_control: Arc::new(Mutex::new(false)),
             cat_rts_detected: Arc::new(Mutex::new(false)),
+            event_router: RadioEventRouter::default(),
         }
     }
 
@@ -154,6 +158,7 @@ impl YaesuCatRadio {
             hardware_flow_control: Arc::new(Mutex::new(false)),
             cat_rts_detected: Arc::new(Mutex::new(false)),
             transport: Arc::new(Mutex::new(TransportState::default())),
+            event_router: RadioEventRouter::default(),
         }
     }
 
@@ -163,6 +168,13 @@ impl YaesuCatRadio {
 
     pub fn baud_rate(&self) -> u32 {
         self.baud_rate
+    }
+
+    /// Enable Yaesu CAT auto-information and return a subscription for the
+    /// decoded state events arriving on the persistent CAT connection.
+    pub fn subscribe_events(&self) -> Result<RadioEventSubscription> {
+        self.send_set("AI", "1")?;
+        Ok(self.event_router.subscribe())
     }
 
     pub fn profile(&self) -> Option<&'static YaesuCatProfile> {
@@ -257,9 +269,9 @@ impl YaesuCatRadio {
         self.send_set("ST", if enabled { "1" } else { "0" })
     }
 
-    /// Read the FTDX10-family documented repeater controls.  The CAT manual
-    /// exposes tone as an index and offset as a direction; those native forms
-    /// are preserved in the protocol-neutral value instead of inventing Hz.
+    /// Read the modern Yaesu documented repeater controls. `OS` returns a
+    /// receiver selector followed by the direction; the offset itself is a
+    /// memory/configuration value and is not reported by this live surface.
     pub fn get_repeater_settings(&self) -> Result<RepeaterSettings> {
         if !self.selected_profile()?.supports_repeater_settings {
             bail!("repeater settings are not documented for this Yaesu model");
@@ -273,12 +285,7 @@ impl YaesuCatRadio {
             "2" => ToneMode::Encode,
             value => bail!("invalid Yaesu CT tone mode: {value}"),
         };
-        let shift = match parse_payload(&self.query("OS", None, 1)?, "OS")? {
-            "0" => RepeaterShift::Simplex,
-            "1" => RepeaterShift::Plus,
-            "2" => RepeaterShift::Minus,
-            value => bail!("invalid Yaesu OS repeater shift: {value}"),
-        };
+        let shift = decode_repeater_shift(parse_payload(&self.query("OS", None, 2)?, "OS")?)?;
         Ok(RepeaterSettings {
             shift,
             offset_hz: None,
@@ -297,28 +304,28 @@ impl YaesuCatRadio {
             bail!("repeater settings are not documented for this Yaesu model");
         }
         if settings.tone.index > 49 {
-            bail!("Yaesu FTDX10 tone index must be 0..=49");
+            bail!("Yaesu tone index must be 0..=49");
         }
+        anyhow::ensure!(
+            settings.offset_hz.is_none() || settings.offset_hz == Some(0),
+            "Yaesu live OS control selects shift direction; set non-zero offset through a memory record"
+        );
         let tone_mode = match settings.tone.mode {
             ToneMode::Off => "0",
             ToneMode::EncodeDecode => "1",
             ToneMode::Encode => "2",
             ToneMode::Dtcs => anyhow::bail!("DTCS is not supported by this Yaesu profile"),
         };
-        let shift = match settings.shift {
-            RepeaterShift::Simplex => "0",
-            RepeaterShift::Plus => "1",
-            RepeaterShift::Minus => "2",
-        };
+        let shift = encode_repeater_shift(settings.shift);
         self.send_set("CN", &format!("{:03}", settings.tone.index))?;
         self.send_set("CT", tone_mode)?;
-        self.send_set("OS", shift)
+        self.send_set("OS", &format!("0{shift}"))
     }
 
-    /// Select a documented FTDX10 memory channel. Read/write of the complete
-    /// `MR`/`MT` records remains a separate model-specific operation.
+    /// Select a documented modern Yaesu memory channel. Complete `MR`/`MT`
+    /// record codecs remain gated to the hardware-validated FTDX10 layout.
     pub fn select_memory_channel(&self, channel: u16) -> Result<()> {
-        if !self.selected_profile()?.supports_repeater_settings || channel > 99 {
+        if !self.selected_profile()?.supports_memory_channels || channel > 99 {
             bail!("memory channel selection is not documented for this Yaesu model");
         }
         self.send_set("MC", &format!("{channel:03}"))
@@ -326,21 +333,22 @@ impl YaesuCatRadio {
 
     pub fn read_memory_channel(&self, channel: u16) -> Result<MemoryChannel> {
         anyhow::ensure!(
-            self.model() == Some(YaesuCatModel::Ftdx10) && (1..=99).contains(&channel),
-            "FTDX10 memory records are the only Yaesu memory surface currently profiled"
+            self.selected_profile()?.supports_memory_channels && (1..=99).contains(&channel),
+            "memory records are not profiled for this Yaesu model"
         );
         let response = self.query("MR", Some(&format!("{channel:03}")), 0)?;
-        decode_ftdx10_memory(parse_payload(&response, "MR")?, self.selected_profile()?)
+        decode_modern_yaesu_memory(parse_payload(&response, "MR")?, self.selected_profile()?)
     }
 
     pub fn write_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
         anyhow::ensure!(
-            self.model() == Some(YaesuCatModel::Ftdx10) && (1..=99).contains(&channel.channel),
-            "FTDX10 memory records are the only Yaesu memory surface currently profiled"
+            self.selected_profile()?.supports_memory_channels
+                && (1..=99).contains(&channel.channel),
+            "memory records are not profiled for this Yaesu model"
         );
         anyhow::ensure!(
             channel.frequency_hz <= 999_999_999,
-            "FTDX10 memory frequency exceeds CAT width"
+            "Yaesu memory frequency exceeds CAT width"
         );
         let mode = self.selected_profile()?.encode_mode(channel.mode)?;
         let tone = match channel.repeater.tone.mode {
@@ -358,10 +366,10 @@ impl YaesuCatRadio {
         let name = channel.name.unwrap_or_default();
         anyhow::ensure!(
             name.is_ascii() && name.len() <= 12,
-            "FTDX10 memory tag must be ASCII and at most 12 characters"
+            "Yaesu memory tag must be ASCII and at most 12 characters"
         );
         let params = format!(
-            "0{:03}{:09}+{:04}00{}0{}00{}0{}",
+            "{:03}{:09}+{:04}00{}0{}00{}0{}",
             channel.channel, channel.frequency_hz, offset, mode, tone, shift, name
         );
         self.send_set("MT", &params)
@@ -407,20 +415,33 @@ impl YaesuCatRadio {
         }
 
         let response = match self.query("EX", Some("030310"), 7) {
-            Ok(response) => Some(response),
-            Err(_) => {
+            Ok(response) => response,
+            Err(first_error) => {
                 // If CAT RTS is already enabled on the radio, a no-flow
                 // control probe may never receive a response. Reopen with
-                // RTS/CTS and retry the menu read before giving up on auto
-                // detection.
-                self.enable_hardware_flow_control()?;
-                self.query("EX", Some("030310"), 7).ok()
+                // RTS/CTS and retry the menu read. Do not hide a second
+                // failure: without a valid menu response, the driver cannot
+                // safely claim that detection completed.
+                self.enable_hardware_flow_control().with_context(|| {
+                    format!("failed to apply Yaesu CAT RTS/CTS after initial probe: {first_error}")
+                })?;
+                self.query("EX", Some("030310"), 7).with_context(|| {
+                    format!(
+                        "Yaesu CAT RTS probe failed with and without hardware flow control: {first_error}"
+                    )
+                })?
             }
         };
-        let enabled = response
-            .and_then(|frame| parse_payload(&frame, "EX").ok().map(str::to_owned))
-            .and_then(|payload| payload.chars().last())
-            .is_some_and(|value| value == '1');
+        let payload = parse_payload(&response, "EX")?;
+        anyhow::ensure!(
+            payload.starts_with("030310") && payload.len() == 7,
+            "unexpected Yaesu CAT RTS response payload: {payload}"
+        );
+        let enabled = match payload.as_bytes()[6] {
+            b'0' => false,
+            b'1' => true,
+            value => bail!("unexpected Yaesu CAT RTS value: {}", char::from(value)),
+        };
         let flow_control_enabled = self
             .hardware_flow_control
             .lock()
@@ -437,15 +458,18 @@ impl YaesuCatRadio {
     }
 
     fn enable_hardware_flow_control(&self) -> Result<()> {
-        *self
-            .hardware_flow_control
-            .lock()
-            .map_err(|_| anyhow!("Yaesu CAT flow-control state lock poisoned"))? = true;
-        self.with_transport(Duration::from_millis(150), |state| {
+        let result = self.with_transport(Duration::from_millis(150), |state| {
             active_transport(state)?
                 .set_hardware_flow_control(true)
                 .context("failed to enable Yaesu CAT RTS/CTS flow control")
-        })
+        });
+        if result.is_ok() {
+            *self
+                .hardware_flow_control
+                .lock()
+                .map_err(|_| anyhow!("Yaesu CAT flow-control state lock poisoned"))? = true;
+        }
+        result
     }
 
     fn write_only(&self, request: &[u8]) -> Result<()> {
@@ -483,8 +507,7 @@ impl YaesuCatRadio {
                     if matcher(&frame) {
                         return Ok(frame);
                     }
-                    // Auto-information frames and replies for other commands
-                    // may be interleaved. They are intentionally ignored here.
+                    self.publish_unsolicited(&frame);
                 }
 
                 match active_transport(state)?.read(&mut buffer) {
@@ -559,12 +582,59 @@ impl YaesuCatRadio {
         }
         result
     }
+
+    fn publish_unsolicited(&self, frame: &[u8]) {
+        let Ok(text) = std::str::from_utf8(frame) else {
+            self.event_router.publish(RadioEvent::Raw {
+                payload: frame.to_vec(),
+            });
+            return;
+        };
+        let Some(payload) = text.strip_suffix(';') else {
+            return;
+        };
+        if let Some(value) = payload.strip_prefix("FA") {
+            if let Ok(frequency_hz) = value.parse() {
+                self.event_router
+                    .publish(RadioEvent::FrequencyChanged { frequency_hz });
+                return;
+            }
+        }
+        if let Some(value) = payload.strip_prefix("TX") {
+            if matches!(value, "0" | "1" | "2") {
+                self.event_router.publish(RadioEvent::PttChanged {
+                    enabled: value != "0",
+                });
+                return;
+            }
+        }
+        if let Some(value) = payload.strip_prefix("MD") {
+            if value.len() >= 2 && matches!(&value[..1], "0" | "1") {
+                let code = value.chars().nth(1).expect("length checked above");
+                if let Some(mode) = self
+                    .profile()
+                    .and_then(|profile| profile.decode_mode(code).ok())
+                {
+                    self.event_router.publish(RadioEvent::ModeChanged { mode });
+                    return;
+                }
+            }
+        }
+        self.event_router.publish(RadioEvent::Raw {
+            payload: frame.to_vec(),
+        });
+    }
 }
 
 #[async_trait]
 impl Radio for YaesuCatRadio {
+    fn event_router(&self) -> Option<RadioEventRouter> {
+        Some(self.event_router.clone())
+    }
+
     async fn get_frequency_hz(&self) -> Result<u64> {
-        parse_payload(&self.query("FA", None, 9)?, "FA")?
+        let command = active_vfo_command(self.active_vfo_selector()?);
+        parse_payload(&self.query(command, None, 9)?, command)?
             .parse()
             .context("invalid Yaesu FA response")
     }
@@ -581,32 +651,19 @@ impl Radio for YaesuCatRadio {
                 );
             }
         }
-        self.send_set("FA", &format!("{hz:09}"))
+        let command = active_vfo_command(self.active_vfo_selector()?);
+        self.send_set(command, &format!("{hz:09}"))
     }
 
     async fn get_mode(&self) -> Result<Mode> {
-        // The FTDX10 requires the receiver selector on an MD read.  Read the
-        // Main band with MD0; and expect an answer such as MD04; (FM).
-        let response = match self.query("MD", Some("0"), 2) {
-            Ok(response) => response,
-            Err(error)
-                if self.model == Some(YaesuCatModel::Ftdx10)
-                    && (error.to_string().contains("rejected command MD")
-                        || error
-                            .to_string()
-                            .contains("timed out waiting for Yaesu CAT response to MD")) =>
-            {
-                // Some FTDX10/USB bridge combinations report CAT RTS enabled
-                // but reject the first mode read until the host applies
-                // RTS/CTS. Keep this recovery bounded and transparent.
-                self.enable_hardware_flow_control()?;
-                self.query("MD", Some("0"), 2)?
-            }
-            Err(error) => return Err(error),
-        };
+        // Modern Yaesu uses the selected VFO selector in MD reads and writes:
+        // MD0; / MD1; select the mode for VFO-A / VFO-B respectively.
+        let selector = self.active_vfo_selector()?;
+        let selector_text = selector.to_string();
+        let response = self.query("MD", Some(&selector_text), 2)?;
         let payload = parse_payload(&response, "MD")?;
         let mut chars = payload.chars();
-        if chars.next() != Some('0') {
+        if chars.next() != Some(char::from(b'0' + selector)) {
             bail!("unexpected Yaesu MD receiver selector: {payload}");
         }
         let code = chars.next().context("missing Yaesu MD mode code")?;
@@ -621,7 +678,8 @@ impl Radio for YaesuCatRadio {
             Some(profile) => profile.encode_mode(mode)?,
             None => encode_common_mode(mode)?,
         };
-        self.send_set("MD", &format!("0{code}"))
+        let selector = self.active_vfo_selector()?;
+        self.send_set("MD", &format!("{selector}{code}"))
     }
 
     async fn set_ptt(&self, enabled: bool) -> Result<()> {
@@ -652,6 +710,35 @@ impl Radio for YaesuCatRadio {
 
     async fn get_control(&self, id: ControlId) -> Result<Option<ControlValue>> {
         match id {
+            ControlId::AfGain | ControlId::RfGain => {
+                let command = if id == ControlId::AfGain { "AG" } else { "RG" };
+                Ok(Some(ControlValue::U8(self.get_yaesu_level(command, 255)?)))
+            }
+            ControlId::Squelch => Ok(Some(ControlValue::U8(normalize_percent(
+                self.get_yaesu_level("SQ", 100)?,
+            )))),
+            ControlId::Preamp => Ok(Some(ControlValue::U8(self.get_yaesu_selector("PA")?))),
+            ControlId::Attenuator => Ok(Some(ControlValue::U8(self.get_yaesu_selector("RA")?))),
+            ControlId::NoiseBlanker => Ok(Some(ControlValue::Bool(
+                self.get_yaesu_bool_selector("NB")?,
+            ))),
+            ControlId::Notch => Ok(Some(ControlValue::Bool(
+                self.get_yaesu_bool_selector("BC")?,
+            ))),
+            ControlId::ManualNotch => Ok(Some(ControlValue::Bool(self.get_yaesu_manual_notch()?))),
+            ControlId::Filter => Ok(Some(ControlValue::U8(self.get_yaesu_width()?))),
+            ControlId::Rit => Ok(Some(ControlValue::Bool(self.get_yaesu_bool("RT")?))),
+            ControlId::Xit => Ok(Some(ControlValue::Bool(self.get_yaesu_bool("XT")?))),
+            ControlId::Vfo => {
+                let response = self.query("VS", None, 1)?;
+                let payload = parse_payload(&response, "VS")?;
+                let value = payload
+                    .parse::<u8>()
+                    .context("invalid Yaesu VFO selector")?;
+                anyhow::ensure!(value <= 1, "invalid Yaesu VFO selector: {value}");
+                Ok(Some(ControlValue::Vfo(value)))
+            }
+            ControlId::Tuner => Ok(Some(ControlValue::Bool(self.get_yaesu_tuner_enabled()?))),
             ControlId::RfPower => {
                 let watts = self.get_power_watts()?;
                 Ok(Some(ControlValue::U8(self.watts_to_normalized(watts)?)))
@@ -709,6 +796,41 @@ impl Radio for YaesuCatRadio {
 
     async fn set_control(&self, id: ControlId, value: ControlValue) -> Result<()> {
         match (id, value) {
+            (ControlId::AfGain, ControlValue::U8(value)) => self.set_yaesu_level("AG", value),
+            (ControlId::RfGain, ControlValue::U8(value)) => self.set_yaesu_level("RG", value),
+            (ControlId::Squelch, ControlValue::U8(value)) => {
+                self.send_set("SQ", &format!("0{:03}", denormalize_percent(value)))
+            }
+            (ControlId::Preamp, ControlValue::U8(value)) if value <= 2 => {
+                self.send_set("PA", &format!("0{value}"))
+            }
+            (ControlId::Attenuator, ControlValue::U8(value)) if value <= 3 => {
+                self.send_set("RA", &format!("0{value}"))
+            }
+            (ControlId::NoiseBlanker, ControlValue::Bool(enabled)) => {
+                self.send_set("NB", if enabled { "01" } else { "00" })
+            }
+            (ControlId::Notch, ControlValue::Bool(enabled)) => {
+                self.send_set("BC", if enabled { "01" } else { "00" })
+            }
+            (ControlId::ManualNotch, ControlValue::Bool(enabled)) => {
+                self.send_set("BP", if enabled { "00001" } else { "00000" })
+            }
+            (ControlId::Filter, ControlValue::U8(value)) if value <= 23 => {
+                self.send_set("SH", &format!("00{value:02}"))
+            }
+            (ControlId::Rit, ControlValue::Bool(enabled)) => {
+                self.send_set("RT", if enabled { "1" } else { "0" })
+            }
+            (ControlId::Xit, ControlValue::Bool(enabled)) => {
+                self.send_set("XT", if enabled { "1" } else { "0" })
+            }
+            (ControlId::Vfo, ControlValue::Vfo(value)) if value <= 1 => {
+                self.send_set("VS", &value.to_string())
+            }
+            (ControlId::Tuner, ControlValue::Bool(enabled)) => {
+                self.send_set("AC", if enabled { "001" } else { "000" })
+            }
             (ControlId::RfPower, ControlValue::U8(level)) => {
                 self.set_power_watts(self.normalized_to_watts(level)?)
             }
@@ -730,6 +852,38 @@ impl Radio for YaesuCatRadio {
 
     async fn get_repeater_settings(&self) -> Result<RepeaterSettings> {
         YaesuCatRadio::get_repeater_settings(self)
+    }
+
+    async fn get_rit_offset_hz(&self) -> Result<i32> {
+        let response = self.query("CF", Some("001"), 8)?;
+        let payload = parse_payload(&response, "CF")?;
+        let sign = match payload.chars().nth(3) {
+            Some('+') => 1,
+            Some('-') => -1,
+            value => bail!("invalid Yaesu clarifier sign: {value:?}"),
+        };
+        let value = payload
+            .get(4..8)
+            .context("invalid Yaesu clarifier offset")?
+            .parse::<i32>()?;
+        Ok(sign * value)
+    }
+
+    async fn set_rit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        anyhow::ensure!(
+            (-9999..=9999).contains(&offset_hz),
+            "Yaesu RIT offset must be -9999..=9999 Hz"
+        );
+        let sign = if offset_hz < 0 { '-' } else { '+' };
+        self.send_set("CF", &format!("001{sign}{:04}", offset_hz.unsigned_abs()))
+    }
+
+    async fn get_xit_offset_hz(&self) -> Result<i32> {
+        self.get_rit_offset_hz().await
+    }
+
+    async fn set_xit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        self.set_rit_offset_hz(offset_hz).await
     }
 
     async fn set_repeater_settings(&self, settings: RepeaterSettings) -> Result<()> {
@@ -755,7 +909,7 @@ impl Radio for YaesuCatRadio {
 
     fn supports_memory_channels(&self) -> bool {
         self.profile()
-            .is_some_and(|profile| profile.supports_repeater_settings)
+            .is_some_and(|profile| profile.supports_memory_channels)
     }
 
     fn supports_meter(&self, id: MeterId) -> bool {
@@ -768,9 +922,57 @@ impl Radio for YaesuCatRadio {
                 || (id == ControlId::Split && profile.supports_split)
                 || matches!(
                     id,
-                    ControlId::Agc | ControlId::NoiseReduction | ControlId::NoiseReductionLevel
+                    ControlId::AfGain
+                        | ControlId::RfGain
+                        | ControlId::Squelch
+                        | ControlId::Preamp
+                        | ControlId::Attenuator
+                        | ControlId::NoiseBlanker
+                        | ControlId::NoiseReduction
+                        | ControlId::NoiseReductionLevel
+                        | ControlId::Notch
+                        | ControlId::ManualNotch
+                        | ControlId::Filter
+                        | ControlId::Agc
+                        | ControlId::Rit
+                        | ControlId::Xit
+                        | ControlId::Tuner
+                        | ControlId::Vfo
                 )
         })
+    }
+
+    fn supports_control_read(&self, id: ControlId) -> bool {
+        self.supports_control(id)
+    }
+
+    fn supports_control_write(&self, id: ControlId) -> bool {
+        self.supports_control(id)
+    }
+
+    async fn start_tuner(&self) -> Result<()> {
+        self.send_set("AC", "002")
+    }
+
+    async fn get_tuner_status(&self) -> Result<Option<TunerStatus>> {
+        let response = self.query("AC", None, 3)?;
+        let payload = parse_payload(&response, "AC")?;
+        let state = match payload.chars().last() {
+            Some('0') => TunerStatus {
+                enabled: false,
+                tuning: false,
+            },
+            Some('1') => TunerStatus {
+                enabled: true,
+                tuning: false,
+            },
+            Some('2') => TunerStatus {
+                enabled: true,
+                tuning: true,
+            },
+            value => bail!("invalid Yaesu tuner state: {value:?}"),
+        };
+        Ok(Some(state))
     }
 
     fn capabilities(&self) -> RadioCapabilities {
@@ -789,8 +991,83 @@ impl Radio for YaesuCatRadio {
 }
 
 impl YaesuCatRadio {
+    fn active_vfo_selector(&self) -> Result<u8> {
+        let response = self.query("VS", None, 1)?;
+        let payload = parse_payload(&response, "VS")?;
+        let value = payload
+            .parse::<u8>()
+            .context("invalid Yaesu VFO selector")?;
+        anyhow::ensure!(value <= 1, "invalid Yaesu VFO selector: {value}");
+        Ok(value)
+    }
+
+    fn get_yaesu_level(&self, command: &str, maximum: u8) -> Result<u8> {
+        let response = self.query(command, Some("0"), 4)?;
+        let payload = parse_payload(&response, command)?;
+        let value = payload
+            .strip_prefix('0')
+            .context("invalid Yaesu level selector")?
+            .parse::<u16>()?;
+        anyhow::ensure!(value <= u16::from(maximum), "Yaesu level exceeds its range");
+        Ok(value as u8)
+    }
+
+    fn set_yaesu_level(&self, command: &str, value: u8) -> Result<()> {
+        self.send_set(command, &format!("0{value:03}"))
+    }
+
+    fn get_yaesu_selector(&self, command: &str) -> Result<u8> {
+        let response = self.query(command, Some("0"), 2)?;
+        let payload = parse_payload(&response, command)?;
+        payload
+            .chars()
+            .last()
+            .context("missing Yaesu selector")?
+            .to_digit(10)
+            .map(|value| value as u8)
+            .context("invalid Yaesu selector")
+    }
+
+    fn get_yaesu_bool_selector(&self, command: &str) -> Result<bool> {
+        Ok(self.get_yaesu_selector(command)? == 1)
+    }
+
+    fn get_yaesu_bool(&self, command: &str) -> Result<bool> {
+        match parse_payload(&self.query(command, None, 1)?, command)? {
+            "0" => Ok(false),
+            "1" => Ok(true),
+            value => bail!("invalid Yaesu {command} state: {value}"),
+        }
+    }
+
+    fn get_yaesu_manual_notch(&self) -> Result<bool> {
+        let response = self.query("BP", Some("00"), 5)?;
+        let payload = parse_payload(&response, "BP")?;
+        Ok(payload.get(2..5) == Some("001"))
+    }
+
+    fn get_yaesu_width(&self) -> Result<u8> {
+        let response = self.query("SH", Some("0"), 4)?;
+        let payload = parse_payload(&response, "SH")?;
+        payload
+            .get(2..4)
+            .context("invalid Yaesu SH response")?
+            .parse()
+            .context("invalid Yaesu width index")
+    }
+
+    fn get_yaesu_tuner_enabled(&self) -> Result<bool> {
+        let response = self.query("AC", None, 3)?;
+        let payload = parse_payload(&response, "AC")?;
+        match payload.chars().last() {
+            Some('0') => Ok(false),
+            Some('1' | '2') => Ok(true),
+            value => bail!("invalid Yaesu tuner state: {value:?}"),
+        }
+    }
+
     fn get_yaesu_meter(&self, selector: u8) -> Result<u8> {
-        let response = self.query("RM", Some(&selector.to_string()), 10)?;
+        let response = self.query("RM", Some(&selector.to_string()), RM_RESPONSE_PAYLOAD_LEN)?;
         let payload = parse_payload(&response, "RM")?;
         let response_selector = payload
             .chars()
@@ -836,6 +1113,14 @@ impl YaesuCatRadio {
     }
 }
 
+fn active_vfo_command(selector: u8) -> &'static str {
+    match selector {
+        0 => "FA",
+        1 => "FB",
+        _ => unreachable!("active VFO selector is validated to 0 or 1"),
+    }
+}
+
 fn parse_payload<'a>(frame: &'a [u8], command: &str) -> Result<&'a str> {
     let text = std::str::from_utf8(frame).context("Yaesu CAT response is not ASCII")?;
     text.strip_prefix(command)
@@ -843,39 +1128,65 @@ fn parse_payload<'a>(frame: &'a [u8], command: &str) -> Result<&'a str> {
         .context("unexpected Yaesu CAT response")
 }
 
-fn decode_ftdx10_memory(payload: &str, profile: &YaesuCatProfile) -> Result<MemoryChannel> {
-    anyhow::ensure!(payload.len() >= 25, "FTDX10 MR response is too short");
+fn normalize_percent(value: u8) -> u8 {
+    ((u16::from(value) * 255 + 50) / 100) as u8
+}
+
+fn denormalize_percent(value: u8) -> u8 {
+    ((u16::from(value) * 100 + 127) / 255) as u8
+}
+
+fn decode_repeater_shift(payload: &str) -> Result<RepeaterShift> {
+    match payload.chars().last() {
+        Some('0') => Ok(RepeaterShift::Simplex),
+        Some('1') => Ok(RepeaterShift::Plus),
+        Some('2') => Ok(RepeaterShift::Minus),
+        Some(value) => bail!("invalid Yaesu OS repeater shift: {value}"),
+        None => bail!("missing Yaesu OS repeater shift"),
+    }
+}
+
+fn encode_repeater_shift(shift: RepeaterShift) -> &'static str {
+    match shift {
+        RepeaterShift::Simplex => "0",
+        RepeaterShift::Plus => "1",
+        RepeaterShift::Minus => "2",
+    }
+}
+
+fn decode_modern_yaesu_memory(payload: &str, profile: &YaesuCatProfile) -> Result<MemoryChannel> {
+    anyhow::ensure!(payload.len() >= 25, "Yaesu MR response is too short");
     let channel = payload[0..3]
         .parse::<u16>()
-        .context("invalid FTDX10 memory channel")?;
+        .context("invalid Yaesu memory channel")?;
     let frequency_hz = payload[3..12]
         .parse::<u64>()
-        .context("invalid FTDX10 memory frequency")?;
+        .context("invalid Yaesu memory frequency")?;
     let sign = match &payload[12..13] {
         "+" => 1i32,
         "-" => -1i32,
-        value => bail!("invalid FTDX10 clarifier direction: {value}"),
+        value => bail!("invalid Yaesu clarifier direction: {value}"),
     };
     let offset = payload[13..17]
         .parse::<i32>()
-        .context("invalid FTDX10 memory offset")?;
+        .context("invalid Yaesu memory offset")?;
     let mode = profile.decode_mode(
         payload[19..20]
             .chars()
             .next()
-            .context("missing FTDX10 memory mode")?,
+            .context("missing Yaesu memory mode")?,
     )?;
     let tone = match &payload[21..22] {
         "0" => ToneMode::Off,
         "1" => ToneMode::EncodeDecode,
         "2" => ToneMode::Encode,
-        value => bail!("invalid FTDX10 memory tone mode: {value}"),
+        value => bail!("invalid Yaesu memory tone mode: {value}"),
     };
     let shift = match &payload[24..25] {
         "0" => RepeaterShift::Simplex,
         "1" => RepeaterShift::Plus,
         "2" => RepeaterShift::Minus,
-        value => bail!("invalid FTDX10 memory shift: {value}"),
+        value => bail!("invalid Yaesu memory shift: {value}"),
     };
     Ok(MemoryChannel {
         channel,
@@ -955,7 +1266,106 @@ fn decode_common_mode(code: char) -> Result<Mode> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::yaesu::profile::FTDX10_PROFILE;
+    use crate::yaesu::profile::{
+        FT710_PROFILE, FT991A_PROFILE, FTDX101D_PROFILE, FTDX101MP_PROFILE, FTDX10_PROFILE,
+    };
+    use std::io::{Read, Write};
+    use std::sync::{Arc, Mutex};
+
+    struct ScriptedTransport {
+        input: Vec<u8>,
+        output: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Read for ScriptedTransport {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let frame_len = self
+                .input
+                .iter()
+                .position(|byte| *byte == b';')
+                .map_or(self.input.len(), |index| index + 1);
+            let count = buffer.len().min(self.input.len()).min(frame_len);
+            buffer[..count].copy_from_slice(&self.input[..count]);
+            self.input.drain(..count);
+            Ok(count)
+        }
+    }
+
+    impl Write for ScriptedTransport {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.output.lock().unwrap().extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl crate::transport::RadioTransport for ScriptedTransport {
+        fn set_timeout(&mut self, _timeout: std::time::Duration) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct FlowControlTransport {
+        scripted: ScriptedTransport,
+        flow_control: Arc<Mutex<Vec<bool>>>,
+    }
+
+    impl Read for FlowControlTransport {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            self.scripted.read(buffer)
+        }
+    }
+
+    impl Write for FlowControlTransport {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.scripted.write(buffer)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.scripted.flush()
+        }
+    }
+
+    impl crate::transport::RadioTransport for FlowControlTransport {
+        fn set_timeout(&mut self, timeout: std::time::Duration) -> std::io::Result<()> {
+            self.scripted.set_timeout(timeout)
+        }
+
+        fn set_hardware_flow_control(&mut self, enabled: bool) -> std::io::Result<()> {
+            self.flow_control.lock().unwrap().push(enabled);
+            Ok(())
+        }
+    }
+
+    struct FailingTransport;
+
+    impl Read for FailingTransport {
+        fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "radio disconnected",
+            ))
+        }
+    }
+
+    impl Write for FailingTransport {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl crate::transport::RadioTransport for FailingTransport {
+        fn set_timeout(&mut self, _timeout: std::time::Duration) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn common_commands_match_official_manual_examples() {
@@ -967,6 +1377,310 @@ mod tests {
         assert_eq!(ascii_cat::encode("MD", Some("0")).unwrap(), b"MD0;");
         assert_eq!(ascii_cat::encode("MD", None).unwrap(), b"MD;");
         assert_eq!(ascii_cat::encode("TX", None).unwrap(), b"TX;");
+    }
+
+    #[test]
+    fn vfo_selection_routes_frequency_and_mode_to_the_selected_vfo() {
+        assert_eq!(active_vfo_command(0), "FA");
+        assert_eq!(active_vfo_command(1), "FB");
+        assert_eq!(parse_payload(b"MD02;", "MD").unwrap(), "02");
+        assert_eq!(parse_payload(b"MD12;", "MD").unwrap(), "12");
+    }
+
+    #[test]
+    fn selected_vfo_is_used_by_live_frequency_and_mode_operations() {
+        let frequency_output = Arc::new(Mutex::new(Vec::new()));
+        let frequency_radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            ScriptedTransport {
+                input: b"EX0303101;VS1;FB014250000;".to_vec(),
+                output: frequency_output.clone(),
+            },
+        );
+        assert_eq!(
+            futures::executor::block_on(frequency_radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        assert_eq!(&*frequency_output.lock().unwrap(), b"EX030310;VS;FB;");
+
+        let mode_output = Arc::new(Mutex::new(Vec::new()));
+        let mode_radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            ScriptedTransport {
+                input: b"EX0303101;VS1;MD1C;".to_vec(),
+                output: mode_output.clone(),
+            },
+        );
+        assert_eq!(
+            futures::executor::block_on(mode_radio.get_mode()).unwrap(),
+            Mode::Data
+        );
+        assert_eq!(&*mode_output.lock().unwrap(), b"EX030310;VS;MD1;");
+    }
+
+    #[test]
+    fn ftdx10_rts_probe_observes_disabled_setting_without_enabling_flow_control() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let flow_control = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            FlowControlTransport {
+                scripted: ScriptedTransport {
+                    input: b"EX0303100;VS0;FA014250000;".to_vec(),
+                    output,
+                },
+                flow_control: Arc::clone(&flow_control),
+            },
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        assert!(flow_control.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn ftdx10_rts_probe_applies_enabled_setting_before_normal_cat() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let flow_control = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            FlowControlTransport {
+                scripted: ScriptedTransport {
+                    input: b"EX0303101;VS0;FA014250000;".to_vec(),
+                    output,
+                },
+                flow_control: Arc::clone(&flow_control),
+            },
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        assert_eq!(&*flow_control.lock().unwrap(), &[true]);
+    }
+
+    #[test]
+    fn ftdx10_rts_probe_retries_with_flow_control_after_rejected_probe() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let flow_control = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            FlowControlTransport {
+                scripted: ScriptedTransport {
+                    input: b"?;EX0303101;VS0;FA014250000;".to_vec(),
+                    output,
+                },
+                flow_control: Arc::clone(&flow_control),
+            },
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        assert_eq!(&*flow_control.lock().unwrap(), &[true]);
+    }
+
+    #[test]
+    fn live_meter_queries_accept_the_documented_rm_reply_shape() {
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            ScriptedTransport {
+                input: b"EX0303101;RM1128000;".to_vec(),
+                output: Arc::new(Mutex::new(Vec::new())),
+            },
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_meter(MeterId::Signal)).unwrap(),
+            Some(128)
+        );
+    }
+
+    #[test]
+    fn core_control_and_meter_reads_decode_documented_replies() {
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            ScriptedTransport {
+                input: b"EX0303101;AG0128;RG0255;SQ0100;PA02;RA03;NB01;BC01;BP00001;SH0012;RT1;XT0;VS1;AC001;PC100;ST2;GT04;NR01;RL007;RM1128000;RM3033000;RM4044000;RM5055000;RM6066000;RM7077000;RM8088000;".to_vec(),
+                output: Arc::new(Mutex::new(Vec::new())),
+            },
+        );
+        let read = |id| futures::executor::block_on(radio.get_control(id)).unwrap();
+        assert_eq!(read(ControlId::AfGain), Some(ControlValue::U8(128)));
+        assert_eq!(read(ControlId::RfGain), Some(ControlValue::U8(255)));
+        assert_eq!(read(ControlId::Squelch), Some(ControlValue::U8(255)));
+        assert_eq!(read(ControlId::Preamp), Some(ControlValue::U8(2)));
+        assert_eq!(read(ControlId::Attenuator), Some(ControlValue::U8(3)));
+        assert_eq!(
+            read(ControlId::NoiseBlanker),
+            Some(ControlValue::Bool(true))
+        );
+        assert_eq!(read(ControlId::Notch), Some(ControlValue::Bool(true)));
+        assert_eq!(read(ControlId::ManualNotch), Some(ControlValue::Bool(true)));
+        assert_eq!(read(ControlId::Filter), Some(ControlValue::U8(12)));
+        assert_eq!(read(ControlId::Rit), Some(ControlValue::Bool(true)));
+        assert_eq!(read(ControlId::Xit), Some(ControlValue::Bool(false)));
+        assert_eq!(read(ControlId::Vfo), Some(ControlValue::Vfo(1)));
+        assert_eq!(read(ControlId::Tuner), Some(ControlValue::Bool(true)));
+        assert_eq!(read(ControlId::RfPower), Some(ControlValue::U8(255)));
+        assert_eq!(read(ControlId::Split), Some(ControlValue::Bool(true)));
+        assert_eq!(read(ControlId::Agc), Some(ControlValue::U8(4)));
+        assert_eq!(
+            read(ControlId::NoiseReduction),
+            Some(ControlValue::Bool(true))
+        );
+        assert_eq!(
+            read(ControlId::NoiseReductionLevel),
+            Some(ControlValue::U8(7))
+        );
+
+        for (id, expected) in [
+            (MeterId::Signal, 128),
+            (MeterId::Compression, 33),
+            (MeterId::Alc, 44),
+            (MeterId::Power, 55),
+            (MeterId::Swr, 66),
+            (MeterId::Current, 77),
+            (MeterId::Voltage, 88),
+        ] {
+            assert_eq!(
+                futures::executor::block_on(radio.get_meter(id)).unwrap(),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn core_control_writes_match_documented_command_fields() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            ScriptedTransport {
+                input: Vec::new(),
+                output: output.clone(),
+            },
+        );
+        let write = |id, value| {
+            futures::executor::block_on(radio.set_control(id, value)).unwrap();
+        };
+        write(ControlId::AfGain, ControlValue::U8(128));
+        write(ControlId::RfGain, ControlValue::U8(255));
+        write(ControlId::Squelch, ControlValue::U8(255));
+        write(ControlId::Preamp, ControlValue::U8(2));
+        write(ControlId::Attenuator, ControlValue::U8(3));
+        write(ControlId::NoiseBlanker, ControlValue::Bool(true));
+        write(ControlId::Notch, ControlValue::Bool(true));
+        write(ControlId::ManualNotch, ControlValue::Bool(true));
+        write(ControlId::Filter, ControlValue::U8(12));
+        write(ControlId::Rit, ControlValue::Bool(true));
+        write(ControlId::Xit, ControlValue::Bool(true));
+        write(ControlId::Vfo, ControlValue::Vfo(1));
+        write(ControlId::Tuner, ControlValue::Bool(true));
+        write(ControlId::RfPower, ControlValue::U8(255));
+        write(ControlId::Split, ControlValue::Bool(true));
+        write(ControlId::Agc, ControlValue::U8(4));
+        write(ControlId::NoiseReduction, ControlValue::Bool(true));
+        write(ControlId::NoiseReductionLevel, ControlValue::U8(7));
+        assert_eq!(
+            &*output.lock().unwrap(),
+            b"AG0128;RG0255;SQ0100;PA02;RA03;NB01;BC01;BP00001;SH0012;RT1;XT1;VS1;AC001;PC100;ST1;GT04;NR01;RL007;"
+        );
+
+        assert!(futures::executor::block_on(
+            radio.set_control(ControlId::Preamp, ControlValue::U8(3),)
+        )
+        .is_err());
+        assert!(futures::executor::block_on(
+            radio.set_control(ControlId::Attenuator, ControlValue::U8(4),)
+        )
+        .is_err());
+        assert!(futures::executor::block_on(
+            radio.set_control(ControlId::NoiseReductionLevel, ControlValue::U8(0),)
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn live_queries_skip_unsolicited_frames_and_keep_their_response() {
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            ScriptedTransport {
+                input: b"EX0303101;FA014074000;VS1;FB014250000;".to_vec(),
+                output: Arc::new(Mutex::new(Vec::new())),
+            },
+        );
+        let subscription = radio.event_router.subscribe();
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        assert_eq!(
+            subscription.drain(),
+            vec![RadioEvent::FrequencyChanged {
+                frequency_hz: 14_074_000
+            }]
+        );
+    }
+
+    #[test]
+    fn transport_failures_are_reported_and_pending_frames_are_cleared() {
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            FailingTransport,
+        );
+        assert!(radio.query_raw("VS", None).is_err());
+        assert!(radio.transport.lock().unwrap().pending.is_empty());
+    }
+
+    #[test]
+    fn modern_mode_table_matches_manual_receiver_codes() {
+        for profile in [
+            &FT710_PROFILE,
+            &FTDX10_PROFILE,
+            &FTDX101D_PROFILE,
+            &FTDX101MP_PROFILE,
+        ] {
+            for (code, mode) in [
+                ('1', Mode::Lsb),
+                ('2', Mode::Usb),
+                ('3', Mode::Cw),
+                ('4', Mode::Fm),
+                ('5', Mode::Am),
+                ('6', Mode::Rtty),
+                ('7', Mode::CwReverse),
+                ('9', Mode::RttyReverse),
+                ('B', Mode::Fm),
+                ('C', Mode::Data),
+                ('D', Mode::Am),
+                ('E', Mode::Data),
+                ('F', Mode::Data),
+            ] {
+                assert_eq!(profile.decode_mode(code).unwrap(), mode);
+            }
+        }
+        assert_eq!(FT991A_PROFILE.decode_mode('E').unwrap(), Mode::Data);
+        assert!(FT991A_PROFILE.decode_mode('F').is_err());
+    }
+
+    #[test]
+    fn manual_meter_selectors_are_preserved() {
+        for selector in 1..=8 {
+            let frame = format!("RM{selector:03};");
+            assert_eq!(parse_payload(frame.as_bytes(), "RM").unwrap(), &frame[2..5]);
+        }
     }
 
     #[test]
@@ -986,6 +1700,33 @@ mod tests {
     }
 
     #[test]
+    fn auto_information_frames_become_typed_events() {
+        let radio = YaesuCatRadio::new_for_model(YaesuCatModel::Ftdx10, "test", 38_400).unwrap();
+        let subscription = radio.event_router.subscribe();
+        radio.publish_unsolicited(b"FA014074000;");
+        radio.publish_unsolicited(b"MD02;");
+        radio.publish_unsolicited(b"TX1;");
+        assert_eq!(
+            subscription.drain(),
+            vec![
+                RadioEvent::FrequencyChanged {
+                    frequency_hz: 14_074_000
+                },
+                RadioEvent::ModeChanged { mode: Mode::Usb },
+                RadioEvent::PttChanged { enabled: true },
+            ]
+        );
+    }
+
+    #[test]
+    fn repeater_os_preserves_main_band_selector_and_decodes_direction() {
+        assert_eq!(decode_repeater_shift("00").unwrap(), RepeaterShift::Simplex);
+        assert_eq!(decode_repeater_shift("01").unwrap(), RepeaterShift::Plus);
+        assert_eq!(decode_repeater_shift("12").unwrap(), RepeaterShift::Minus);
+        assert_eq!(encode_repeater_shift(RepeaterShift::Plus), "1");
+    }
+
+    #[test]
     fn raw_commands_must_be_single_complete_frames() {
         assert!(validate_complete_command(b"ID;").is_ok());
         assert!(validate_complete_command(b"ID").is_err());
@@ -998,12 +1739,34 @@ mod tests {
             "{:03}{:09}+{:04}00{}0{}00{}",
             1, 14_074_000, 0, '2', '2', '1'
         );
-        let channel = decode_ftdx10_memory(&payload, &FTDX10_PROFILE).unwrap();
+        let channel = decode_modern_yaesu_memory(&payload, &FTDX10_PROFILE).unwrap();
         assert_eq!(channel.channel, 1);
         assert_eq!(channel.frequency_hz, 14_074_000);
         assert_eq!(channel.mode, Mode::Usb);
         assert_eq!(channel.repeater.tone.mode, ToneMode::Encode);
         assert_eq!(channel.repeater.shift, RepeaterShift::Plus);
+    }
+
+    #[test]
+    fn modern_profiles_decode_the_shared_memory_record_layout() {
+        let payload = format!(
+            "{:03}{:09}+{:04}00{}0{}00{}",
+            1, 14_074_000, 0, '2', '2', '1'
+        );
+        for profile in [
+            &FT710_PROFILE,
+            &FTDX10_PROFILE,
+            &FTDX101D_PROFILE,
+            &FTDX101MP_PROFILE,
+            &FT991A_PROFILE,
+        ] {
+            assert_eq!(
+                decode_modern_yaesu_memory(&payload, profile)
+                    .unwrap()
+                    .channel,
+                1
+            );
+        }
     }
 
     #[test]

@@ -7,3 +7,14 @@ pub use super::legacy_profile::FT818_PROFILE as CAT_PROFILE;
 pub fn profile() -> &'static RadioModelProfile {
     find_model("FT-818").expect("built-in FT-818 profile")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exposes_the_ft818_catalog_profile() {
+        assert_eq!(profile().model, "FT-818");
+        assert_eq!(CAT_PROFILE.model, crate::models::YaesuLegacyModel::Ft818);
+    }
+}

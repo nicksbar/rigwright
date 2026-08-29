@@ -1,15 +1,66 @@
 # Changelog
 
-## Unreleased — Structured repeater and channel controls
+## 0.1.14 — Icom and Yaesu capability consolidation
+
+- Add repository ownership, Dependabot updates, an owner-specific MIT license
+  notice, and weekly/pull-request CodeQL security analysis.
+- Document the local LLVM coverage workflow and add pull-request-only CI for
+  locked tests, LLVM coverage summaries, and uploaded HTML coverage reports.
+- Add focused contract tests for every previously uncovered model entry-point
+  module and raise the suite to 193 tests; all former 0% production files now
+  have exercised executable lines.
+- Add a changed-production-file coverage gate so a new or modified `src/**/*.rs`
+  file with no covered executable lines fails the pull request instead of being
+  hidden by aggregate area coverage.
+- Keep the README's per-area coverage labels, release/version metadata, and
+  coverage snapshot synchronized with the enforced LLVM results.
+- Harden the generic/profile boundary across the vendor drivers: shared
+  protocol engines own framing and execution, while model modules own command
+  exceptions, ranges, selectors, and optional capabilities.
+- Complete the Icom profile split for IC-705, IC-7300, IC-7610, and IC-9700;
+  remove duplicated common controls and profile the model-specific memory,
+  meter, VFO, repeater, and special-control surfaces.
+- Add generic-versus-profile capability tests and fake-transport exact-frame
+  regression tests for common RF power plus IC-7300 XIT, IC-7610 antenna, and
+  IC-9700 AGC controls.
+- Reconcile the Icom capability matrix with the manuals, including the `15`
+  meter selectors and the `16 48` manual-notch command. Framework profiles
+  remain distinct from physical-radio validation.
+- Promote the common Icom CI-V control definitions and meter selectors into
+  the shared profile/generic driver layer.
+- Complete live Icom duplex repeater state: read/write offset frequency via
+  `0C`/`0D` and simplex/DUP−/DUP+ state via `0F`.
+- Keep IC-7300-specific scope geometry, limits, and exceptional controls in
+  its model profile.
+- Document the Icom IQ boundary: IC-7300 CI-V scope is supported, while raw
+  USB IQ remains unavailable on that model.
+- Promote documented modern Yaesu `CN`, `CT`, and `OS` repeater controls to all
+  current modern profiles, including the required main-band selector in `OS`.
+- Generalize modern Yaesu `MC`, `MR`, and `MT` memory-channel records across
+  current modern profiles, and keep live `OS` direction distinct from memory
+  offset data.
+- Add modern Yaesu typed AF/RF gain, squelch, preamp, attenuator, NB, notch,
+  filter-width, RIT/XIT, VFO, and tuner controls, plus AI event routing.
+- Expand Kenwood PC control with profile-aware AF/RF gain, squelch, preamp,
+  noise blanker, noise reduction, notch, filters, RIT/XIT offsets, VFO A/B,
+  tuner control, Auto Information event routing, TX power metering, TS-590SG
+  memory/ALC/compression support, and TS-890S
+  ALC/compression/current/voltage/temperature meters.
+- Complete the classic Yaesu binary CAT surfaces available in the documented
+  opcode table: normalized signal/power meters, clarifier enable/offset writes,
+  and repeater shift, offset-frequency, CTCSS, and DCS writes. Readback remains
+  limited to the documented status operations; classic memory and event
+  controls are not exposed because the protocol does not provide them.
+- Add explicit classic-driver helpers for the documented CAT lock and VFO-A/B
+  toggle commands, whose state cannot be read back through binary CAT.
 
 - Add protocol-neutral typed values for CTCSS tone mode/index, repeater shift,
   memory channels, and validated DTMF sequences.
 - Add capability-gated HAL operations for repeater settings, memory/channel
   access, and DTMF transmission, including Android and configured-driver
   delegation.
-- Implement the documented Yaesu FTDX10 `CN`, `CT`, and `OS` repeater
-  operations; other models remain unavailable until their command manuals are
-  individually profiled.
+- Implement the documented modern Yaesu `CN`, `CT`, and `OS` repeater
+  operations with model-profile gating and correct main-band `OS` framing.
 - Implement Icom CI-V repeater tone state/frequency and documented memory
   channel selection, plus Kenwood `CN`/`CT` CTCSS controls.
 - Correct Icom tone mappings to the documented `16 42/43` enable flags and

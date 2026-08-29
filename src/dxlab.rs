@@ -230,6 +230,10 @@ fn decode_commander_mode(value: &str) -> Result<Mode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
 
     #[test]
     fn builds_frequency_command() {
@@ -262,5 +266,75 @@ mod tests {
     #[test]
     fn default_endpoint_is_local() {
         assert_eq!(DxLabCommanderRadio::localhost().address, DEFAULT_ADDRESS);
+    }
+
+    #[test]
+    fn loopback_server_exercises_commander_commands_and_replies() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&commands);
+        let server = thread::spawn(move || {
+            for index in 0..6 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 512];
+                let count = stream.read(&mut request).unwrap();
+                let request = &request[..count];
+                seen.lock()
+                    .unwrap()
+                    .push(std::str::from_utf8(request).unwrap().to_string());
+                let response = match index {
+                    0 => b"<CmdFreq:10> 14074.000".as_slice(),
+                    2 => b"<CmdMode:3>USB".as_slice(),
+                    _ => b"".as_slice(),
+                };
+                stream.write_all(response).unwrap();
+            }
+        });
+
+        let radio =
+            DxLabCommanderRadio::new(address.to_string()).with_timeout(Duration::from_secs(1));
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_074_000
+        );
+        futures::executor::block_on(radio.set_frequency_hz(14_075_000)).unwrap();
+        assert_eq!(
+            futures::executor::block_on(radio.get_mode()).unwrap(),
+            Mode::Usb
+        );
+        futures::executor::block_on(radio.set_mode(Mode::Data)).unwrap();
+        futures::executor::block_on(radio.set_ptt(true)).unwrap();
+        futures::executor::block_on(radio.set_ptt(false)).unwrap();
+        server.join().unwrap();
+        let commands = commands.lock().unwrap();
+        assert_eq!(commands[0], "<command:10>CmdGetFreq<parameters:0>");
+        assert!(commands[1].contains("CmdSetFreq"));
+        assert_eq!(commands[2], "<command:11>CmdSendMode<parameters:0>");
+        assert!(commands[3].contains("CmdSetMode"));
+        assert_eq!(commands[4], "<command:5>CmdTX<parameters:0>");
+        assert_eq!(commands[5], "<command:5>CmdRX<parameters:0>");
+    }
+
+    #[test]
+    fn commander_parsers_reject_invalid_lengths_frequencies_and_modes() {
+        assert!(response_value("<CmdFreq:x>1", "CmdFreq").is_err());
+        assert!(response_value("<CmdFreq:5>1", "CmdFreq").is_err());
+        assert!(response_value("<Other:1>x", "CmdFreq").is_err());
+        assert!(parse_frequency_khz("NaN").is_err());
+        assert!(parse_frequency_khz("-1").is_err());
+        assert!(format_frequency_khz(1_000_000_000_000).is_err());
+        assert!(decode_commander_mode("unknown").is_err());
+        for mode in [
+            Mode::Am,
+            Mode::Fm,
+            Mode::Wfm,
+            Mode::Rtty,
+            Mode::RttyReverse,
+            Mode::Cw,
+            Mode::Lsb,
+        ] {
+            assert!(!encode_commander_mode(mode).is_empty());
+        }
     }
 }

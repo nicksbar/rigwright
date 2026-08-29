@@ -118,8 +118,101 @@ pub const fn set_ptt(enabled: bool) -> [u8; 5] {
     [0, 0, 0, 0, if enabled { 0x08 } else { 0x88 }]
 }
 
+pub const fn set_lock(enabled: bool) -> [u8; 5] {
+    [0, 0, 0, 0, if enabled { 0x00 } else { 0x80 }]
+}
+
+pub const fn toggle_vfo() -> [u8; 5] {
+    [0, 0, 0, 0, 0x81]
+}
+
 pub const fn set_split(enabled: bool) -> [u8; 5] {
     [0, 0, 0, 0, if enabled { 0x02 } else { 0x82 }]
+}
+
+pub const fn set_clarifier(enabled: bool) -> [u8; 5] {
+    [0, 0, 0, 0, if enabled { 0x05 } else { 0x85 }]
+}
+
+/// Set the classic Yaesu clarifier offset. The CAT field is signed and has
+/// 10-Hz resolution, represented as four decimal BCD digits in P3/P4.
+pub fn set_clarifier_offset(offset_hz: i32) -> Result<[u8; 5]> {
+    if offset_hz % 10 != 0 || !(-99_990..=99_990).contains(&offset_hz) {
+        bail!("classic Yaesu clarifier offset must be aligned to 10 Hz and fit ±99.99 kHz");
+    }
+    let magnitude = (offset_hz.unsigned_abs() / 10) as u16;
+    let [p3, p4] = bcd_pair(magnitude)?;
+    Ok([if offset_hz >= 0 { 0 } else { 1 }, 0, p3, p4, 0xF5])
+}
+
+pub const fn set_repeater_shift(shift: crate::hal_types::RepeaterShift) -> [u8; 5] {
+    let value = match shift {
+        crate::hal_types::RepeaterShift::Minus => 0x09,
+        crate::hal_types::RepeaterShift::Plus => 0x49,
+        crate::hal_types::RepeaterShift::Simplex => 0x89,
+    };
+    [value, 0, 0, 0, 0x09]
+}
+
+pub fn set_repeater_offset_frequency(offset_hz: u32) -> Result<[u8; 5]> {
+    if offset_hz > 99_999_999 {
+        bail!("classic Yaesu repeater offset must fit the CAT frequency field");
+    }
+    // Unlike the VFO-frequency command, the manual's repeater example uses
+    // all eight BCD digits directly: 05 43 21 00 = 5.4321 MHz.
+    let units = offset_hz;
+    let mut frame = [0_u8; 5];
+    for (index, byte) in frame[..4].iter_mut().enumerate() {
+        let divisor = 10_u32.pow(6 - (index as u32 * 2));
+        let pair = (units / divisor) % 100;
+        *byte = ((pair / 10) as u8) << 4 | (pair % 10) as u8;
+    }
+    frame[4] = 0xF9;
+    Ok(frame)
+}
+
+pub fn set_ctcss_tones(tx_tenths_hz: u32, rx_tenths_hz: u32) -> Result<[u8; 5]> {
+    if tx_tenths_hz > 9999 || rx_tenths_hz > 9999 {
+        bail!("classic Yaesu CTCSS tone must fit four decimal digits");
+    }
+    Ok([
+        bcd_byte((tx_tenths_hz / 100) as u16)?,
+        bcd_byte((tx_tenths_hz % 100) as u16)?,
+        bcd_byte((rx_tenths_hz / 100) as u16)?,
+        bcd_byte((rx_tenths_hz % 100) as u16)?,
+        0x0B,
+    ])
+}
+
+pub fn set_dcs_codes(tx_code: u16, rx_code: u16) -> Result<[u8; 5]> {
+    if tx_code > 999 || rx_code > 999 {
+        bail!("classic Yaesu DCS code must fit three decimal digits");
+    }
+    Ok([
+        bcd_byte(tx_code / 100)?,
+        bcd_byte(tx_code % 100)?,
+        bcd_byte(rx_code / 100)?,
+        bcd_byte(rx_code % 100)?,
+        0x0C,
+    ])
+}
+
+pub const fn set_ctcss_dcs_mode(mode: u8) -> [u8; 5] {
+    [mode, 0, 0, 0, 0x0A]
+}
+
+fn bcd_pair(value: u16) -> Result<[u8; 2]> {
+    if value > 9999 {
+        bail!("value exceeds four decimal BCD digits");
+    }
+    Ok([bcd_byte(value / 100)?, bcd_byte(value % 100)?])
+}
+
+fn bcd_byte(value: u16) -> Result<u8> {
+    if value > 99 {
+        bail!("value exceeds two decimal BCD digits");
+    }
+    Ok(((value / 10) as u8) << 4 | (value % 10) as u8)
 }
 
 pub fn decode_frequency_and_mode(response: &[u8]) -> Result<FrequencyModeStatus> {
@@ -189,10 +282,43 @@ mod tests {
         assert_eq!(set_mode(LegacyMode::Digital), [0x0A, 0, 0, 0, 0x07]);
         assert_eq!(set_ptt(true), [0, 0, 0, 0, 0x08]);
         assert_eq!(set_ptt(false), [0, 0, 0, 0, 0x88]);
+        assert_eq!(set_lock(true), [0, 0, 0, 0, 0x00]);
+        assert_eq!(set_lock(false), [0, 0, 0, 0, 0x80]);
+        assert_eq!(toggle_vfo(), [0, 0, 0, 0, 0x81]);
         assert_eq!(set_split(true), [0, 0, 0, 0, 0x02]);
         assert_eq!(set_split(false), [0, 0, 0, 0, 0x82]);
         assert_eq!(read_rx_status(), [0, 0, 0, 0, 0xE7]);
         assert_eq!(read_tx_status(), [0, 0, 0, 0, 0xF7]);
+    }
+
+    #[test]
+    fn builds_documented_clarifier_and_repeater_frames() {
+        assert_eq!(set_clarifier(true), [0, 0, 0, 0, 0x05]);
+        assert_eq!(set_clarifier(false), [0, 0, 0, 0, 0x85]);
+        assert_eq!(
+            set_clarifier_offset(12_340).unwrap(),
+            [0, 0, 0x12, 0x34, 0xF5]
+        );
+        assert_eq!(
+            set_clarifier_offset(-12_340).unwrap(),
+            [1, 0, 0x12, 0x34, 0xF5]
+        );
+        assert_eq!(
+            set_repeater_shift(crate::hal_types::RepeaterShift::Plus),
+            [0x49, 0, 0, 0, 0x09]
+        );
+        assert_eq!(
+            set_repeater_offset_frequency(5_432_100).unwrap(),
+            [0x05, 0x43, 0x21, 0x00, 0xF9]
+        );
+        assert_eq!(
+            set_ctcss_tones(885, 1000).unwrap(),
+            [0x08, 0x85, 0x10, 0x00, 0x0B]
+        );
+        assert_eq!(
+            set_dcs_codes(23, 371).unwrap(),
+            [0x00, 0x23, 0x03, 0x71, 0x0C]
+        );
     }
 
     #[test]

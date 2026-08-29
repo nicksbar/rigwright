@@ -147,27 +147,33 @@ impl RadioModelProfile {
                     return false;
                 };
                 let profile = crate::icom::profile::profile_for_model(model);
-                profile.control(id).is_some()
-                    || matches!(
-                        id,
-                        ControlId::DataMode
-                            | ControlId::Filter
-                            | ControlId::RawCiV
-                            | ControlId::Vfo
-                    )
-                    || (id == ControlId::MainSub && profile.main_sub.is_some())
-                    || (id == ControlId::ExternalPreamp && profile.external_preamp.is_some())
+                profile.supports_control(id)
             }
             Protocol::YaesuCat => {
                 let Some(model) = YaesuCatModel::from_model_name(self.model) else {
                     return false;
                 };
                 let profile = crate::yaesu::profile::profile_for_model(model);
-                matches!(id, ControlId::RfPower) && profile.power_range_watts.is_some()
-                    || id == ControlId::Split && profile.supports_split
+                (id == ControlId::RfPower && profile.power_range_watts.is_some())
+                    || (id == ControlId::Split && profile.supports_split)
                     || matches!(
                         id,
-                        ControlId::Agc | ControlId::NoiseReduction | ControlId::NoiseReductionLevel
+                        ControlId::AfGain
+                            | ControlId::RfGain
+                            | ControlId::Squelch
+                            | ControlId::Preamp
+                            | ControlId::Attenuator
+                            | ControlId::NoiseBlanker
+                            | ControlId::Notch
+                            | ControlId::ManualNotch
+                            | ControlId::Filter
+                            | ControlId::Agc
+                            | ControlId::NoiseReduction
+                            | ControlId::NoiseReductionLevel
+                            | ControlId::Rit
+                            | ControlId::Xit
+                            | ControlId::Tuner
+                            | ControlId::Vfo
                     )
             }
             Protocol::YaesuLegacyCat => id == ControlId::Split,
@@ -176,8 +182,7 @@ impl RadioModelProfile {
                     return false;
                 };
                 let profile = crate::kenwood::profile::profile_for_model(model);
-                matches!(id, ControlId::RfPower) && profile.power_range_watts.is_some()
-                    || id == ControlId::Split
+                profile.supports_control(id)
             }
         }
     }
@@ -646,10 +651,30 @@ mod tests {
         assert!(ic9700.supports_control(crate::ControlId::MainSub));
         assert!(ic9700.supports_control(crate::ControlId::ExternalPreamp));
         assert!(ftdx10.supports_control(crate::ControlId::Split));
+        for control in [
+            crate::ControlId::AfGain,
+            crate::ControlId::RfGain,
+            crate::ControlId::Squelch,
+            crate::ControlId::Preamp,
+            crate::ControlId::Attenuator,
+            crate::ControlId::NoiseBlanker,
+            crate::ControlId::Notch,
+            crate::ControlId::ManualNotch,
+            crate::ControlId::Filter,
+            crate::ControlId::Rit,
+            crate::ControlId::Xit,
+            crate::ControlId::Tuner,
+            crate::ControlId::Vfo,
+        ] {
+            assert!(
+                ftdx10.supports_control(control),
+                "missing Yaesu control {control:?}"
+            );
+        }
         assert!(!ft991a.supports_control(crate::ControlId::Split));
         assert!(ft857d.supports_control(crate::ControlId::Split));
         assert!(ts890s.supports_control(crate::ControlId::RfPower));
-        assert!(!ts890s.supports_control(crate::ControlId::AfGain));
+        assert!(ts890s.supports_control(crate::ControlId::AfGain));
         assert!(!ts890s.driver_capabilities().can_get_ptt);
         assert!(
             find_model("TS-590SG")

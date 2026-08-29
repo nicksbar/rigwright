@@ -181,6 +181,12 @@ impl Radio for RadioAndroid {
     async fn set_rit_offset_hz(&self, offset_hz: i32) -> Result<()> {
         self.radio().set_rit_offset_hz(offset_hz).await
     }
+    async fn get_xit_offset_hz(&self) -> Result<i32> {
+        self.radio().get_xit_offset_hz().await
+    }
+    async fn set_xit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        self.radio().set_xit_offset_hz(offset_hz).await
+    }
     async fn select_memory_channel(&self, channel: u16) -> Result<()> {
         self.radio().select_memory_channel(channel).await
     }
@@ -278,7 +284,7 @@ mod tests {
                 self.response.extend([
                     0xFE, 0xFE, 0xE0, 0x94, 0x03, 0x00, 0x80, 0x18, 0x07, 0x00, 0xFD,
                 ]);
-            } else if buffer.starts_with(&[0xFE, 0xFE, 0x94, 0xE0, 0x05]) {
+            } else if buffer.starts_with(&[0xFE, 0xFE, 0x94, 0xE0]) {
                 self.response.extend([0xFE, 0xFE, 0xE0, 0x94, 0xFB, 0xFD]);
             }
             Ok(buffer.len())
@@ -368,5 +374,46 @@ mod tests {
         assert!(radios
             .iter()
             .all(|radio| radio.capabilities().can_get_frequency));
+    }
+
+    #[test]
+    fn android_adapter_forwards_the_shared_radio_contract() {
+        let radio = RadioAndroid::new_icom_civ(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            MockCiVTransport::new(),
+        );
+        assert!(radio.icom().is_some());
+        assert!(radio.event_router().is_some());
+        assert!(radio.supports_control(ControlId::RfPower));
+        assert!(radio.supports_control_read(ControlId::RfPower));
+        assert!(radio.supports_control_write(ControlId::RfPower));
+        assert!(radio.supports_meter(MeterId::Signal));
+        assert!(radio.supports_repeater_settings());
+        assert!(radio.supports_memory_channels());
+        assert!(!radio.supports_send_dtmf());
+        assert!(radio.capabilities().can_set_frequency);
+
+        futures::executor::block_on(radio.set_frequency_hz(7_074_000)).unwrap();
+        futures::executor::block_on(radio.set_ptt(true)).unwrap();
+        futures::executor::block_on(radio.set_power(false)).unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::Xit, ControlValue::Bool(true)))
+            .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::RfPower, ControlValue::U8(50)))
+            .unwrap();
+        futures::executor::block_on(radio.set_rit_offset_hz(125)).unwrap();
+        assert!(futures::executor::block_on(radio.set_xit_offset_hz(-125)).is_err());
+        futures::executor::block_on(radio.select_memory_channel(3)).unwrap();
+        futures::executor::block_on(radio.start_tuner()).unwrap();
+        assert!(futures::executor::block_on(radio.get_power()).is_err());
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::RawCiV)).unwrap(),
+            None
+        );
+        assert!(futures::executor::block_on(
+            radio.set_control(ControlId::RawCiV, ControlValue::U8(0),)
+        )
+        .is_err());
     }
 }
