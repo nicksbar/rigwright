@@ -459,6 +459,18 @@ impl Radio for ConfiguredRadio {
             _ => bail!("RIT offset control is not available for this driver"),
         }
     }
+    async fn get_xit_offset_hz(&self) -> Result<i32> {
+        match self {
+            Self::Yaesu(r) => r.get_xit_offset_hz().await,
+            _ => bail!("XIT offset control is not available for this driver"),
+        }
+    }
+    async fn set_xit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        match self {
+            Self::Yaesu(r) => r.set_xit_offset_hz(offset_hz).await,
+            _ => bail!("XIT offset control is not available for this driver"),
+        }
+    }
     async fn select_memory_channel(&self, channel: u16) -> Result<()> {
         match self {
             Self::Icom(r) => r.select_memory_channel(channel),

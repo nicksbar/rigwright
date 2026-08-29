@@ -64,8 +64,10 @@ Enhanced CAT port; the other modern Yaesu profiles remain framework-level.
 
 The shared modern driver implements persistent serial transport, response
 matching in the presence of auto-information frames, frequency, mode, readable
-PTT, raw queries, RF power, and profile-gated split. The profile mode table
-chooses DATA-U for the protocol-neutral `Mode::Data`; other DATA variants still
+PTT, raw queries, RF power, receiver controls, clarifiers, VFO selection,
+tuner control, memory records, repeater settings, and profile-gated event
+subscriptions. The profile mode table chooses DATA-U for the protocol-neutral
+`Mode::Data`; other DATA variants still
 decode as data because the root HAL intentionally has a coarser mode type.
 
 ## Classic Yaesu manual audit

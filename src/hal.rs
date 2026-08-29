@@ -75,6 +75,12 @@ pub trait Radio: Send + Sync {
     async fn set_rit_offset_hz(&self, _offset_hz: i32) -> Result<()> {
         anyhow::bail!("RIT offset control is not supported by this radio")
     }
+    async fn get_xit_offset_hz(&self) -> Result<i32> {
+        anyhow::bail!("XIT offset control is not supported by this radio")
+    }
+    async fn set_xit_offset_hz(&self, _offset_hz: i32) -> Result<()> {
+        anyhow::bail!("XIT offset control is not supported by this radio")
+    }
     async fn select_memory_channel(&self, _channel: u16) -> Result<()> {
         anyhow::bail!("memory/channel control is not supported by this radio")
     }

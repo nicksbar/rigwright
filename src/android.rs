@@ -181,6 +181,12 @@ impl Radio for RadioAndroid {
     async fn set_rit_offset_hz(&self, offset_hz: i32) -> Result<()> {
         self.radio().set_rit_offset_hz(offset_hz).await
     }
+    async fn get_xit_offset_hz(&self) -> Result<i32> {
+        self.radio().get_xit_offset_hz().await
+    }
+    async fn set_xit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        self.radio().set_xit_offset_hz(offset_hz).await
+    }
     async fn select_memory_channel(&self, channel: u16) -> Result<()> {
         self.radio().select_memory_channel(channel).await
     }

@@ -84,10 +84,10 @@ current example. Applications should use `supports_control_read()` and
 - Icom controls are declarative CI-V profile entries. The exact command
   prefixes and allowed values remain model-specific even when the HAL name is
   shared.
-- Modern Yaesu typed controls currently cover RF power, split, AGC, NR enable,
-  and NR level. The shared repeater (`CN`/`CT`/`OS`) and memory selection
-  (`MC`) APIs are now profile-gated across the current modern models; complete
-  `MR`/`MT` record access remains gated to the validated FTDX10 layout.
+- Modern Yaesu typed controls cover AF/RF gain, squelch, RF power, preamp/IPO,
+  attenuator, NB, auto/manual notch, filter width, AGC, NR, RIT/XIT, tuner, VFO
+  selection, and split across the current modern profiles. Repeater (`CN`/`CT`/`OS`)
+  and memory (`MC`/`MR`/`MT`) operations are also profile-gated.
 - Classic Yaesu has a separate five-byte binary protocol. It supports split,
   frequency, mode, PTT, and status operations in Rigwright; it does not inherit
   modern Yaesu CAT controls.
@@ -107,9 +107,9 @@ and `RawCiV` where the selected profile permits them.
 | IC-7300 | Same as IC-705; this is the hardware-validated Icom profile |
 | IC-7610 | AF gain, RF gain, squelch, RF power, preamp, attenuator, NB, NR, IP+, auto notch, manual notch, tuner, split, data mode, filter, VFO, main/sub, raw CI-V; AGC is manual-only and not typed in this profile |
 | IC-9700 | IC-705 set plus external preamp and main/sub |
-| FTDX10 | RF power, split, AGC, NR enable, NR level; repeater controls and full memory records; hardware-validated CAT path |
-| FT-710, FTDX101D, FTDX101MP | RF power, split, AGC, NR enable, NR level; repeater controls and memory selection |
-| FT-991A | RF power, AGC, NR enable, NR level; repeater controls and memory selection; split is manual-only in the current profile |
+| FTDX10 | Full modern typed-control set, repeater controls, full memory records; hardware-validated CAT path |
+| FT-710, FTDX101D, FTDX101MP | Full modern typed-control set, repeater controls, full memory records |
+| FT-991A | Full modern typed-control set, repeater controls, full memory records; split remains manual-only in the current profile |
 | FT-817ND, FT-818, FT-857D, FT-897D | Split only; other documented CAT surfaces remain untyped |
 | TS-590SG, TS-890S, TS-2000 | RF power and split |
 
@@ -145,20 +145,22 @@ They are documented radio capabilities, but currently have no safe common
 | Surface | Manual coverage | Current Rigwright status | QSONaut status | Why it remains open |
 |---|---|---|---|---|
 | RIT/XIT offset and enable | All modern vendor families | Icom RIT enable plus signed RIT offset read/write implemented; Icom XIT enable implemented where documented, with no separate XIT offset command documented | Not used | XIT offset and non-Icom payloads remain family-specific |
-| Yaesu AF/RF gain and squelch | Modern CAT manuals | Not typed | UI cannot safely use them through Yaesu | Query/set field formats need profile commands and ranges |
-| Yaesu NB, filter, tuner, antenna selection | Modern CAT manuals | Not typed | Not used for modern Yaesu | Several commands are mode/model dependent |
+| Yaesu AF/RF gain and squelch | Modern CAT manuals | Profiled `AG`/`RG`/`SQ` controls | Not yet consumed | Native ranges are normalized by the driver |
+| Yaesu NB, filter, tuner, antenna selection | Modern CAT manuals | Profiled `NB`, `SH`, and `AC`; antenna selection remains untyped | Not yet consumed | Several antenna and filter variants remain model dependent |
+| Yaesu preamp/attenuator/notch | Modern CAT manuals | Profiled `PA`, `RA`, `BC`, and `BP` controls | Not yet consumed | Exact physical labels remain model/UI concerns |
+| Yaesu RIT/XIT and VFO selection | Modern CAT manuals | Profiled `RT`/`XT`, `CF`, and `VS`; VFO readback is supported | Not yet consumed | Clarifier payload is shared, while UI should retain RX/TX enable state separately |
 | Yaesu ALC/compression/current/voltage presentation | Modern CAT manuals | Meter IDs implemented | Not displayed | QSONaut must add polling, labels, and TX safety policy |
 | Icom signal, output power, ALC, compression, voltage/current/temperature | CI-V/model manuals | Profile-gated CI-V `15` meter queries implemented and normalized to `0..=255` | Consumed by the native meter panel | Physical-unit labels/scales remain model/UI concerns |
 | Icom NR level and manual-notch position | IC-7300/IC-7610 CI-V manuals | Profiled `14 06` NR level and `14 0D` manual-notch position controls implemented for IC-7300/IC-7610 | Not yet consumed | IC-705/IC-9700 do not advertise the same HF notch surface |
 | Kenwood AF/RF gain, squelch, AGC, NB, NR | PC command references | Not typed | Not used | TS-590SG, TS-890S, and TS-2000 command families differ |
 | Kenwood ALC/compression/current/voltage/temperature | PC command references | Not typed except signal/SWR | Not displayed | RM selector, range, and response width differ by model |
-| Memory/channel operations | Vendor manuals | Icom `08`/`09` selection and model-specific `1A 00` records: HF mode/data/CTCSS/name plus IC-705/IC-9700 band, duplex, DTCS, offset, and 16-char name fields; modern Yaesu `MC` selection and FTDX10 `MR`/`MT` records; Kenwood TS-890 `FR`/`MN` plus `MA0` records | Not used | Icom program-scan, call, DV routing, and satellite records remain separate surfaces; Yaesu memory payload/name validation remains hardware-confirmed only on FTDX10 |
+| Memory/channel operations | Vendor manuals | Icom `08`/`09` selection and model-specific `1A 00` records: HF mode/data/CTCSS/name plus IC-705/IC-9700 band, duplex, DTCS, offset, and 16-char name fields; modern Yaesu `MC`/`MR`/`MT`; Kenwood TS-890 `FR`/`MN` plus `MA0` records | Not used | Icom program-scan, call, DV routing, and satellite records remain separate surfaces |
 | Repeater tone/shift | IC-7300, IC-705, IC-9700 and modern Yaesu CAT manuals | Icom CTCSS flags/frequencies, live duplex shift/offset (`0C`/`0D` and `0F`), VHF/UHF DTCS memory fields, and signed RIT offset; modern Yaesu `CN`/`CT`/`OS` with main-band selector; Kenwood `CN`/`CT` tone | Not used | Icom live DTCS and model-specific auto-repeater settings remain separate surfaces; Yaesu offset frequency is carried by memory/configuration rather than `OS` |
 | DTMF transmission | Vendor manuals | Validated HAL type/API; Icom references document DTMF speed but no CI-V digit-transmit payload | Not used | Do not confuse Icom voice-memory command `28` with DTMF transmission |
 | Antenna selection | Icom IC-7610 CI-V manual | IC-7610 `12` antenna selector is now profile-exposed as a typed U8 control; antenna-memory bands remain untyped | Not used | Antenna-memory records are frequency-range keyed |
 | Band-stack and quick-memory operations | Vendor manuals | Not typed | Not used | Requires model-specific state and persistence semantics |
 | Scope configuration and I/Q streaming | Icom manuals, some Yaesu manuals | Generic Icom scope configuration API plus shared I/Q sample decoding; IC-7300 has CI-V scope only; IC-7610 IQ is documented metadata only until a driver transport exists | Scope use is partial; I/Q not consumed | Waveform transport and receiver geometry are model-specific |
-| Auto-information subscriptions | Vendor command references | Icom CI-V lifecycle-managed event router with typed frequency/mode/PTT/receiver events and raw fallback | Not yet consumed as the general UI event source | Continuous background read ownership and vendor subscription commands remain application/profile work |
+| Auto-information subscriptions | Vendor command references | Icom CI-V lifecycle-managed event router with typed frequency/mode/PTT/receiver events and raw fallback | Yaesu `AI` enable plus typed frequency/mode/PTT events and raw fallback | QSONaut still needs a general UI event consumer |
 
 ## QSONaut consumption summary
 

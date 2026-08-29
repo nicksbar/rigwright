@@ -12,9 +12,11 @@
   USB IQ remains unavailable on that model.
 - Promote documented modern Yaesu `CN`, `CT`, and `OS` repeater controls to all
   current modern profiles, including the required main-band selector in `OS`.
-- Generalize modern Yaesu `MC` memory-channel selection beyond the FTDX10
-  profile; retain `MR`/`MT` record codecs behind the hardware-validated FTDX10
-  layout gate, and keep live `OS` direction distinct from memory offset data.
+- Generalize modern Yaesu `MC`, `MR`, and `MT` memory-channel records across
+  current modern profiles, and keep live `OS` direction distinct from memory
+  offset data.
+- Add modern Yaesu typed AF/RF gain, squelch, preamp, attenuator, NB, notch,
+  filter-width, RIT/XIT, VFO, and tuner controls, plus AI event routing.
 
 - Add protocol-neutral typed values for CTCSS tone mode/index, repeater shift,
   memory channels, and validated DTMF sequences.
