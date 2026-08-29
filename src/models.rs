@@ -445,7 +445,7 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         manufacturer: Manufacturer::Yaesu,
         model: "FTDX10",
         protocol: Protocol::YaesuCat,
-        support: SupportLevel::Framework,
+        support: SupportLevel::HardwareValidated,
         capabilities: HF_BASE,
     },
     RadioModelProfile {
@@ -515,13 +515,13 @@ mod tests {
     }
 
     #[test]
-    fn only_ic7300_claims_hardware_validation() {
+    fn hardware_validated_models_are_explicit() {
         let validated: Vec<_> = POPULAR_RADIOS
             .iter()
             .filter(|profile| profile.support == SupportLevel::HardwareValidated)
             .map(|profile| profile.model)
             .collect();
-        assert_eq!(validated, ["IC-7300"]);
+        assert_eq!(validated, ["IC-7300", "FTDX10"]);
     }
 
     #[test]

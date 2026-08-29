@@ -68,12 +68,7 @@ impl RadioEventRouter {
         self.0
             .lock()
             .ok()
-            .and_then(|mut state| {
-                state
-                    .subscribers
-                    .get_mut(&id)
-                    .map(|queue| queue.drain(..).collect())
-            })
+            .and_then(|mut state| state.subscribers.get_mut(&id).map(std::mem::take))
             .unwrap_or_default()
     }
 

@@ -30,7 +30,7 @@ pub fn decode_interleaved_iq(
         IqSampleFormat::Float32Le => 4,
     };
     anyhow::ensure!(
-        bytes.len() % (width * 2) == 0,
+        bytes.len().is_multiple_of(width * 2),
         "I/Q payload is not an integral set of samples"
     );
     let mut samples = Vec::with_capacity(bytes.len() / (width * 2));

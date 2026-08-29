@@ -10,7 +10,7 @@ implementation, profile, application, and validation claims:
 | **H** | Exposed as a typed Rigwright HAL operation or value. |
 | **P** | Implemented and gated by the selected model profile. |
 | **Q** | Currently consumed by native QSONaut UI/workflows. |
-| **V** | Hardware-validated in the project. At present this is the IC-7300 baseline. |
+| **V** | Hardware-validated in the project. Current validated radios are the IC-7300 and FTDX10. |
 | **—** | Not available, not applicable, or intentionally not claimed. |
 | **R** | Read-only telemetry. **W** means writable control. **RW** means both. |
 
@@ -106,7 +106,8 @@ and `RawCiV` where the selected profile permits them.
 | IC-7300 | Same as IC-705; this is the hardware-validated Icom profile |
 | IC-7610 | AF gain, RF gain, squelch, RF power, preamp, attenuator, NB, NR, IP+, auto notch, manual notch, tuner, split, data mode, filter, VFO, main/sub, raw CI-V; AGC is manual-only and not typed in this profile |
 | IC-9700 | IC-705 set plus external preamp and main/sub |
-| FT-710, FTDX10, FTDX101D, FTDX101MP | RF power, split, AGC, NR enable, NR level |
+| FTDX10 | RF power, split, AGC, NR enable, NR level; hardware-validated CAT path |
+| FT-710, FTDX101D, FTDX101MP | RF power, split, AGC, NR enable, NR level |
 | FT-991A | RF power, AGC, NR enable, NR level; split is manual-only in the current profile |
 | FT-817ND, FT-818, FT-857D, FT-897D | Split only; other documented CAT surfaces remain untyped |
 | TS-590SG, TS-890S, TS-2000 | RF power and split |
