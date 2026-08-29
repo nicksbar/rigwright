@@ -1136,10 +1136,31 @@ impl IcomCiVRadio {
     }
 
     fn get_meter_blocking(&self, id: MeterId) -> Result<u8> {
+        self.get_meter_blocking_with_timeout(id, Duration::from_millis(1_500))
+    }
+
+    fn get_meter_blocking_with_timeout(&self, id: MeterId, timeout: Duration) -> Result<u8> {
         let prefix = meter_command_prefix(id);
-        let response = self.transact(prefix, true)?;
+        let frame = self.build_frame_payload(prefix);
+        let response = self.with_serial_port(timeout, |port| {
+            self.write_frame(port, &frame)?;
+            self.read_response_matching(port, timeout, Some(&frame), |response| {
+                frame_matches_request(response, prefix)
+            })
+        })?;
         let data = response_data_after_prefix(&response, prefix)?;
         decode_level_255_bcd(data).context("invalid CI-V meter payload")
+    }
+
+    /// Read a meter without allowing a missing response to monopolize a
+    /// shared scope/CI-V worker. Meter polling is intentionally allowed to use
+    /// a shorter timeout than normal CAT operations.
+    pub async fn get_meter_with_timeout(
+        &self,
+        id: MeterId,
+        timeout: Duration,
+    ) -> Result<Option<u8>> {
+        Ok(Some(self.get_meter_blocking_with_timeout(id, timeout)?))
     }
 
     fn set_tuner_enabled_blocking(&self, enabled: bool) -> Result<()> {
@@ -1582,14 +1603,14 @@ impl IcomCiVRadio {
 /// concerns and must not be inferred from the normalized byte alone.
 fn meter_command_prefix(id: MeterId) -> &'static [u8] {
     match id {
-        MeterId::Signal => &[0x15, 0x01],
-        MeterId::Power => &[0x15, 0x02],
-        MeterId::Alc => &[0x15, 0x11],
+        MeterId::Signal => &[0x15, 0x02],
+        MeterId::Power => &[0x15, 0x11],
         MeterId::Swr => &[0x15, 0x12],
-        MeterId::Compression => &[0x15, 0x13],
-        MeterId::Voltage => &[0x15, 0x14],
-        MeterId::Current => &[0x15, 0x15],
-        MeterId::Temperature => &[0x15, 0x16],
+        MeterId::Alc => &[0x15, 0x13],
+        MeterId::Compression => &[0x15, 0x14],
+        MeterId::Voltage => &[0x15, 0x15],
+        MeterId::Current => &[0x15, 0x16],
+        MeterId::Temperature => &[0x15, 0x17],
     }
 }
 
@@ -1914,14 +1935,14 @@ fn publish_civ_event(router: &RadioEventRouter, frame: &[u8]) {
         }
         Some(0x15) => {
             let id = match payload.get(1).copied() {
-                Some(0x01) => Some(MeterId::Signal),
-                Some(0x02) => Some(MeterId::Power),
-                Some(0x11) => Some(MeterId::Alc),
+                Some(0x02) => Some(MeterId::Signal),
+                Some(0x11) => Some(MeterId::Power),
                 Some(0x12) => Some(MeterId::Swr),
-                Some(0x13) => Some(MeterId::Compression),
-                Some(0x14) => Some(MeterId::Voltage),
-                Some(0x15) => Some(MeterId::Current),
-                Some(0x16) => Some(MeterId::Temperature),
+                Some(0x13) => Some(MeterId::Alc),
+                Some(0x14) => Some(MeterId::Compression),
+                Some(0x15) => Some(MeterId::Voltage),
+                Some(0x16) => Some(MeterId::Current),
+                Some(0x17) => Some(MeterId::Temperature),
                 _ => None,
             };
             if let (Some(id), Some(value)) = (id, decode_level_255_bcd(&payload[2..])) {
@@ -2517,14 +2538,14 @@ mod tests {
 
     #[test]
     fn ic7300_meter_queries_match_manual_command_table() {
-        assert_eq!(meter_command_prefix(MeterId::Signal), &[0x15, 0x01]);
-        assert_eq!(meter_command_prefix(MeterId::Power), &[0x15, 0x02]);
-        assert_eq!(meter_command_prefix(MeterId::Alc), &[0x15, 0x11]);
+        assert_eq!(meter_command_prefix(MeterId::Signal), &[0x15, 0x02]);
+        assert_eq!(meter_command_prefix(MeterId::Power), &[0x15, 0x11]);
         assert_eq!(meter_command_prefix(MeterId::Swr), &[0x15, 0x12]);
-        assert_eq!(meter_command_prefix(MeterId::Compression), &[0x15, 0x13]);
-        assert_eq!(meter_command_prefix(MeterId::Voltage), &[0x15, 0x14]);
-        assert_eq!(meter_command_prefix(MeterId::Current), &[0x15, 0x15]);
-        assert_eq!(meter_command_prefix(MeterId::Temperature), &[0x15, 0x16]);
+        assert_eq!(meter_command_prefix(MeterId::Alc), &[0x15, 0x13]);
+        assert_eq!(meter_command_prefix(MeterId::Compression), &[0x15, 0x14]);
+        assert_eq!(meter_command_prefix(MeterId::Voltage), &[0x15, 0x15]);
+        assert_eq!(meter_command_prefix(MeterId::Current), &[0x15, 0x16]);
+        assert_eq!(meter_command_prefix(MeterId::Temperature), &[0x15, 0x17]);
     }
 
     #[test]
