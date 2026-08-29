@@ -6,6 +6,14 @@
   notice, and weekly/pull-request CodeQL security analysis.
 - Document the local LLVM coverage workflow and add pull-request-only CI for
   locked tests, LLVM coverage summaries, and uploaded HTML coverage reports.
+- Add focused contract tests for every previously uncovered model entry-point
+  module and raise the suite to 193 tests; all former 0% production files now
+  have exercised executable lines.
+- Add a changed-production-file coverage gate so a new or modified `src/**/*.rs`
+  file with no covered executable lines fails the pull request instead of being
+  hidden by aggregate area coverage.
+- Keep the README's per-area coverage labels, release/version metadata, and
+  coverage snapshot synchronized with the enforced LLVM results.
 - Harden the generic/profile boundary across the vendor drivers: shared
   protocol engines own framing and execution, while model modules own command
   exceptions, ranges, selectors, and optional capabilities.

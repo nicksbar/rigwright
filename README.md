@@ -1,7 +1,22 @@
 # Rigwright
 
+[![Version](https://img.shields.io/badge/version-v0.1.14-2ea44f)](Cargo.toml)
 [![CI](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml)
-[![Coverage](https://github.com/nicksbar/rigwright/actions/workflows/coverage.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/coverage.yml)
+[![Release workflow](https://github.com/nicksbar/rigwright/actions/workflows/release.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/nicksbar/rigwright?display_name=tag&sort=semver)](https://github.com/nicksbar/rigwright/releases)
+[![Coverage gate](https://github.com/nicksbar/rigwright/actions/workflows/coverage.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/coverage.yml)
+[![Icom 86.58%](https://img.shields.io/badge/Icom-86.58%25-brightgreen)](docs/radio-capability-matrix.md)
+[![HAL 94.50%](https://img.shields.io/badge/HAL-94.50%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Android 83.52%](https://img.shields.io/badge/Android-83.52%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Transport 91.78%](https://img.shields.io/badge/Transport-91.78%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Drivers 90.08%](https://img.shields.io/badge/Drivers-90.08%25-brightgreen)](docs/radio-capability-matrix.md)
+[![IQ 100%](https://img.shields.io/badge/IQ-100%25-brightgreen)](docs/radio-capability-matrix.md)
+[![rigctld 94.76%](https://img.shields.io/badge/rigctld-94.76%25-brightgreen)](docs/radio-capability-matrix.md)
+[![DX Lab 95.27%](https://img.shields.io/badge/DX%20Lab-95.27%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Kenwood CAT 86.28%](https://img.shields.io/badge/Kenwood%20CAT-86.28%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Kenwood profile 93.28%](https://img.shields.io/badge/Kenwood%20profile-93.28%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Yaesu profile 85%](https://img.shields.io/badge/Yaesu%20profile-85%25-yellow)](docs/radio-capability-matrix.md)
+[![Classic Yaesu profile 100%](https://img.shields.io/badge/Classic%20Yaesu%20profile-100%25-brightgreen)](docs/radio-capability-matrix.md)
 [![CodeQL](https://github.com/nicksbar/rigwright/actions/workflows/codeql.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/codeql.yml)
 
 Rigwright is a reusable Rust radio-control HAL with native radio drivers. It was
@@ -26,10 +41,12 @@ reported through the CodeQL check and GitHub code-scanning alerts.
 - Strict IC-7300 USB scope assembly: ordered 11-division input produces one
   complete 475-bin sweep, with documented center-span and fixed-edge controls.
 - Captured-frame unit tests and a direct CI-V probe example.
-- Profile-gated RF power, split, AGC, noise reduction, and normalized meter
-  support for modern Yaesu; profile-gated RF power, split, signal, and SWR for
-  Kenwood; and model-specific Icom controls including IP+, notch, tuner,
-  main/sub, and external preamp where documented.
+- Profile-gated receiver controls, RF power, split, clarifiers, VFO, tuner,
+  memory, repeater, event, and normalized-meter support for modern Yaesu;
+  profile-gated receiver controls, RF power, split, clarifiers, VFO, tuner,
+  memory, repeater, event, and model-specific meters for Kenwood; and
+  model-specific Icom controls including IP+, notch, tuner, memory, repeater,
+  main/sub, external preamp, and normalized meters where documented.
 
 Only the IC-7300 is regularly hardware-tested. Other profiles are not yet
 claimed as hardware validated. Modern Yaesu models use a profile-driven ASCII
@@ -67,7 +84,7 @@ references.
 
 ```toml
 [dependencies]
-rigwright = "0.1.12"
+rigwright = "0.1.14"
 ```
 
 ```rust,no_run
@@ -181,13 +198,17 @@ as a separate `coverage.yml` workflow; it prints the test and coverage summary
 in the pull request's check details and uploads the complete HTML report as a
 workflow artifact.
 
-The badges above intentionally report workflow status and the availability of
-the LLVM report rather than a hard-coded percentage. Coverage can currently be
-reviewed by source file in the uploaded report, including the Icom, Yaesu, and
-Kenwood brand modules and their supported model profiles. A meaningful
-per-brand or per-model percentage badge requires separate coverage test
-targets—or stable source filters and badge publication—which is not yet part
-of this project.
+The README coverage labels are the latest measured line-coverage snapshot; the
+workflow badge is the authoritative pass/fail result. The coverage gate is
+enforced by `scripts/check-icom-coverage.sh` and currently
+requires at least 85% Icom, 90% HAL, 80% Android, 90% transport, 85% driver,
+95% IQ, 90% rigctld, 90% DX Lab, 80% Kenwood CAT, 90% Kenwood profile, 85%
+modern Yaesu profile, and 85% classic Yaesu profile line coverage. The latest
+local run reached 85.05% overall line coverage, including 84.98% Icom CI-V,
+86.29% Kenwood CAT, 75.83% modern Yaesu CAT, 91.79% transport, and 90.09%
+configured-driver dispatch coverage. The workflow badge reports whether these
+tests and gates pass; the uploaded LLVM report provides the detailed source,
+function, and line view.
 
 ## Design rules
 

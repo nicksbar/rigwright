@@ -110,3 +110,15 @@ pub use super::profile::TS890S_PROFILE as CAT_PROFILE;
 pub fn profile() -> &'static RadioModelProfile {
     find_model("TS-890S").expect("built-in TS-890S profile")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exposes_the_ts890s_catalog_profile() {
+        assert_eq!(profile().model, "TS-890S");
+        assert!(!CONTROLS.is_empty());
+        assert!(!METERS.is_empty());
+    }
+}

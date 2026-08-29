@@ -29,7 +29,7 @@ units, or model behavior differ.
 | Radio power write | `set_power` | H/P/V behavior validated on IC-7300 | H/P | — | H/P | Q |
 | Radio power read | `get_power` | —; CI-V power is write-only | H/P | — | H/P | Q/pending-state handling |
 | Raw protocol | `protocol_write_read` | H/P | H/P | H/P | H/P | Not a normal UI control |
-| Tuner start/status | `start_tuner`, `get_tuner_status` | H/P/V for profiled Icoms | — | — | — | Q: tuner and SWR sweep workflow |
+| Tuner start/status | `start_tuner`, `get_tuner_status` | H/P/V for profiled Icoms | H/P | H/P | H/P | Q: tuner and SWR sweep workflow |
 | Spectrum waveform | backend-specific scope API | H/P; model geometry differs | — | — | — | Q where native scope is enabled |
 | I/Q stream | model/backend-specific | Shared I/Q sample block decoder only; IC-7610 documents USB I/Q output, but Rigwright does not yet own/open that transport | — | — | — | Not currently consumed |
 

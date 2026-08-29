@@ -116,3 +116,15 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     supports_repeater_settings: true,
     supports_memory_channels: true,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exposes_the_ic9700_catalog_profile() {
+        assert_eq!(profile().model, "IC-9700");
+        assert!(!DOCUMENTED_CONTROLS.is_empty());
+        assert!(DOCUMENTED_FEATURES.contains(&"satellite mode"));
+    }
+}

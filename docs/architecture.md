@@ -39,7 +39,11 @@ mutex or another latency-sensitive application lock.
 - `NullRadio` is an in-memory backend for tests and offline UI work.
 
 `ConfiguredRadio` is the factory/dispatch enum that forwards the root HAL to
-the selected backend.
+the selected backend. Its match arms are adapter plumbing only: optional
+controls, meters, clarifiers, tuner, memory, repeater, and event-router
+behavior remain owned by the vendor driver and selected model profile. New
+vendor or model rules belong in those driver/profile modules, not in this
+wrapper.
 
 ## Application-facing model catalog
 

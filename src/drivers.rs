@@ -302,6 +302,8 @@ impl Radio for ConfiguredRadio {
     fn event_router(&self) -> Option<crate::RadioEventRouter> {
         match self {
             Self::Icom(r) => r.event_router(),
+            Self::Yaesu(r) => r.event_router(),
+            Self::Kenwood(r) => r.event_router(),
             _ => None,
         }
     }
@@ -450,24 +452,30 @@ impl Radio for ConfiguredRadio {
     async fn get_rit_offset_hz(&self) -> Result<i32> {
         match self {
             Self::Icom(r) => r.get_rit_offset_hz(),
+            Self::Yaesu(r) => r.get_rit_offset_hz().await,
+            Self::Kenwood(r) => r.get_rit_offset_hz(),
             _ => bail!("RIT offset control is not available for this driver"),
         }
     }
     async fn set_rit_offset_hz(&self, offset_hz: i32) -> Result<()> {
         match self {
             Self::Icom(r) => r.set_rit_offset_hz(offset_hz),
+            Self::Yaesu(r) => r.set_rit_offset_hz(offset_hz).await,
+            Self::Kenwood(r) => r.set_rit_offset_hz(offset_hz),
             _ => bail!("RIT offset control is not available for this driver"),
         }
     }
     async fn get_xit_offset_hz(&self) -> Result<i32> {
         match self {
             Self::Yaesu(r) => r.get_xit_offset_hz().await,
+            Self::Kenwood(r) => r.get_xit_offset_hz(),
             _ => bail!("XIT offset control is not available for this driver"),
         }
     }
     async fn set_xit_offset_hz(&self, offset_hz: i32) -> Result<()> {
         match self {
             Self::Yaesu(r) => r.set_xit_offset_hz(offset_hz).await,
+            Self::Kenwood(r) => r.set_xit_offset_hz(offset_hz),
             _ => bail!("XIT offset control is not available for this driver"),
         }
     }
@@ -511,21 +519,33 @@ impl Radio for ConfiguredRadio {
         match self {
             Self::Icom(r) => r.get_meter(id).await,
             Self::Yaesu(r) => r.get_meter(id).await,
-            Self::Kenwood(r) => match id {
-                crate::MeterId::Signal => Ok(Some(r.get_signal_meter()?)),
-                crate::MeterId::Swr => Ok(Some(r.get_swr_meter()?)),
-                _ => Ok(None),
-            },
+            Self::Kenwood(r) => Radio::get_meter(r, id).await,
             _ => Ok(None),
         }
     }
     fn supports_meter(&self, id: crate::MeterId) -> bool {
         match self {
             Self::Icom(r) => r.supports_meter(id),
-            Self::Yaesu(r) => r.model().is_some() && !matches!(id, crate::MeterId::Temperature),
-            Self::Kenwood(r) => {
-                r.model().is_some() && matches!(id, crate::MeterId::Signal | crate::MeterId::Swr)
-            }
+            Self::Yaesu(r) => r.supports_meter(id),
+            Self::Kenwood(r) => r.supports_meter(id),
+            _ => false,
+        }
+    }
+    fn supports_repeater_settings(&self) -> bool {
+        match self {
+            Self::Icom(r) => r.supports_repeater_settings(),
+            Self::Yaesu(r) => r.supports_repeater_settings(),
+            Self::Kenwood(r) => r.supports_repeater_settings(),
+            Self::LegacyYaesu(r) => r.supports_repeater_settings(),
+            _ => false,
+        }
+    }
+    fn supports_memory_channels(&self) -> bool {
+        match self {
+            Self::Icom(r) => r.supports_memory_channels(),
+            Self::Yaesu(r) => r.supports_memory_channels(),
+            Self::Kenwood(r) => r.supports_memory_channels(),
+            Self::LegacyYaesu(r) => r.supports_memory_channels(),
             _ => false,
         }
     }
@@ -559,12 +579,16 @@ impl Radio for ConfiguredRadio {
     async fn start_tuner(&self) -> Result<()> {
         match self {
             Self::Icom(r) => r.start_tuner().await,
+            Self::Yaesu(r) => r.start_tuner().await,
+            Self::Kenwood(r) => r.start_tuner(),
             _ => bail!("antenna tuner control is not available for this driver"),
         }
     }
     async fn get_tuner_status(&self) -> Result<Option<TunerStatus>> {
         match self {
             Self::Icom(r) => r.get_tuner_status().await,
+            Self::Yaesu(r) => r.get_tuner_status().await,
+            Self::Kenwood(r) => Ok(Some(r.get_tuner_status()?)),
             _ => Ok(None),
         }
     }
@@ -744,6 +768,8 @@ mod tests {
     fn configured_radio_reports_profiled_controls_and_meters() {
         let icom = open_model("IC-7300", "/dev/null", 115_200, 0xE0).unwrap();
         assert!(icom.supports_control(crate::ControlId::IpPlus));
+        assert!(icom.supports_repeater_settings());
+        assert!(icom.supports_memory_channels());
         assert!(icom.supports_control(crate::ControlId::NoiseReduction));
         assert!(!icom.supports_control_read(crate::ControlId::Vfo));
         assert!(icom.supports_control_write(crate::ControlId::Vfo));
@@ -757,6 +783,7 @@ mod tests {
         assert!(icom.supports_meter(crate::MeterId::Voltage));
         assert!(icom.supports_meter(crate::MeterId::Current));
         assert!(icom.supports_meter(crate::MeterId::Temperature));
+        assert!(icom.event_router().is_some());
 
         let ic9700 = open_model("IC-9700", "/dev/null", 115_200, 0xE0).unwrap();
         assert!(ic9700.supports_control(crate::ControlId::MainSub));
@@ -771,6 +798,10 @@ mod tests {
         assert!(yaesu.supports_control(crate::ControlId::NoiseReductionLevel));
         assert!(yaesu.supports_meter(crate::MeterId::Voltage));
         assert!(!yaesu.supports_meter(crate::MeterId::Temperature));
+        assert!(yaesu.event_router().is_some());
+        assert!(yaesu.supports_repeater_settings());
+        assert!(yaesu.supports_memory_channels());
+        assert!(yaesu.supports_control(crate::ControlId::Tuner));
 
         let kenwood = open_model("TS-890S", "/dev/null", 115_200, 0xE0).unwrap();
         assert!(kenwood.supports_control(crate::ControlId::RfPower));
@@ -780,7 +811,11 @@ mod tests {
         assert!(kenwood.supports_control_write(crate::ControlId::Split));
         assert!(kenwood.supports_meter(crate::MeterId::Signal));
         assert!(kenwood.supports_meter(crate::MeterId::Swr));
-        assert!(!kenwood.supports_meter(crate::MeterId::Alc));
+        assert!(kenwood.supports_meter(crate::MeterId::Alc));
+        assert!(kenwood.supports_meter(crate::MeterId::Temperature));
+        assert!(kenwood.event_router().is_some());
+        assert!(kenwood.supports_repeater_settings());
+        assert!(kenwood.supports_memory_channels());
 
         let generic = open_model(GENERIC_KENWOOD_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
         assert!(!generic.supports_control(crate::ControlId::RfPower));

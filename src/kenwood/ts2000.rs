@@ -66,3 +66,14 @@ pub use super::profile::TS2000_PROFILE as CAT_PROFILE;
 pub fn profile() -> &'static RadioModelProfile {
     find_model("TS-2000").expect("built-in TS-2000 profile")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exposes_the_ts2000_catalog_profile() {
+        assert_eq!(profile().model, "TS-2000");
+        assert!(!CONTROLS.is_empty());
+    }
+}

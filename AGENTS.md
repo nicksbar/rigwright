@@ -18,6 +18,20 @@ agent changes:
 - Run `cargo fmt --all`, `cargo test --locked`, `cargo clippy --locked
   --all-targets --all-features -- -D warnings`, and `git diff --check` before
   declaring a driver change complete.
+- Coverage is part of the public documentation contract. Whenever coverage
+  changes, run `cargo llvm-cov --locked --all-features --workspace
+  --summary-only`, run `bash scripts/check-icom-coverage.sh` against that
+  summary, and update every per-area coverage badge and the coverage snapshot
+  in `README.md`. Never leave hard-coded badge values or documented coverage
+  figures stale after adding tests, changing thresholds, or modifying code.
+- Every changed production Rust file must have at least one covered executable
+  line. New or changed model/profile files also require a focused contract test;
+  aggregate area coverage must not be treated as a substitute for per-file
+  coverage. CI enforces this with `scripts/check-changed-coverage.sh`.
+- The README's release/version badge must match `Cargo.toml` and the current
+  release branch or tag. When a release tag is created, verify the dynamic
+  latest-release badge resolves to that tag and update the changelog and
+  support documentation as needed.
 
 Use the vendor model modules for model tables: Icom modules under
 `src/icom/`, modern and classic Yaesu modules under `src/yaesu/`, and Kenwood

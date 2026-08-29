@@ -127,6 +127,8 @@ model-specific 0..30 or 0..70 dot ranges. Modern Yaesu CAT profiles query
 deflection, not a universal physical SWR-ratio conversion; the manuals do not
 define enough cross-vendor ratio calibration to infer one safely.
 
-The model-aware `ConfiguredRadio` wrapper forwards capability checks for Icom,
-Yaesu, and Kenwood. Generic vendor drivers intentionally report no typed
-optional meters or controls until a concrete model profile is selected.
+The model-aware `ConfiguredRadio` wrapper delegates optional controls, meters,
+clarifiers, tuner, memory, repeater, and event-router behavior to the selected
+vendor backend. It does not own vendor command semantics. Generic vendor
+drivers intentionally report no profile-only typed meters or controls until a
+concrete model profile is selected.
