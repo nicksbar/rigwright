@@ -47,6 +47,7 @@ check_target "Drivers" '^drivers\.rs$' 85
 check_target "IQ" '^iq\.rs$' 95
 check_target "rigctld" '^rigctld\.rs$' 90
 check_target "DX Lab" '^dxlab\.rs$' 90
+check_target "Kenwood CAT" '^kenwood/cat_radio\.rs$' 45
 check_target "Kenwood profile" '^kenwood/profile\.rs$' 90
 check_target "Yaesu profile" '^yaesu/profile\.rs$' 85
 check_target "Classic Yaesu profile" '^yaesu/legacy_profile\.rs$' 85
