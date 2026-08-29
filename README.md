@@ -1,5 +1,8 @@
 # Rigwright
 
+[![CI](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml)
+[![Coverage](https://github.com/nicksbar/rigwright/actions/workflows/coverage.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/coverage.yml)
+
 Rigwright is a reusable Rust radio-control HAL with native radio drivers. It was
 extracted from [QSONaut](https://github.com/nicksbar/QSONaut) so radio support can
 evolve independently and be embedded in other amateur-radio applications.
@@ -168,9 +171,18 @@ The report is written to `target/llvm-cov/html/index.html`; open that file in a
 browser to inspect line and branch coverage. For a terminal summary instead,
 run `cargo llvm-cov --locked --all-features --workspace`.
 
-Pull requests run formatting, checks, tests, and LLVM coverage in GitHub Actions.
-The coverage check prints the test and coverage summary in the pull request's
-check details and uploads the complete HTML report as a workflow artifact.
+Pull requests run formatting, checks, and tests in `ci.yml`. LLVM coverage runs
+as a separate `coverage.yml` workflow; it prints the test and coverage summary
+in the pull request's check details and uploads the complete HTML report as a
+workflow artifact.
+
+The badges above intentionally report workflow status and the availability of
+the LLVM report rather than a hard-coded percentage. Coverage can currently be
+reviewed by source file in the uploaded report, including the Icom, Yaesu, and
+Kenwood brand modules and their supported model profiles. A meaningful
+per-brand or per-model percentage badge requires separate coverage test
+targets—or stable source filters and badge publication—which is not yet part
+of this project.
 
 ## Design rules
 
