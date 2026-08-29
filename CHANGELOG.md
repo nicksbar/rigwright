@@ -44,6 +44,8 @@
   no-flow-control probe cannot receive a response.
 - Make the modern Yaesu probe complete identity, frequency, mode, and PTT
   checks independently before returning a combined failure summary.
+- Correct FTDX10 mode reads to include the documented Main-band receiver
+  selector (`MD0;`) instead of issuing the invalid bare `MD;` query.
 - Implement Kenwood TS-890 memory selection and structured `MA0` memory
   record read/write support, including channel names and split frequencies.
 - Implement FTDX10 `MR` memory reads and `MT` memory writes for documented

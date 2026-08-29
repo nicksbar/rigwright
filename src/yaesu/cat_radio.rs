@@ -585,9 +585,9 @@ impl Radio for YaesuCatRadio {
     }
 
     async fn get_mode(&self) -> Result<Mode> {
-        // Yaesu's MD read command has no selector parameter.  The response
-        // includes the VFO selector and mode, for example MD02;.
-        let response = match self.query("MD", None, 2) {
+        // The FTDX10 requires the receiver selector on an MD read.  Read the
+        // Main band with MD0; and expect an answer such as MD04; (FM).
+        let response = match self.query("MD", Some("0"), 2) {
             Ok(response) => response,
             Err(error)
                 if self.model == Some(YaesuCatModel::Ftdx10)
@@ -600,7 +600,7 @@ impl Radio for YaesuCatRadio {
                 // but reject the first mode read until the host applies
                 // RTS/CTS. Keep this recovery bounded and transparent.
                 self.enable_hardware_flow_control()?;
-                self.query("MD", None, 2)?
+                self.query("MD", Some("0"), 2)?
             }
             Err(error) => return Err(error),
         };
