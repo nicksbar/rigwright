@@ -1327,6 +1327,68 @@ fn display_command(request: &[u8]) -> String {
 mod tests {
     use super::*;
     use crate::kenwood::profile::{TS590SG_PROFILE, TS890S_PROFILE};
+    use std::collections::VecDeque;
+    use std::io::{Read, Write};
+    use std::sync::{Arc, Mutex};
+
+    struct ScriptedTransport {
+        input: VecDeque<Vec<u8>>,
+        output: Arc<Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl ScriptedTransport {
+        fn with_reads(reads: Vec<Vec<u8>>) -> (Self, Arc<Mutex<Vec<Vec<u8>>>>) {
+            let output = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    input: reads.into_iter().collect(),
+                    output: Arc::clone(&output),
+                },
+                output,
+            )
+        }
+
+        fn response(payload: &[u8]) -> Vec<u8> {
+            let mut frame = payload.to_vec();
+            frame.push(b';');
+            frame
+        }
+    }
+
+    impl Read for ScriptedTransport {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let Some(mut frame) = self.input.pop_front() else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "test transport has no scripted response",
+                ));
+            };
+            let count = frame.len().min(buffer.len());
+            buffer[..count].copy_from_slice(&frame[..count]);
+            if count < frame.len() {
+                frame.drain(..count);
+                self.input.push_front(frame);
+            }
+            Ok(count)
+        }
+    }
+
+    impl Write for ScriptedTransport {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.output.lock().unwrap().push(buffer.to_vec());
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl RadioTransport for ScriptedTransport {
+        fn set_timeout(&mut self, _timeout: Duration) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn constructors_select_exact_profiles_and_validate_baud() {
@@ -1404,5 +1466,108 @@ mod tests {
         assert!(validate_complete_command(b"ID;").is_ok());
         assert!(validate_complete_command(b"ID").is_err());
         assert!(validate_complete_command(b"ID;FA;").is_err());
+    }
+
+    #[test]
+    fn model_specific_ai_values_are_emitted_without_waiting_for_an_ack() {
+        let (transport, writes) = ScriptedTransport::with_reads(Vec::new());
+        let ts590 = KenwoodCatRadio::with_external_transport(
+            Some(KenwoodCatModel::Ts590Sg),
+            115_200,
+            transport,
+        );
+        ts590.set_auto_information(true).unwrap();
+        ts590.set_auto_information(false).unwrap();
+        assert_eq!(
+            writes.lock().unwrap().as_slice(),
+            [b"AI2;".to_vec(), b"AI0;".to_vec()]
+        );
+
+        let (transport, writes) = ScriptedTransport::with_reads(Vec::new());
+        let ts2000 = KenwoodCatRadio::with_external_transport(
+            Some(KenwoodCatModel::Ts2000),
+            4_800,
+            transport,
+        );
+        ts2000.set_auto_information(true).unwrap();
+        assert_eq!(writes.lock().unwrap().as_slice(), [b"AI1;".to_vec()]);
+    }
+
+    #[test]
+    fn query_skips_unsolicited_frames_and_preserves_the_requested_response() {
+        let (transport, writes) = ScriptedTransport::with_reads(vec![
+            ScriptedTransport::response(b"MD2"),
+            ScriptedTransport::response(b"FR0"),
+            ScriptedTransport::response(b"FA00014074000"),
+        ]);
+        let radio = KenwoodCatRadio::with_external_transport(
+            Some(KenwoodCatModel::Ts590Sg),
+            115_200,
+            transport,
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_074_000
+        );
+        assert_eq!(
+            writes.lock().unwrap().as_slice(),
+            [b"FR;".to_vec(), b"FA;".to_vec()]
+        );
+    }
+
+    #[test]
+    fn kenwood_protocol_error_frames_are_reported_and_do_not_poison_pending_data() {
+        for (error_frame, expected) in [
+            (b"?;".as_slice(), "rejected"),
+            (b"E;".as_slice(), "communication error"),
+            (b"O;".as_slice(), "receive-buffer overrun"),
+        ] {
+            let (transport, _) = ScriptedTransport::with_reads(vec![
+                error_frame.to_vec(),
+                ScriptedTransport::response(b"FR0"),
+                ScriptedTransport::response(b"FA00014074000"),
+            ]);
+            let radio = KenwoodCatRadio::with_external_transport(
+                Some(KenwoodCatModel::Ts590Sg),
+                115_200,
+                transport,
+            );
+            let error = futures::executor::block_on(radio.get_frequency_hz())
+                .expect_err("Kenwood protocol error must be surfaced");
+            assert!(error.to_string().contains(expected), "{error}");
+            assert_eq!(
+                futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+                14_074_000
+            );
+        }
+    }
+
+    #[test]
+    fn ts590_ptt_write_is_verified_from_the_documented_if_rx_tx_field() {
+        let mut payload = vec![b'0'; 35];
+        payload[26] = b'1';
+        let mut if_frame = b"IF".to_vec();
+        if_frame.extend_from_slice(&payload);
+        let (transport, writes) =
+            ScriptedTransport::with_reads(vec![ScriptedTransport::response(&if_frame)]);
+        let radio = KenwoodCatRadio::with_external_transport(
+            Some(KenwoodCatModel::Ts590Sg),
+            115_200,
+            transport,
+        );
+
+        futures::executor::block_on(radio.set_ptt(true)).unwrap();
+        assert_eq!(
+            writes.lock().unwrap().as_slice(),
+            [b"TX0;".to_vec(), b"IF;".to_vec()]
+        );
+    }
+
+    #[test]
+    fn ts890_does_not_claim_pollable_ptt_status() {
+        let radio = KenwoodCatRadio::new_for_model(KenwoodCatModel::Ts890S, "", 115_200).unwrap();
+        assert!(!radio.capabilities().can_get_ptt);
+        assert!(futures::executor::block_on(radio.get_ptt()).is_err());
     }
 }
