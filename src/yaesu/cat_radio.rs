@@ -55,7 +55,7 @@ pub struct YaesuCatRadio {
     model: Option<YaesuCatModel>,
     port: String,
     baud_rate: u32,
-    hardware_flow_control: bool,
+    hardware_flow_control: Arc<Mutex<bool>>,
     cat_rts_detected: Arc<Mutex<bool>>,
     transport: Arc<Mutex<TransportState>>,
 }
@@ -67,7 +67,14 @@ impl std::fmt::Debug for YaesuCatRadio {
             .field("model", &self.model)
             .field("port", &self.port)
             .field("baud_rate", &self.baud_rate)
-            .field("hardware_flow_control", &self.hardware_flow_control)
+            .field(
+                "hardware_flow_control",
+                &self
+                    .hardware_flow_control
+                    .lock()
+                    .map(|enabled| *enabled)
+                    .unwrap_or(false),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -107,8 +114,11 @@ impl YaesuCatRadio {
         port: impl Into<String>,
         baud_rate: u32,
     ) -> Result<Self> {
-        let mut radio = Self::new_for_model(model, port, baud_rate)?;
-        radio.hardware_flow_control = true;
+        let radio = Self::new_for_model(model, port, baud_rate)?;
+        *radio
+            .hardware_flow_control
+            .lock()
+            .map_err(|_| anyhow!("Yaesu CAT flow-control state lock poisoned"))? = true;
         Ok(radio)
     }
 
@@ -131,7 +141,7 @@ impl YaesuCatRadio {
                 external: Some(Box::new(transport)),
                 pending: Vec::new(),
             })),
-            hardware_flow_control: false,
+            hardware_flow_control: Arc::new(Mutex::new(false)),
             cat_rts_detected: Arc::new(Mutex::new(false)),
         }
     }
@@ -141,7 +151,7 @@ impl YaesuCatRadio {
             model,
             port: port.into(),
             baud_rate,
-            hardware_flow_control: false,
+            hardware_flow_control: Arc::new(Mutex::new(false)),
             cat_rts_detected: Arc::new(Mutex::new(false)),
             transport: Arc::new(Mutex::new(TransportState::default())),
         }
@@ -402,18 +412,31 @@ impl YaesuCatRadio {
             .and_then(|frame| parse_payload(&frame, "EX").ok().map(str::to_owned))
             .and_then(|payload| payload.chars().last())
             .is_some_and(|value| value == '1');
-        if enabled && !self.hardware_flow_control {
-            self.with_transport(Duration::from_millis(150), |state| {
-                active_transport(state)?
-                    .set_hardware_flow_control(true)
-                    .context("failed to enable Yaesu CAT RTS/CTS flow control")
-            })?;
+        let flow_control_enabled = self
+            .hardware_flow_control
+            .lock()
+            .map_err(|_| anyhow!("Yaesu CAT flow-control state lock poisoned"))?
+            .to_owned();
+        if enabled && !flow_control_enabled {
+            self.enable_hardware_flow_control()?;
         }
         *self
             .cat_rts_detected
             .lock()
             .map_err(|_| anyhow!("Yaesu CAT RTS state lock poisoned"))? = true;
         Ok(())
+    }
+
+    fn enable_hardware_flow_control(&self) -> Result<()> {
+        *self
+            .hardware_flow_control
+            .lock()
+            .map_err(|_| anyhow!("Yaesu CAT flow-control state lock poisoned"))? = true;
+        self.with_transport(Duration::from_millis(150), |state| {
+            active_transport(state)?
+                .set_hardware_flow_control(true)
+                .context("failed to enable Yaesu CAT RTS/CTS flow control")
+        })
     }
 
     fn write_only(&self, request: &[u8]) -> Result<()> {
@@ -494,20 +517,25 @@ impl YaesuCatRadio {
             .lock()
             .map_err(|_| anyhow!("Yaesu CAT transport lock poisoned"))?;
         if state.port.is_none() && state.external.is_none() {
-            state.port = Some(Box::new(SerialPortTransport(
-                serialport::new(&self.port, self.baud_rate)
-                    .data_bits(DataBits::Eight)
-                    .parity(Parity::None)
-                    .stop_bits(StopBits::One)
-                    .flow_control(if self.hardware_flow_control {
-                        FlowControl::Hardware
-                    } else {
-                        FlowControl::None
-                    })
-                    .timeout(timeout)
-                    .open()
-                    .with_context(|| format!("failed to open Yaesu CAT port {}", self.port))?,
-            )));
+            state.port =
+                Some(Box::new(SerialPortTransport(
+                    serialport::new(&self.port, self.baud_rate)
+                        .data_bits(DataBits::Eight)
+                        .parity(Parity::None)
+                        .stop_bits(StopBits::One)
+                        .flow_control(
+                            if *self.hardware_flow_control.lock().map_err(|_| {
+                                anyhow!("Yaesu CAT flow-control state lock poisoned")
+                            })? {
+                                FlowControl::Hardware
+                            } else {
+                                FlowControl::None
+                            },
+                        )
+                        .timeout(timeout)
+                        .open()
+                        .with_context(|| format!("failed to open Yaesu CAT port {}", self.port))?,
+                )));
         }
         active_transport(&mut state)?
             .set_timeout(timeout)
@@ -550,7 +578,23 @@ impl Radio for YaesuCatRadio {
     async fn get_mode(&self) -> Result<Mode> {
         // Yaesu's MD read command has no selector parameter.  The response
         // includes the VFO selector and mode, for example MD02;.
-        let response = self.query("MD", None, 2)?;
+        let response = match self.query("MD", None, 2) {
+            Ok(response) => response,
+            Err(error)
+                if self.model == Some(YaesuCatModel::Ftdx10)
+                    && (error.to_string().contains("rejected command MD")
+                        || error
+                            .to_string()
+                            .contains("timed out waiting for Yaesu CAT response to MD")) =>
+            {
+                // Some FTDX10/USB bridge combinations report CAT RTS enabled
+                // but reject the first mode read until the host applies
+                // RTS/CTS. Keep this recovery bounded and transparent.
+                self.enable_hardware_flow_control()?;
+                self.query("MD", None, 2)?
+            }
+            Err(error) => return Err(error),
+        };
         let payload = parse_payload(&response, "MD")?;
         let mut chars = payload.chars();
         if chars.next() != Some('0') {
