@@ -243,3 +243,78 @@ impl Radio for NullRadio {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct MinimalRadio;
+
+    #[async_trait]
+    impl Radio for MinimalRadio {
+        async fn get_frequency_hz(&self) -> Result<u64> { Ok(14_074_000) }
+        async fn set_frequency_hz(&self, _hz: u64) -> Result<()> { Ok(()) }
+        async fn get_mode(&self) -> Result<Mode> { Ok(Mode::Usb) }
+        async fn set_mode(&self, _mode: Mode) -> Result<()> { Ok(()) }
+        async fn set_ptt(&self, _enabled: bool) -> Result<()> { Ok(()) }
+        fn capabilities(&self) -> RadioCapabilities { RadioCapabilities::default() }
+    }
+
+    #[test]
+    fn default_radio_contract_is_explicit_and_exercised() {
+        let radio = MinimalRadio;
+        assert!(radio.event_router().is_none());
+        assert_eq!(futures::executor::block_on(radio.frequency()).unwrap(), 14_074_000);
+        futures::executor::block_on(radio.set_frequency(14_075_000)).unwrap();
+        assert_eq!(futures::executor::block_on(radio.mode()).unwrap(), Mode::Usb);
+        futures::executor::block_on(radio.ptt(false)).unwrap();
+        assert!(futures::executor::block_on(radio.get_ptt()).is_err());
+        assert!(futures::executor::block_on(radio.get_power()).is_err());
+        assert!(futures::executor::block_on(radio.set_power(false)).is_err());
+        assert!(futures::executor::block_on(radio.protocol_write_read(&[])).unwrap().is_empty());
+        assert_eq!(futures::executor::block_on(radio.get_control(ControlId::RfPower)).unwrap(), None);
+        futures::executor::block_on(radio.set_control(ControlId::RfPower, ControlValue::U8(1))).unwrap();
+        assert!(futures::executor::block_on(radio.get_repeater_settings()).is_err());
+        assert!(futures::executor::block_on(radio.set_repeater_settings(RepeaterSettings::default())).is_err());
+        assert!(futures::executor::block_on(radio.get_rit_offset_hz()).is_err());
+        assert!(futures::executor::block_on(radio.set_rit_offset_hz(0)).is_err());
+        assert!(futures::executor::block_on(radio.get_xit_offset_hz()).is_err());
+        assert!(futures::executor::block_on(radio.set_xit_offset_hz(0)).is_err());
+        assert!(futures::executor::block_on(radio.select_memory_channel(1)).is_err());
+        assert!(futures::executor::block_on(radio.read_memory_channel(1)).is_err());
+        assert!(futures::executor::block_on(radio.write_memory_channel(MemoryChannel {
+            channel: 1,
+            name: None,
+            frequency_hz: 14_074_000,
+            transmit_frequency_hz: None,
+            mode: Mode::Usb,
+            repeater: RepeaterSettings::default(),
+        })).is_err());
+        assert!(futures::executor::block_on(radio.send_dtmf(DtmfSequence::new("1").unwrap())).is_err());
+        assert!(!radio.supports_repeater_settings());
+        assert!(!radio.supports_memory_channels());
+        assert!(!radio.supports_send_dtmf());
+        assert!(futures::executor::block_on(radio.get_meter(MeterId::Signal)).unwrap().is_none());
+        assert!(!radio.supports_meter(MeterId::Signal));
+        assert!(!radio.supports_control(ControlId::RfPower));
+        assert!(!radio.supports_control_read(ControlId::RfPower));
+        assert!(!radio.supports_control_write(ControlId::RfPower));
+        assert!(futures::executor::block_on(radio.start_tuner()).is_err());
+        assert!(futures::executor::block_on(radio.get_tuner_status()).unwrap().is_none());
+        assert!(!radio.capabilities().can_get_frequency);
+    }
+
+    #[test]
+    fn null_radio_preserves_state_and_reports_its_capabilities() {
+        let radio = NullRadio::with_frequency_mode(7_074_000, Mode::Cw);
+        assert_eq!(futures::executor::block_on(radio.get_frequency_hz()).unwrap(), 7_074_000);
+        assert_eq!(futures::executor::block_on(radio.get_mode()).unwrap(), Mode::Cw);
+        futures::executor::block_on(radio.set_frequency_hz(14_074_000)).unwrap();
+        futures::executor::block_on(radio.set_mode(Mode::Data)).unwrap();
+        futures::executor::block_on(radio.set_ptt(true)).unwrap();
+        assert!(futures::executor::block_on(radio.get_ptt()).unwrap());
+        let capabilities = radio.capabilities();
+        assert!(capabilities.can_get_frequency && capabilities.can_set_mode);
+        assert!(!capabilities.can_set_power && !capabilities.can_raw_protocol);
+    }
+}
