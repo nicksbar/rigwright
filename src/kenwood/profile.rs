@@ -582,4 +582,32 @@ mod tests {
         assert!(TS890S_PROFILE.control(ControlId::Agc).is_some());
         assert!(TS2000_PROFILE.control(ControlId::Filter).is_none());
     }
+
+    #[test]
+    fn profile_value_boundaries_and_mode_mappings_are_model_specific() {
+        for profile in [TS590SG_PROFILE, TS890S_PROFILE, TS2000_PROFILE] {
+            assert!(profile.supports_frequency(30_000));
+            assert!(!profile.supports_frequency(29_999));
+            assert!(profile.validate_power(5).is_ok());
+            assert!(profile.validate_power(100).is_ok());
+            assert!(profile.validate_power(4).is_err());
+            assert!(profile.validate_power(101).is_err());
+            assert!(profile.encode_mode(Mode::Lsb).is_ok());
+            assert!(profile.decode_mode('1').is_ok());
+            assert!(profile.decode_mode('Z').is_err());
+            assert!(profile.control(ControlId::AfGain).is_some());
+            assert!(profile.meter(MeterId::Signal).is_none());
+            assert!(profile.supports_control(ControlId::Split));
+            assert!(profile.supports_control(ControlId::Vfo));
+            assert!(!profile.supports_control(ControlId::RawCiV));
+        }
+        assert!(TS2000_PROFILE.validate_power(100).is_ok());
+        assert!(TS2000_PROFILE.supports_frequency(1_250_000_000));
+        assert!(!TS2000_PROFILE.supports_frequency(1_301_000_000));
+        assert!(TS590SG_PROFILE.meter(MeterId::Alc).is_some());
+        assert!(TS890S_PROFILE.meter(MeterId::Temperature).is_some());
+        assert!(TS890S_PROFILE.encode_mode(Mode::Data).is_ok());
+        assert!(TS590SG_PROFILE.encode_mode(Mode::Wfm).is_err());
+        assert!(TS590SG_PROFILE.validate_power(1).is_err());
+    }
 }
