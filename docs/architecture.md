@@ -73,7 +73,10 @@ Model files define defaults and documented differences:
 
 Modern Yaesu profiles additionally own the `ID;` value, accepted CAT baud
 rates, receiver-qualified `MD` mappings, `PC` range in watts, and optional
-command families. `YaesuCatRadio` reuses one serial connection and matches
+command families. `YaesuCatRadio` reads `VS;` before frequency and mode
+operations, routing them to the selected `FA`/`FB` and `MD0`/`MD1` surfaces;
+it does not assume VFO-A after startup. The driver reuses one serial
+connection and matches
 semicolon-terminated replies by command so unsolicited auto-information frames
 cannot be mistaken for a requested reply. Modern ASCII CAT and legacy binary
 CAT are intentionally separate engines.

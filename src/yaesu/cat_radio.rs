@@ -27,6 +27,7 @@ use super::profile::{profile_for_model, YaesuCatProfile};
 
 const RESPONSE_TIMEOUT: Duration = Duration::from_millis(1_200);
 const MAX_FRAME_LEN: usize = 512;
+const RM_RESPONSE_PAYLOAD_LEN: usize = 7;
 
 #[derive(Default)]
 struct TransportState {
@@ -592,7 +593,8 @@ impl YaesuCatRadio {
             }
         }
         if let Some(value) = payload.strip_prefix("MD") {
-            if let Some(code) = value.strip_prefix('0').and_then(|v| v.chars().next()) {
+            if value.len() >= 2 && matches!(&value[..1], "0" | "1") {
+                let code = value.chars().nth(1).expect("length checked above");
                 if let Some(mode) = self
                     .profile()
                     .and_then(|profile| profile.decode_mode(code).ok())
@@ -615,7 +617,8 @@ impl Radio for YaesuCatRadio {
     }
 
     async fn get_frequency_hz(&self) -> Result<u64> {
-        parse_payload(&self.query("FA", None, 9)?, "FA")?
+        let command = active_vfo_command(self.active_vfo_selector()?);
+        parse_payload(&self.query(command, None, 9)?, command)?
             .parse()
             .context("invalid Yaesu FA response")
     }
@@ -632,13 +635,16 @@ impl Radio for YaesuCatRadio {
                 );
             }
         }
-        self.send_set("FA", &format!("{hz:09}"))
+        let command = active_vfo_command(self.active_vfo_selector()?);
+        self.send_set(command, &format!("{hz:09}"))
     }
 
     async fn get_mode(&self) -> Result<Mode> {
-        // The FTDX10 requires the receiver selector on an MD read.  Read the
-        // Main band with MD0; and expect an answer such as MD04; (FM).
-        let response = match self.query("MD", Some("0"), 2) {
+        // Modern Yaesu uses the selected VFO selector in MD reads and writes:
+        // MD0; / MD1; select the mode for VFO-A / VFO-B respectively.
+        let selector = self.active_vfo_selector()?;
+        let selector_text = selector.to_string();
+        let response = match self.query("MD", Some(&selector_text), 2) {
             Ok(response) => response,
             Err(error)
                 if self.model == Some(YaesuCatModel::Ftdx10)
@@ -651,13 +657,13 @@ impl Radio for YaesuCatRadio {
                 // but reject the first mode read until the host applies
                 // RTS/CTS. Keep this recovery bounded and transparent.
                 self.enable_hardware_flow_control()?;
-                self.query("MD", Some("0"), 2)?
+                self.query("MD", Some(&selector_text), 2)?
             }
             Err(error) => return Err(error),
         };
         let payload = parse_payload(&response, "MD")?;
         let mut chars = payload.chars();
-        if chars.next() != Some('0') {
+        if chars.next() != Some(char::from(b'0' + selector)) {
             bail!("unexpected Yaesu MD receiver selector: {payload}");
         }
         let code = chars.next().context("missing Yaesu MD mode code")?;
@@ -672,7 +678,8 @@ impl Radio for YaesuCatRadio {
             Some(profile) => profile.encode_mode(mode)?,
             None => encode_common_mode(mode)?,
         };
-        self.send_set("MD", &format!("0{code}"))
+        let selector = self.active_vfo_selector()?;
+        self.send_set("MD", &format!("{selector}{code}"))
     }
 
     async fn set_ptt(&self, enabled: bool) -> Result<()> {
@@ -984,6 +991,16 @@ impl Radio for YaesuCatRadio {
 }
 
 impl YaesuCatRadio {
+    fn active_vfo_selector(&self) -> Result<u8> {
+        let response = self.query("VS", None, 1)?;
+        let payload = parse_payload(&response, "VS")?;
+        let value = payload
+            .parse::<u8>()
+            .context("invalid Yaesu VFO selector")?;
+        anyhow::ensure!(value <= 1, "invalid Yaesu VFO selector: {value}");
+        Ok(value)
+    }
+
     fn get_yaesu_level(&self, command: &str, maximum: u8) -> Result<u8> {
         let response = self.query(command, Some("0"), 4)?;
         let payload = parse_payload(&response, command)?;
@@ -1050,7 +1067,7 @@ impl YaesuCatRadio {
     }
 
     fn get_yaesu_meter(&self, selector: u8) -> Result<u8> {
-        let response = self.query("RM", Some(&selector.to_string()), 10)?;
+        let response = self.query("RM", Some(&selector.to_string()), RM_RESPONSE_PAYLOAD_LEN)?;
         let payload = parse_payload(&response, "RM")?;
         let response_selector = payload
             .chars()
@@ -1093,6 +1110,14 @@ impl YaesuCatRadio {
             .context("RF power control is not profiled for this Yaesu model")?;
         let span = u32::from(maximum - minimum);
         Ok(minimum + (((u32::from(level) * span) + 127) / 255) as u16)
+    }
+}
+
+fn active_vfo_command(selector: u8) -> &'static str {
+    match selector {
+        0 => "FA",
+        1 => "FB",
+        _ => unreachable!("active VFO selector is validated to 0 or 1"),
     }
 }
 
@@ -1244,6 +1269,71 @@ mod tests {
     use crate::yaesu::profile::{
         FT710_PROFILE, FT991A_PROFILE, FTDX101D_PROFILE, FTDX101MP_PROFILE, FTDX10_PROFILE,
     };
+    use std::io::{Read, Write};
+    use std::sync::{Arc, Mutex};
+
+    struct ScriptedTransport {
+        input: Vec<u8>,
+        output: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Read for ScriptedTransport {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let frame_len = self
+                .input
+                .iter()
+                .position(|byte| *byte == b';')
+                .map_or(self.input.len(), |index| index + 1);
+            let count = buffer.len().min(self.input.len()).min(frame_len);
+            buffer[..count].copy_from_slice(&self.input[..count]);
+            self.input.drain(..count);
+            Ok(count)
+        }
+    }
+
+    impl Write for ScriptedTransport {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.output.lock().unwrap().extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl crate::transport::RadioTransport for ScriptedTransport {
+        fn set_timeout(&mut self, _timeout: std::time::Duration) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct FailingTransport;
+
+    impl Read for FailingTransport {
+        fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "radio disconnected",
+            ))
+        }
+    }
+
+    impl Write for FailingTransport {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl crate::transport::RadioTransport for FailingTransport {
+        fn set_timeout(&mut self, _timeout: std::time::Duration) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn common_commands_match_official_manual_examples() {
@@ -1255,6 +1345,241 @@ mod tests {
         assert_eq!(ascii_cat::encode("MD", Some("0")).unwrap(), b"MD0;");
         assert_eq!(ascii_cat::encode("MD", None).unwrap(), b"MD;");
         assert_eq!(ascii_cat::encode("TX", None).unwrap(), b"TX;");
+    }
+
+    #[test]
+    fn vfo_selection_routes_frequency_and_mode_to_the_selected_vfo() {
+        assert_eq!(active_vfo_command(0), "FA");
+        assert_eq!(active_vfo_command(1), "FB");
+        assert_eq!(parse_payload(b"MD02;", "MD").unwrap(), "02");
+        assert_eq!(parse_payload(b"MD12;", "MD").unwrap(), "12");
+    }
+
+    #[test]
+    fn selected_vfo_is_used_by_live_frequency_and_mode_operations() {
+        let frequency_output = Arc::new(Mutex::new(Vec::new()));
+        let frequency_radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            ScriptedTransport {
+                input: b"EX0303101;VS1;FB014250000;".to_vec(),
+                output: frequency_output.clone(),
+            },
+        );
+        assert_eq!(
+            futures::executor::block_on(frequency_radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        assert_eq!(&*frequency_output.lock().unwrap(), b"EX030310;VS;FB;");
+
+        let mode_output = Arc::new(Mutex::new(Vec::new()));
+        let mode_radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            ScriptedTransport {
+                input: b"EX0303101;VS1;MD1C;".to_vec(),
+                output: mode_output.clone(),
+            },
+        );
+        assert_eq!(
+            futures::executor::block_on(mode_radio.get_mode()).unwrap(),
+            Mode::Data
+        );
+        assert_eq!(&*mode_output.lock().unwrap(), b"EX030310;VS;MD1;");
+    }
+
+    #[test]
+    fn live_meter_queries_accept_the_documented_rm_reply_shape() {
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            ScriptedTransport {
+                input: b"EX0303101;RM1128000;".to_vec(),
+                output: Arc::new(Mutex::new(Vec::new())),
+            },
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_meter(MeterId::Signal)).unwrap(),
+            Some(128)
+        );
+    }
+
+    #[test]
+    fn core_control_and_meter_reads_decode_documented_replies() {
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            ScriptedTransport {
+                input: b"EX0303101;AG0128;RG0255;SQ0100;PA02;RA03;NB01;BC01;BP00001;SH0012;RT1;XT0;VS1;AC001;PC100;ST2;GT04;NR01;RL007;RM1128000;RM3033000;RM4044000;RM5055000;RM6066000;RM7077000;RM8088000;".to_vec(),
+                output: Arc::new(Mutex::new(Vec::new())),
+            },
+        );
+        let read = |id| futures::executor::block_on(radio.get_control(id)).unwrap();
+        assert_eq!(read(ControlId::AfGain), Some(ControlValue::U8(128)));
+        assert_eq!(read(ControlId::RfGain), Some(ControlValue::U8(255)));
+        assert_eq!(read(ControlId::Squelch), Some(ControlValue::U8(255)));
+        assert_eq!(read(ControlId::Preamp), Some(ControlValue::U8(2)));
+        assert_eq!(read(ControlId::Attenuator), Some(ControlValue::U8(3)));
+        assert_eq!(
+            read(ControlId::NoiseBlanker),
+            Some(ControlValue::Bool(true))
+        );
+        assert_eq!(read(ControlId::Notch), Some(ControlValue::Bool(true)));
+        assert_eq!(read(ControlId::ManualNotch), Some(ControlValue::Bool(true)));
+        assert_eq!(read(ControlId::Filter), Some(ControlValue::U8(12)));
+        assert_eq!(read(ControlId::Rit), Some(ControlValue::Bool(true)));
+        assert_eq!(read(ControlId::Xit), Some(ControlValue::Bool(false)));
+        assert_eq!(read(ControlId::Vfo), Some(ControlValue::Vfo(1)));
+        assert_eq!(read(ControlId::Tuner), Some(ControlValue::Bool(true)));
+        assert_eq!(read(ControlId::RfPower), Some(ControlValue::U8(255)));
+        assert_eq!(read(ControlId::Split), Some(ControlValue::Bool(true)));
+        assert_eq!(read(ControlId::Agc), Some(ControlValue::U8(4)));
+        assert_eq!(
+            read(ControlId::NoiseReduction),
+            Some(ControlValue::Bool(true))
+        );
+        assert_eq!(
+            read(ControlId::NoiseReductionLevel),
+            Some(ControlValue::U8(7))
+        );
+
+        for (id, expected) in [
+            (MeterId::Signal, 128),
+            (MeterId::Compression, 33),
+            (MeterId::Alc, 44),
+            (MeterId::Power, 55),
+            (MeterId::Swr, 66),
+            (MeterId::Current, 77),
+            (MeterId::Voltage, 88),
+        ] {
+            assert_eq!(
+                futures::executor::block_on(radio.get_meter(id)).unwrap(),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn core_control_writes_match_documented_command_fields() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            ScriptedTransport {
+                input: Vec::new(),
+                output: output.clone(),
+            },
+        );
+        let write = |id, value| {
+            futures::executor::block_on(radio.set_control(id, value)).unwrap();
+        };
+        write(ControlId::AfGain, ControlValue::U8(128));
+        write(ControlId::RfGain, ControlValue::U8(255));
+        write(ControlId::Squelch, ControlValue::U8(255));
+        write(ControlId::Preamp, ControlValue::U8(2));
+        write(ControlId::Attenuator, ControlValue::U8(3));
+        write(ControlId::NoiseBlanker, ControlValue::Bool(true));
+        write(ControlId::Notch, ControlValue::Bool(true));
+        write(ControlId::ManualNotch, ControlValue::Bool(true));
+        write(ControlId::Filter, ControlValue::U8(12));
+        write(ControlId::Rit, ControlValue::Bool(true));
+        write(ControlId::Xit, ControlValue::Bool(true));
+        write(ControlId::Vfo, ControlValue::Vfo(1));
+        write(ControlId::Tuner, ControlValue::Bool(true));
+        write(ControlId::RfPower, ControlValue::U8(255));
+        write(ControlId::Split, ControlValue::Bool(true));
+        write(ControlId::Agc, ControlValue::U8(4));
+        write(ControlId::NoiseReduction, ControlValue::Bool(true));
+        write(ControlId::NoiseReductionLevel, ControlValue::U8(7));
+        assert_eq!(
+            &*output.lock().unwrap(),
+            b"AG0128;RG0255;SQ0100;PA02;RA03;NB01;BC01;BP00001;SH0012;RT1;XT1;VS1;AC001;PC100;ST1;GT04;NR01;RL007;"
+        );
+
+        assert!(futures::executor::block_on(
+            radio.set_control(ControlId::Preamp, ControlValue::U8(3),)
+        )
+        .is_err());
+        assert!(futures::executor::block_on(
+            radio.set_control(ControlId::Attenuator, ControlValue::U8(4),)
+        )
+        .is_err());
+        assert!(futures::executor::block_on(
+            radio.set_control(ControlId::NoiseReductionLevel, ControlValue::U8(0),)
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn live_queries_skip_unsolicited_frames_and_keep_their_response() {
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            ScriptedTransport {
+                input: b"EX0303101;FA014074000;VS1;FB014250000;".to_vec(),
+                output: Arc::new(Mutex::new(Vec::new())),
+            },
+        );
+        let subscription = radio.event_router.subscribe();
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        assert_eq!(
+            subscription.drain(),
+            vec![RadioEvent::FrequencyChanged {
+                frequency_hz: 14_074_000
+            }]
+        );
+    }
+
+    #[test]
+    fn transport_failures_are_reported_and_pending_frames_are_cleared() {
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            FailingTransport,
+        );
+        assert!(radio.query_raw("VS", None).is_err());
+        assert!(radio.transport.lock().unwrap().pending.is_empty());
+    }
+
+    #[test]
+    fn modern_mode_table_matches_manual_receiver_codes() {
+        for profile in [
+            &FT710_PROFILE,
+            &FTDX10_PROFILE,
+            &FTDX101D_PROFILE,
+            &FTDX101MP_PROFILE,
+        ] {
+            for (code, mode) in [
+                ('1', Mode::Lsb),
+                ('2', Mode::Usb),
+                ('3', Mode::Cw),
+                ('4', Mode::Fm),
+                ('5', Mode::Am),
+                ('6', Mode::Rtty),
+                ('7', Mode::CwReverse),
+                ('9', Mode::RttyReverse),
+                ('B', Mode::Fm),
+                ('C', Mode::Data),
+                ('D', Mode::Am),
+                ('E', Mode::Data),
+                ('F', Mode::Data),
+            ] {
+                assert_eq!(profile.decode_mode(code).unwrap(), mode);
+            }
+        }
+        assert_eq!(FT991A_PROFILE.decode_mode('E').unwrap(), Mode::Data);
+        assert!(FT991A_PROFILE.decode_mode('F').is_err());
+    }
+
+    #[test]
+    fn manual_meter_selectors_are_preserved() {
+        for selector in 1..=8 {
+            let frame = format!("RM{selector:03};");
+            assert_eq!(parse_payload(frame.as_bytes(), "RM").unwrap(), &frame[2..5]);
+        }
     }
 
     #[test]
