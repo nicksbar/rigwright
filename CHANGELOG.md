@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased — Structured repeater and channel controls
+## 0.1.14 — Icom capability consolidation and repeater duplex controls
+
+- Promote the common Icom CI-V control definitions and meter selectors into
+  the shared profile/generic driver layer.
+- Complete live Icom duplex repeater state: read/write offset frequency via
+  `0C`/`0D` and simplex/DUP−/DUP+ state via `0F`.
+- Keep IC-7300-specific scope geometry, limits, and exceptional controls in
+  its model profile.
+- Document the Icom IQ boundary: IC-7300 CI-V scope is supported, while raw
+  USB IQ remains unavailable on that model.
 
 - Add protocol-neutral typed values for CTCSS tone mode/index, repeater shift,
   memory channels, and validated DTMF sequences.

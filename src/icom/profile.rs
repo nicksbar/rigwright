@@ -1,6 +1,7 @@
 //! Shared declarative profiles for Icom CI-V models.
 
 use crate::controls::ControlId;
+use crate::hal_types::MeterId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlEncoding {
@@ -28,6 +29,94 @@ pub struct ControlSpec {
     pub command_prefix: &'static [u8],
     /// Encoding used for the value following the command bytes.
     pub encoding: ControlEncoding,
+}
+
+/// CI-V controls shared by the profiled Icom families. Model modules contain
+/// only exceptions and model-specific ranges.
+pub const COMMON_CONTROLS: &[ControlSpec] = &[
+    ControlSpec {
+        id: ControlId::Rit,
+        command_prefix: &[0x21, 0x01],
+        encoding: ControlEncoding::Bool,
+    },
+    ControlSpec {
+        id: ControlId::AfGain,
+        command_prefix: &[0x14, 0x01],
+        encoding: ControlEncoding::Level255Bcd,
+    },
+    ControlSpec {
+        id: ControlId::RfGain,
+        command_prefix: &[0x14, 0x02],
+        encoding: ControlEncoding::Level255Bcd,
+    },
+    ControlSpec {
+        id: ControlId::Squelch,
+        command_prefix: &[0x14, 0x03],
+        encoding: ControlEncoding::Level255Bcd,
+    },
+    ControlSpec {
+        id: ControlId::RfPower,
+        command_prefix: &[0x14, 0x0A],
+        encoding: ControlEncoding::Level255Bcd,
+    },
+    ControlSpec {
+        id: ControlId::Preamp,
+        command_prefix: &[0x16, 0x02],
+        encoding: ControlEncoding::U8,
+    },
+    ControlSpec {
+        id: ControlId::Attenuator,
+        command_prefix: &[0x11],
+        encoding: ControlEncoding::U8,
+    },
+    ControlSpec {
+        id: ControlId::NoiseBlanker,
+        command_prefix: &[0x16, 0x22],
+        encoding: ControlEncoding::Bool,
+    },
+    ControlSpec {
+        id: ControlId::NoiseReduction,
+        command_prefix: &[0x16, 0x40],
+        encoding: ControlEncoding::Bool,
+    },
+    ControlSpec {
+        id: ControlId::IpPlus,
+        command_prefix: &[0x1A, 0x07],
+        encoding: ControlEncoding::Bool,
+    },
+    ControlSpec {
+        id: ControlId::Notch,
+        command_prefix: &[0x16, 0x41],
+        encoding: ControlEncoding::Bool,
+    },
+    ControlSpec {
+        id: ControlId::ManualNotch,
+        command_prefix: &[0x16, 0x48],
+        encoding: ControlEncoding::Bool,
+    },
+    ControlSpec {
+        id: ControlId::Tuner,
+        command_prefix: &[0x1C, 0x01],
+        encoding: ControlEncoding::Bool,
+    },
+    ControlSpec {
+        id: ControlId::Split,
+        command_prefix: &[0x0F],
+        encoding: ControlEncoding::Bool,
+    },
+];
+
+pub(crate) fn meter_command_prefix(id: MeterId) -> &'static [u8] {
+    match id {
+        MeterId::Signal => &[0x15, 0x02],
+        MeterId::Power => &[0x15, 0x11],
+        MeterId::Swr => &[0x15, 0x12],
+        MeterId::Alc => &[0x15, 0x13],
+        MeterId::Compression => &[0x15, 0x14],
+        MeterId::Voltage => &[0x15, 0x15],
+        MeterId::Current => &[0x15, 0x16],
+        MeterId::Temperature => &[0x15, 0x17],
+    }
 }
 
 /// CI-V command layout for selecting the active main/sub receiver.
@@ -91,7 +180,8 @@ pub struct IcomCivProfile {
     pub attenuator_values: &'static [u8],
     /// Highest valid preamp level for this model.
     pub preamp_max_level: u8,
-    /// Whether the model exposes documented I/Q output.
+    /// Whether the model exposes documented I/Q output. This is protocol/model
+    /// metadata only; it does not claim that Rigwright has an openable stream.
     pub supports_iq_output: bool,
 }
 
@@ -102,7 +192,10 @@ impl IcomCivProfile {
             .any(|&(low, high)| (low..=high).contains(&hz))
     }
     pub fn control(self, id: ControlId) -> Option<&'static ControlSpec> {
-        self.controls.iter().find(|spec| spec.id == id)
+        self.controls
+            .iter()
+            .find(|spec| spec.id == id)
+            .or_else(|| COMMON_CONTROLS.iter().find(|spec| spec.id == id))
     }
 }
 
@@ -214,6 +307,40 @@ mod tests {
                 &[0x16, 0x48]
             );
         }
+    }
+
+    #[test]
+    fn every_profile_inherits_common_control_and_meter_commands() {
+        let common = [
+            ControlId::Rit,
+            ControlId::AfGain,
+            ControlId::RfGain,
+            ControlId::Squelch,
+            ControlId::RfPower,
+            ControlId::Preamp,
+            ControlId::Attenuator,
+            ControlId::NoiseBlanker,
+            ControlId::NoiseReduction,
+            ControlId::IpPlus,
+            ControlId::Notch,
+            ControlId::ManualNotch,
+            ControlId::Tuner,
+            ControlId::Split,
+        ];
+        for model in [
+            IcomCivModel::Ic705,
+            IcomCivModel::Ic7300,
+            IcomCivModel::Ic7610,
+            IcomCivModel::Ic9700,
+        ] {
+            let profile = profile_for_model(model);
+            for id in common {
+                assert!(profile.control(id).is_some(), "{model:?} missing {id:?}");
+            }
+        }
+        assert_eq!(meter_command_prefix(MeterId::Signal), &[0x15, 0x02]);
+        assert_eq!(meter_command_prefix(MeterId::Swr), &[0x15, 0x12]);
+        assert_eq!(meter_command_prefix(MeterId::Temperature), &[0x15, 0x17]);
     }
 
     #[test]

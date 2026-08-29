@@ -12,8 +12,8 @@ use std::{
     time::Instant,
 };
 
-use super::profile::profile_for_model;
 use super::profile::ControlEncoding;
+use super::profile::{meter_command_prefix, profile_for_model};
 use crate::events::{RadioEvent, RadioEventRouter, RadioEventSubscription};
 pub use crate::hal_types::{BaseMode, Mode, OperatingMode};
 use crate::hal_types::{
@@ -576,9 +576,11 @@ impl IcomCiVRadio {
         };
         let response = self.transact(&[0x1B, 0x00], true)?;
         let data = response_data_after_prefix(&response, &[0x1B, 0x00])?;
+        let shift = self.get_repeater_shift()?;
+        let offset_hz = self.get_duplex_offset_hz()?;
         Ok(RepeaterSettings {
-            shift: RepeaterShift::Simplex,
-            offset_hz: None,
+            shift,
+            offset_hz: Some(offset_hz),
             tone: ToneSettings {
                 mode,
                 index: 0,
@@ -596,7 +598,16 @@ impl IcomCiVRadio {
             .frequency_tenths_hz
             .context("Icom CI-V tone frequency is required")?;
         anyhow::ensure!(frequency <= 9999, "Icom tone frequency exceeds CI-V range");
+        let offset_hz = settings.offset_hz.unwrap_or_default();
+        anyhow::ensure!(
+            offset_hz <= 999_999_999,
+            "Icom duplex offset must be no more than 999999999 Hz"
+        );
         let encoded = encode_tone_frequency(frequency);
+        let mut offset_payload = vec![0x0D];
+        offset_payload.extend_from_slice(&encode_civ_frequency_bcd(u64::from(offset_hz)));
+        self.transact_ack(&offset_payload)?;
+        self.set_repeater_shift(settings.shift)?;
         self.transact_ack(&[0x1B, 0x00, encoded[0], encoded[1], encoded[2]])?;
         self.transact_ack(&[0x1B, 0x01, encoded[0], encoded[1], encoded[2]])?;
         self.transact_ack(&[
@@ -612,6 +623,23 @@ impl IcomCiVRadio {
             0x43,
             u8::from(matches!(settings.tone.mode, ToneMode::EncodeDecode)),
         ])
+    }
+
+    fn get_repeater_shift(&self) -> Result<RepeaterShift> {
+        let response = self.transact(&[0x0F], true)?;
+        let data = response_data_after_prefix(&response, &[0x0F])?;
+        decode_repeater_shift(data.first().copied())
+    }
+
+    fn set_repeater_shift(&self, shift: RepeaterShift) -> Result<()> {
+        self.transact_ack(&[0x0F, encode_repeater_shift(shift)])
+    }
+
+    fn get_duplex_offset_hz(&self) -> Result<u32> {
+        let response = self.transact(&[0x0C], true)?;
+        let data = response_data_after_prefix(&response, &[0x0C])?;
+        let offset = decode_civ_frequency_bcd(data).context("invalid Icom duplex offset")?;
+        u32::try_from(offset).context("Icom duplex offset exceeds HAL range")
     }
 
     /// Read the signed RIT offset documented by the Icom CI-V `21 00`
@@ -1598,22 +1626,6 @@ impl IcomCiVRadio {
     }
 }
 
-/// IC-7300 documented meter query prefixes. Values use the common CI-V
-/// 0000..0255 packed-decimal response encoding; physical units are model/UI
-/// concerns and must not be inferred from the normalized byte alone.
-fn meter_command_prefix(id: MeterId) -> &'static [u8] {
-    match id {
-        MeterId::Signal => &[0x15, 0x02],
-        MeterId::Power => &[0x15, 0x11],
-        MeterId::Swr => &[0x15, 0x12],
-        MeterId::Alc => &[0x15, 0x13],
-        MeterId::Compression => &[0x15, 0x14],
-        MeterId::Voltage => &[0x15, 0x15],
-        MeterId::Current => &[0x15, 0x16],
-        MeterId::Temperature => &[0x15, 0x17],
-    }
-}
-
 fn parse_scope_waveform_segment(
     frame: &[u8],
     geometry: Option<crate::models::IcomScopeGeometry>,
@@ -2102,6 +2114,24 @@ fn decode_tone_frequency(data: &[u8]) -> Result<u32> {
     Ok(value)
 }
 
+fn decode_repeater_shift(value: Option<u8>) -> Result<RepeaterShift> {
+    match value {
+        Some(0x10) | Some(0x00) | Some(0x01) => Ok(RepeaterShift::Simplex),
+        Some(0x11) => Ok(RepeaterShift::Minus),
+        Some(0x12) => Ok(RepeaterShift::Plus),
+        Some(value) => anyhow::bail!("invalid Icom repeater shift: {value:#04x}"),
+        None => anyhow::bail!("missing Icom repeater shift"),
+    }
+}
+
+fn encode_repeater_shift(shift: RepeaterShift) -> u8 {
+    match shift {
+        RepeaterShift::Simplex => 0x10,
+        RepeaterShift::Minus => 0x11,
+        RepeaterShift::Plus => 0x12,
+    }
+}
+
 fn encode_memory_channel(channel: u16) -> [u8; 2] {
     [
         ((channel % 100 / 10) as u8) << 4 | (channel % 10) as u8,
@@ -2585,6 +2615,30 @@ mod tests {
             encode_civ_bcd_fixed(9_999, 4).unwrap(),
             vec![0x99, 0x99, 0, 0]
         );
+    }
+
+    #[test]
+    fn repeater_shift_mapping_matches_icom_ci_v_values() {
+        assert_eq!(
+            decode_repeater_shift(Some(0x10)).unwrap(),
+            RepeaterShift::Simplex
+        );
+        assert_eq!(
+            decode_repeater_shift(Some(0x11)).unwrap(),
+            RepeaterShift::Minus
+        );
+        assert_eq!(
+            decode_repeater_shift(Some(0x12)).unwrap(),
+            RepeaterShift::Plus
+        );
+        assert_eq!(
+            decode_repeater_shift(Some(0x00)).unwrap(),
+            RepeaterShift::Simplex
+        );
+        assert_eq!(encode_repeater_shift(RepeaterShift::Simplex), 0x10);
+        assert_eq!(encode_repeater_shift(RepeaterShift::Minus), 0x11);
+        assert_eq!(encode_repeater_shift(RepeaterShift::Plus), 0x12);
+        assert!(decode_repeater_shift(Some(0x13)).is_err());
     }
 
     #[test]

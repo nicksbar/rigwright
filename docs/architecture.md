@@ -139,6 +139,11 @@ root HAL. A driver must implement and test the actual waveform transport before
 advertising a scope stream. Geometry, metadata layout, and receiver selection
 are model-specific profile data.
 
+Current Icom status is deliberately split: the IC-7300 has a hardware-validated
+CI-V scope stream but no USB I/Q capability in its profile. The IC-7610 profile
+records documented USB I/Q output, while Rigwright 0.1.14 still provides only
+the shared sample decoder; no IC-7610 I/Q transport can be opened by the driver.
+
 All four currently profiled USB waveform formats place a scope selector first
 (fixed `00`, or main/sub), then current division and maximum division. The
 sample geometry still differs: IC-705/IC-7300/IC-9700 use 11 divisions and 475

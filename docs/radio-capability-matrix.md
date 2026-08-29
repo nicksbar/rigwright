@@ -31,7 +31,7 @@ units, or model behavior differ.
 | Raw protocol | `protocol_write_read` | H/P | H/P | H/P | H/P | Not a normal UI control |
 | Tuner start/status | `start_tuner`, `get_tuner_status` | H/P/V for profiled Icoms | — | — | — | Q: tuner and SWR sweep workflow |
 | Spectrum waveform | backend-specific scope API | H/P; model geometry differs | — | — | — | Q where native scope is enabled |
-| I/Q stream | model/backend-specific | Shared I/Q sample block and interleaved PCM/float decoder; IC-7610 transport negotiation remains profile-owned | — | — | — | Not currently consumed |
+| I/Q stream | model/backend-specific | Shared I/Q sample block decoder only; IC-7610 documents USB I/Q output, but Rigwright does not yet own/open that transport | — | — | — | Not currently consumed |
 
 ### Universal HAL caveat
 
@@ -143,7 +143,7 @@ They are documented radio capabilities, but currently have no safe common
 
 | Surface | Manual coverage | Current Rigwright status | QSONaut status | Why it remains open |
 |---|---|---|---|---|
-| RIT/XIT offset and enable | All modern vendor families | Icom RIT enable plus signed RIT offset read/write implemented; Icom XIT enable implemented where documented | Not used | XIT offset and non-Icom payloads remain family-specific |
+| RIT/XIT offset and enable | All modern vendor families | Icom RIT enable plus signed RIT offset read/write implemented; Icom XIT enable implemented where documented, with no separate XIT offset command documented | Not used | XIT offset and non-Icom payloads remain family-specific |
 | Yaesu AF/RF gain and squelch | Modern CAT manuals | Not typed | UI cannot safely use them through Yaesu | Query/set field formats need profile commands and ranges |
 | Yaesu NB, filter, tuner, antenna selection | Modern CAT manuals | Not typed | Not used for modern Yaesu | Several commands are mode/model dependent |
 | Yaesu ALC/compression/current/voltage presentation | Modern CAT manuals | Meter IDs implemented | Not displayed | QSONaut must add polling, labels, and TX safety policy |
@@ -152,11 +152,11 @@ They are documented radio capabilities, but currently have no safe common
 | Kenwood AF/RF gain, squelch, AGC, NB, NR | PC command references | Not typed | Not used | TS-590SG, TS-890S, and TS-2000 command families differ |
 | Kenwood ALC/compression/current/voltage/temperature | PC command references | Not typed except signal/SWR | Not displayed | RM selector, range, and response width differ by model |
 | Memory/channel operations | Vendor manuals | Icom `08`/`09` selection and model-specific `1A 00` records: HF mode/data/CTCSS/name plus IC-705/IC-9700 band, duplex, DTCS, offset, and 16-char name fields; Yaesu FTDX10 `MC`/`MR`/`MT`; Kenwood TS-890 `FR`/`MN` plus `MA0` records | Not used | Icom program-scan, call, DV routing, and satellite records remain separate surfaces |
-| Repeater tone/shift | IC-7300, IC-705, IC-9700 and Yaesu FTDX10 CAT manuals | Icom CTCSS flags/frequencies, VHF/UHF DTCS memory fields, duplex shift/offset memory fields, and signed RIT offset; FTDX10 `CN`/`CT`/`OS`; Kenwood `CN`/`CT` tone | Not used | Live Icom DTCS/duplex command APIs still need to be surfaced separately from memory records |
+| Repeater tone/shift | IC-7300, IC-705, IC-9700 and Yaesu FTDX10 CAT manuals | Icom CTCSS flags/frequencies, live duplex shift/offset (`0C`/`0D` and `0F`), VHF/UHF DTCS memory fields, and signed RIT offset; FTDX10 `CN`/`CT`/`OS`; Kenwood `CN`/`CT` tone | Not used | Icom live DTCS and model-specific auto-repeater settings remain separate surfaces |
 | DTMF transmission | Vendor manuals | Validated HAL type/API; Icom references document DTMF speed but no CI-V digit-transmit payload | Not used | Do not confuse Icom voice-memory command `28` with DTMF transmission |
 | Antenna selection | Icom IC-7610 CI-V manual | IC-7610 `12` antenna selector is now profile-exposed as a typed U8 control; antenna-memory bands remain untyped | Not used | Antenna-memory records are frequency-range keyed |
 | Band-stack and quick-memory operations | Vendor manuals | Not typed | Not used | Requires model-specific state and persistence semantics |
-| Scope configuration and I/Q streaming | Icom manuals, some Yaesu manuals | Generic Icom scope configuration API plus shared I/Q sample decoding; raw I/Q transport remains model-specific | Scope use is partial; I/Q not consumed | Waveform transport and receiver geometry are model-specific |
+| Scope configuration and I/Q streaming | Icom manuals, some Yaesu manuals | Generic Icom scope configuration API plus shared I/Q sample decoding; IC-7300 has CI-V scope only; IC-7610 IQ is documented metadata only until a driver transport exists | Scope use is partial; I/Q not consumed | Waveform transport and receiver geometry are model-specific |
 | Auto-information subscriptions | Vendor command references | Icom CI-V lifecycle-managed event router with typed frequency/mode/PTT/receiver events and raw fallback | Not yet consumed as the general UI event source | Continuous background read ownership and vendor subscription commands remain application/profile work |
 
 ## QSONaut consumption summary

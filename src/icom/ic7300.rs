@@ -6,63 +6,9 @@ use anyhow::Result;
 
 const FREQUENCY_RANGES: &[(u64, u64)] = &[(30_000, 74_800_000)];
 const CONTROLS: &[ControlSpec] = &[
-    // `0x21 0x01`: RIT enable/disable; `0x21 0x02`: XIT enable/disable.
-    ControlSpec {
-        id: ControlId::Rit,
-        command_prefix: &[0x21, 0x01],
-        encoding: ControlEncoding::Bool,
-    },
     ControlSpec {
         id: ControlId::Xit,
         command_prefix: &[0x21, 0x02],
-        encoding: ControlEncoding::Bool,
-    },
-    // `0x14 0x01`: AF/audio gain, packed decimal level 0..255.
-    ControlSpec {
-        id: ControlId::AfGain,
-        command_prefix: &[0x14, 0x01],
-        encoding: ControlEncoding::Level255Bcd,
-    },
-    // `0x14 0x02`: RF gain, packed decimal level 0..255.
-    ControlSpec {
-        id: ControlId::RfGain,
-        command_prefix: &[0x14, 0x02],
-        encoding: ControlEncoding::Level255Bcd,
-    },
-    // `0x14 0x03`: squelch threshold, packed decimal level 0..255.
-    ControlSpec {
-        id: ControlId::Squelch,
-        command_prefix: &[0x14, 0x03],
-        encoding: ControlEncoding::Level255Bcd,
-    },
-    // `0x14 0x0A`: RF transmit power, packed decimal level 0..255.
-    ControlSpec {
-        id: ControlId::RfPower,
-        command_prefix: &[0x14, 0x0A],
-        encoding: ControlEncoding::Level255Bcd,
-    },
-    // `0x16 0x02`: internal preamplifier selection; values are model-defined.
-    ControlSpec {
-        id: ControlId::Preamp,
-        command_prefix: &[0x16, 0x02],
-        encoding: ControlEncoding::U8,
-    },
-    // `0x11`: attenuator selection in dB; allowed values are below.
-    ControlSpec {
-        id: ControlId::Attenuator,
-        command_prefix: &[0x11],
-        encoding: ControlEncoding::U8,
-    },
-    // `0x16 0x22`: noise blanker enable/disable.
-    ControlSpec {
-        id: ControlId::NoiseBlanker,
-        command_prefix: &[0x16, 0x22],
-        encoding: ControlEncoding::Bool,
-    },
-    // `0x16 0x40`: noise reduction enable/disable.
-    ControlSpec {
-        id: ControlId::NoiseReduction,
-        command_prefix: &[0x16, 0x40],
         encoding: ControlEncoding::Bool,
     },
     ControlSpec {
@@ -70,44 +16,16 @@ const CONTROLS: &[ControlSpec] = &[
         command_prefix: &[0x14, 0x06],
         encoding: ControlEncoding::Level255Bcd,
     },
-    // `0x1A 0x07`: IP Plus function setting.
-    ControlSpec {
-        id: ControlId::IpPlus,
-        command_prefix: &[0x1A, 0x07],
-        encoding: ControlEncoding::Bool,
-    },
-    // `0x16 0x41`: auto-notch function; manual-notch selection is handled by the driver.
-    ControlSpec {
-        id: ControlId::Notch,
-        command_prefix: &[0x16, 0x41],
-        encoding: ControlEncoding::Bool,
-    },
-    ControlSpec {
-        id: ControlId::ManualNotch,
-        command_prefix: &[0x16, 0x48],
-        encoding: ControlEncoding::Bool,
-    },
     ControlSpec {
         id: ControlId::ManualNotchPosition,
         command_prefix: &[0x14, 0x0D],
         encoding: ControlEncoding::Level255Bcd,
-    },
-    ControlSpec {
-        id: ControlId::Tuner,
-        command_prefix: &[0x1C, 0x01],
-        encoding: ControlEncoding::Bool,
     },
     // `0x16 0x12`: automatic gain control preset selection.
     ControlSpec {
         id: ControlId::Agc,
         command_prefix: &[0x16, 0x12],
         encoding: ControlEncoding::U8,
-    },
-    // `0x0F`: split operation enable/disable (the value is not a subcommand).
-    ControlSpec {
-        id: ControlId::Split,
-        command_prefix: &[0x0F],
-        encoding: ControlEncoding::Bool,
     },
 ];
 /// IC-7300 documented attenuator settings, in dB.
