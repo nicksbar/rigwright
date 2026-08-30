@@ -148,7 +148,7 @@ are model-specific profile data.
 
 Current Icom status is deliberately split: the IC-7300 has a hardware-validated
 CI-V scope stream but no USB I/Q capability in its profile. The IC-7610 profile
-records documented USB I/Q output, while Rigwright 0.1.14 still provides only
+records documented USB I/Q output, while Rigwright 0.1.15 still provides only
 the shared sample decoder; no IC-7610 I/Q transport can be opened by the driver.
 
 All four currently profiled USB waveform formats place a scope selector first

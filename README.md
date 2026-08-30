@@ -1,6 +1,6 @@
 # Rigwright
 
-[![Version](https://img.shields.io/badge/version-v0.1.14-2ea44f)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-v0.1.15-2ea44f)](Cargo.toml)
 [![CI](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml)
 [![Release workflow](https://github.com/nicksbar/rigwright/actions/workflows/release.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/nicksbar/rigwright?display_name=tag&sort=semver)](https://github.com/nicksbar/rigwright/releases)
@@ -84,7 +84,7 @@ references.
 
 ```toml
 [dependencies]
-rigwright = "0.1.14"
+rigwright = "0.1.15"
 ```
 
 ```rust,no_run
@@ -204,8 +204,8 @@ enforced by `scripts/check-icom-coverage.sh` and currently
 requires at least 85% Icom, 90% HAL, 80% Android, 90% transport, 85% driver,
 95% IQ, 90% rigctld, 90% DX Lab, 80% Kenwood CAT, 90% Kenwood profile, 85%
 modern Yaesu profile, and 85% classic Yaesu profile line coverage. The latest
-local run reached 85.05% overall line coverage, including 84.98% Icom CI-V,
-86.29% Kenwood CAT, 75.83% modern Yaesu CAT, 91.79% transport, and 90.09%
+local run reached 85.13% overall line coverage, including 84.98% Icom CI-V,
+86.29% Kenwood CAT, 76.74% modern Yaesu CAT, 91.79% transport, and 90.09%
 configured-driver dispatch coverage. The workflow badge reports whether these
 tests and gates pass; the uploaded LLVM report provides the detailed source,
 function, and line view.
