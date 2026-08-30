@@ -142,11 +142,12 @@ documented ratio anchors, but those anchors are not shared by Yaesu or Kenwood.
 | `Compression` | R/P via `15 14`; IC-7300 V | R/P via `RM3` | M, not typed | R/P TS-890S via `RM3` | Q normalized meter panel where advertised |
 | `Current` | R/P via `15 16`; IC-7300 V | R/P via `RM7` | M, not typed | R/P TS-890S via `RM4` | Q normalized meter panel where advertised |
 | `Voltage` | R/P via `15 15`; IC-7300 V | R/P via `RM8` | M, not typed | R/P TS-890S via `RM5` | Q normalized meter panel where advertised |
-| `Temperature` | R/P via `15 17`; IC-7300 V | Manual/protocol surface varies; intentionally not profiled | M, not typed | R/P TS-890S via `RM6` | Q only if a future profile advertises it |
+| `Temperature` | Manual/protocol surface varies; intentionally not profiled | R/P FTDX101D/MP via `RM9`; not exposed by FT-710, FTDX10, or FT-991A | M, not typed | R/P TS-890S via `RM6` | Q normalized meter panel where advertised |
 
 Yaesu `RM` selector meanings are documented by the modern CAT manuals: `1`
 signal, `3` compression, `4` ALC, `5` power, `6` SWR, `7` current, and `8`
-voltage. Kenwood RM selector meanings differ by model; TS-590SG and TS-2000
+voltage. The FTDX101D/MP additionally document `9` for temperature; the
+other profiled modern Yaesu models do not. Kenwood RM selector meanings differ by model; TS-590SG and TS-2000
 use one SWR selector while TS-890S uses another, so the profile owns the
 selector and native meter maximum.
 

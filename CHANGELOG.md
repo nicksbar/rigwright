@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.16 — model-correct meter capabilities
+
+- Correct the IC-7300 capability profile to omit temperature, which is
+  available on the radio's front-panel meter but has no documented CI-V
+  remote-meter command (#83).
+- Expose the documented `RM9` temperature meter for FTDX101D and FTDX101MP,
+  while keeping it unavailable on FT-710, FTDX10, and FT-991A.
+- Add regression coverage and refresh the capability documentation for the
+  modern Yaesu, classic Yaesu, and Kenwood meter surfaces.
+
 ## 0.1.15 — Icom IP+ profiles and resilient Yaesu RTS probing
 
 - Correct Icom IP+ capability ownership: expose the documented `1A 07`

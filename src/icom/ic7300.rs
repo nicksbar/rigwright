@@ -52,7 +52,6 @@ const METERS: &[MeterId] = &[
     MeterId::Compression,
     MeterId::Voltage,
     MeterId::Current,
-    MeterId::Temperature,
 ];
 
 pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {

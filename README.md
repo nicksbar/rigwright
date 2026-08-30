@@ -1,6 +1,6 @@
 # Rigwright
 
-[![Version](https://img.shields.io/badge/version-v0.1.15-2ea44f)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-v0.1.16-2ea44f)](Cargo.toml)
 [![CI](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml)
 [![Release workflow](https://github.com/nicksbar/rigwright/actions/workflows/release.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/nicksbar/rigwright?display_name=tag&sort=semver)](https://github.com/nicksbar/rigwright/releases)
@@ -84,7 +84,7 @@ references.
 
 ```toml
 [dependencies]
-rigwright = "0.1.15"
+rigwright = "0.1.16"
 ```
 
 ```rust,no_run
