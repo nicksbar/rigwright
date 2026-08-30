@@ -80,11 +80,6 @@ pub const COMMON_CONTROLS: &[ControlSpec] = &[
         encoding: ControlEncoding::Bool,
     },
     ControlSpec {
-        id: ControlId::IpPlus,
-        command_prefix: &[0x1A, 0x07],
-        encoding: ControlEncoding::Bool,
-    },
-    ControlSpec {
         id: ControlId::Notch,
         command_prefix: &[0x16, 0x41],
         encoding: ControlEncoding::Bool,
@@ -366,10 +361,14 @@ mod tests {
                     .command_prefix,
                 &[0x11]
             );
-            assert_eq!(
-                profile.control(ControlId::IpPlus).unwrap().command_prefix,
-                &[0x1A, 0x07]
-            );
+            if model != IcomCivModel::Ic705 {
+                assert_eq!(
+                    profile.control(ControlId::IpPlus).unwrap().command_prefix,
+                    &[0x1A, 0x07]
+                );
+            } else {
+                assert!(profile.control(ControlId::IpPlus).is_none());
+            }
             assert_eq!(
                 profile.control(ControlId::Notch).unwrap().command_prefix,
                 &[0x16, 0x41]
@@ -396,7 +395,6 @@ mod tests {
             ControlId::Attenuator,
             ControlId::NoiseBlanker,
             ControlId::NoiseReduction,
-            ControlId::IpPlus,
             ControlId::Notch,
             ControlId::ManualNotch,
             ControlId::Tuner,

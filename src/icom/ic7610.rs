@@ -62,6 +62,11 @@ const CONTROLS: &[ControlSpec] = &[
         command_prefix: &[0x12],
         encoding: ControlEncoding::U8,
     },
+    ControlSpec {
+        id: ControlId::IpPlus,
+        command_prefix: &[0x1A, 0x07],
+        encoding: ControlEncoding::Bool,
+    },
 ];
 const ATTENUATOR_VALUES: &[u8] = &[0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45];
 const SCOPE: ScopeSpec = ScopeSpec {
