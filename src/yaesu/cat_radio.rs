@@ -798,7 +798,7 @@ impl Radio for YaesuCatRadio {
             MeterId::Swr => Ok(Some(self.get_yaesu_meter(6)?)),
             MeterId::Current => Ok(Some(self.get_yaesu_meter(7)?)),
             MeterId::Voltage => Ok(Some(self.get_yaesu_meter(8)?)),
-            MeterId::Temperature => bail!("Yaesu CAT temperature meter is not profiled"),
+            MeterId::Temperature => Ok(Some(self.get_yaesu_meter(9)?)),
         }
     }
 
@@ -921,7 +921,10 @@ impl Radio for YaesuCatRadio {
     }
 
     fn supports_meter(&self, id: MeterId) -> bool {
-        self.model().is_some() && !matches!(id, MeterId::Temperature)
+        self.model().is_some_and(|model| {
+            !matches!(id, MeterId::Temperature)
+                || matches!(model, YaesuCatModel::Ftdx101D | YaesuCatModel::Ftdx101Mp)
+        })
     }
 
     fn supports_control(&self, id: ControlId) -> bool {
@@ -1580,6 +1583,33 @@ mod tests {
     }
 
     #[test]
+    fn ftdx101_exposes_the_documented_temperature_meter() {
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx101D),
+            38_400,
+            ScriptedTransport {
+                input: b"RM9007000;".to_vec(),
+                output: Arc::new(Mutex::new(Vec::new())),
+            },
+        );
+
+        assert!(radio.supports_meter(MeterId::Temperature));
+        assert_eq!(
+            futures::executor::block_on(radio.get_meter(MeterId::Temperature)).unwrap(),
+            Some(7)
+        );
+        for model in [
+            YaesuCatModel::Ft710,
+            YaesuCatModel::Ftdx10,
+            YaesuCatModel::Ft991A,
+        ] {
+            assert!(!YaesuCatRadio::new_for_model(model, "test", 38_400)
+                .unwrap()
+                .supports_meter(MeterId::Temperature));
+        }
+    }
+
+    #[test]
     fn core_control_and_meter_reads_decode_documented_replies() {
         let radio = YaesuCatRadio::with_external_transport(
             Some(YaesuCatModel::Ftdx10),
@@ -1751,7 +1781,7 @@ mod tests {
 
     #[test]
     fn manual_meter_selectors_are_preserved() {
-        for selector in 1..=8 {
+        for selector in 1..=9 {
             let frame = format!("RM{selector:03};");
             assert_eq!(parse_payload(frame.as_bytes(), "RM").unwrap(), &frame[2..5]);
         }

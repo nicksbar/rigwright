@@ -782,7 +782,7 @@ mod tests {
         assert!(icom.supports_meter(crate::MeterId::Compression));
         assert!(icom.supports_meter(crate::MeterId::Voltage));
         assert!(icom.supports_meter(crate::MeterId::Current));
-        assert!(icom.supports_meter(crate::MeterId::Temperature));
+        assert!(!icom.supports_meter(crate::MeterId::Temperature));
         assert!(icom.event_router().is_some());
 
         let ic9700 = open_model("IC-9700", "/dev/null", 115_200, 0xE0).unwrap();

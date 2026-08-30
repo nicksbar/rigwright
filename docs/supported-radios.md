@@ -115,15 +115,17 @@ shared event router. PTT writes are verified on the two models with pollable
 radios.
 All normalized meters use the HAL's 0..255 meter-deflection scale. Yaesu CAT
 profiles expose signal, power, SWR, ALC, compression, current, and voltage
-through the documented `RM1` and `RM3`..`RM8` selectors, plus typed AGC,
+through the documented `RM1` and `RM3`..`RM8` selectors; FTDX101D/MP also
+expose temperature through `RM9`. Other profiled modern Yaesu models do not
+advertise temperature. Profiles also expose typed AGC,
 noise-reduction, and noise-reduction-level controls. Kenwood profiles expose
 normalized signal, TX power, and profile-correct SWR; TS-590SG additionally
 exposes ALC and compression, while TS-890S additionally exposes ALC,
 compression, current, voltage, and temperature. SWR telemetry uses
 the HAL's normalized 0..255 meter-deflection scale. The
 Kenwood profiles query the documented `RM` SWR meter and normalize their
-model-specific 0..30 or 0..70 dot ranges. Modern Yaesu CAT profiles query
-`RM6`, whose documented response is already 0..255. This is normalized meter
+model-specific 0..30 or 0..70 dot ranges. Modern Yaesu CAT profiles query the
+documented `RM` selectors and already return 0..255 values. This is normalized meter
 deflection, not a universal physical SWR-ratio conversion; the manuals do not
 define enough cross-vendor ratio calibration to infer one safely.
 
