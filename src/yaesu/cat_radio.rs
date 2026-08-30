@@ -419,17 +419,25 @@ impl YaesuCatRadio {
             Err(first_error) => {
                 // If CAT RTS is already enabled on the radio, a no-flow
                 // control probe may never receive a response. Reopen with
-                // RTS/CTS and retry the menu read. Do not hide a second
-                // failure: without a valid menu response, the driver cannot
-                // safely claim that detection completed.
+                // RTS/CTS and retry the menu read. Some FTDX10 firmware and
+                // USB bridge combinations do not answer this EX menu query,
+                // even though ordinary CAT commands still work. In that
+                // case the probe is advisory: keep the bounded retry, cache
+                // detection as unavailable, and let the requested command
+                // establish whether the CAT link is usable.
                 self.enable_hardware_flow_control().with_context(|| {
                     format!("failed to apply Yaesu CAT RTS/CTS after initial probe: {first_error}")
                 })?;
-                self.query("EX", Some("030310"), 7).with_context(|| {
-                    format!(
-                        "Yaesu CAT RTS probe failed with and without hardware flow control: {first_error}"
-                    )
-                })?
+                match self.query("EX", Some("030310"), 7) {
+                    Ok(response) => response,
+                    Err(_) => {
+                        *self
+                            .cat_rts_detected
+                            .lock()
+                            .map_err(|_| anyhow!("Yaesu CAT RTS state lock poisoned"))? = true;
+                        return Ok(());
+                    }
+                }
             }
         };
         let payload = parse_payload(&response, "EX")?;
@@ -1340,6 +1348,53 @@ mod tests {
         }
     }
 
+    struct UnansweredRtsProbeTransport {
+        input: Vec<u8>,
+        output: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Read for UnansweredRtsProbeTransport {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.input.is_empty() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "scripted timeout",
+                ));
+            }
+            let count = buffer.len().min(self.input.len());
+            buffer[..count].copy_from_slice(&self.input[..count]);
+            self.input.drain(..count);
+            Ok(count)
+        }
+    }
+
+    impl Write for UnansweredRtsProbeTransport {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.output.lock().unwrap().extend_from_slice(buffer);
+            match buffer {
+                b"VS;" => self.input.extend_from_slice(b"VS1;"),
+                b"FB;" => self.input.extend_from_slice(b"FB014250000;"),
+                b"FA;" => self.input.extend_from_slice(b"FA014250000;"),
+                _ => {}
+            }
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl crate::transport::RadioTransport for UnansweredRtsProbeTransport {
+        fn set_timeout(&mut self, _timeout: std::time::Duration) -> std::io::Result<()> {
+            Ok(())
+        }
+
+        fn set_hardware_flow_control(&mut self, _enabled: bool) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
     struct FailingTransport;
 
     impl Read for FailingTransport {
@@ -1487,6 +1542,25 @@ mod tests {
             14_250_000
         );
         assert_eq!(&*flow_control.lock().unwrap(), &[true]);
+    }
+
+    #[test]
+    fn ftdx10_unanswered_rts_probe_does_not_block_normal_cat_queries() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            UnansweredRtsProbeTransport {
+                input: Vec::new(),
+                output: Arc::clone(&output),
+            },
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        assert_eq!(&*output.lock().unwrap(), b"EX030310;EX030310;VS;FB;");
     }
 
     #[test]
