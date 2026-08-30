@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.15 — Icom IP+ profiles and resilient Yaesu RTS probing
+
+- Correct Icom IP+ capability ownership: expose the documented `1A 07`
+  control on the IC-7300, IC-7610, and IC-9700 profiles while keeping it
+  unavailable on the IC-705 profile.
+- Make FTDX10 CAT RTS detection advisory when the radio or USB bridge does
+  not answer the bounded menu probe, allowing ordinary CAT commands to
+  continue after the fallback flow-control attempt.
+- Add regression coverage for unanswered RTS probes and refresh the measured
+  README coverage snapshot to 85.13% overall, including 76.74% modern Yaesu
+  CAT coverage.
+
 ## 0.1.14 — Icom and Yaesu capability consolidation
 
 - Add repository ownership, Dependabot updates, an owner-specific MIT license
