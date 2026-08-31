@@ -114,8 +114,11 @@ radio.set_ptt(false).await?;
 # }
 ```
 
-Run the hardware probe with `cargo run --example ci_v_probe`. It currently uses
-`/dev/ttyUSB0` at 115200 baud; inspect the example before transmitting commands.
+Run the model-backed read-mostly hardware probe with
+`cargo run --example ci_v_probe -- /dev/ttyUSB0 115200`. Add `--exercise` to
+write back values already read and verify reversible setters. It never keys the
+transmitter or writes memories; tuner start and scope streaming are reported as
+operator-impacting and skipped.
 
 When the model is known, prefer a profile-backed constructor so Rigwright can
 validate documented ranges, modes, controls, and scope geometry:
@@ -171,6 +174,9 @@ interface. The driver configures 8N2 automatically. A read-only check is:
 ```text
 cargo run --example classic_yaesu_probe -- FT-857D /dev/ttyUSB0 4800
 ```
+
+Add `--exercise` to verify frequency, mode, split, and a double VFO toggle;
+PTT, CAT lock, and arbitrary raw writes remain skipped.
 
 The classic protocol has no identification command, so this probe can confirm
 responses but cannot prove that the configured model name is correct.
