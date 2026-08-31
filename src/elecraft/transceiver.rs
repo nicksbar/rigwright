@@ -105,6 +105,11 @@ impl ElecraftRadio {
         })
     }
 
+    fn query_with_response_prefix(&self, command: &str, response_prefix: &str) -> Result<Vec<u8>> {
+        self.transport
+            .query_with_response_prefix(command, response_prefix)
+    }
+
     fn set(&self, command: &str, parameter: &str) -> Result<()> {
         self.transport.set(command, parameter)
     }
@@ -424,12 +429,28 @@ impl Radio for ElecraftRadio {
             ControlId::Agc => "GT",
             ControlId::Filter => profile.filter_command,
             ControlId::Tuner => "AT",
+            ControlId::TuningStep => "VT$X",
             _ => return Ok(None),
         };
         if matches!(id, ControlId::Vfo) {
             let value = Self::parse_numeric(&self.query(command)?, command)?;
             anyhow::ensure!(value <= 1, "invalid Elecraft receive VFO");
             return Ok(Some(ControlValue::Vfo(value as u8)));
+        }
+        if id == ControlId::TuningStep {
+            let response = self.query_with_response_prefix("VT$X", "VT$")?;
+            let text = std::str::from_utf8(&response)?;
+            let payload = text
+                .strip_prefix("VT$")
+                .and_then(|value| value.strip_suffix(';'))
+                .context("unexpected Elecraft tuning-step response")?;
+            let value = payload
+                .chars()
+                .next()
+                .and_then(|value| value.to_digit(10))
+                .context("invalid Elecraft tuning-step response")?;
+            anyhow::ensure!(value <= 5, "Elecraft tuning-step index is out of range");
+            return Ok(Some(ControlValue::U8(value as u8)));
         }
         if matches!(id, ControlId::Rit | ControlId::Xit) {
             let (_, rit, xit) = Self::parse_if_state(&self.query(command)?)?;
@@ -495,6 +516,13 @@ impl Radio for ElecraftRadio {
                 ),
             (ControlId::Tuner, ControlValue::Bool(enabled)) if profile.supports_tuner => {
                 self.set("AT", if enabled { "2" } else { "1" })
+            }
+            (ControlId::TuningStep, ControlValue::U8(value))
+                if profile.supports_tuning_step && value <= 5 =>
+            {
+                let mode = self.get_mode().await?;
+                let mode_code = profile.encode_mode(mode)?;
+                self.set("VT$", &format!("{value}{mode_code}"))
             }
             (id @ (ControlId::Preamp | ControlId::Attenuator), ControlValue::U8(value)) => self
                 .set(
@@ -971,5 +999,25 @@ mod tests {
         assert_eq!(settings.offset_hz, Some(600_000));
         block_on(radio.set_repeater_settings(settings)).unwrap();
         assert_eq!(&*output.lock().unwrap(), b"RP;RP+00600;");
+    }
+
+    #[test]
+    fn k4_tuning_step_matches_vt_mode_qualified_frames() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K4),
+            9_600,
+            MemoryTransport {
+                input: b"VT$02;MD2;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            block_on(radio.get_control(ControlId::TuningStep)).unwrap(),
+            Some(ControlValue::U8(0))
+        );
+        block_on(radio.set_control(ControlId::TuningStep, ControlValue::U8(3))).unwrap();
+        assert_eq!(&*output.lock().unwrap(), b"VT$X;MD;VT$32;");
     }
 }

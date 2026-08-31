@@ -23,6 +23,8 @@
 - Implement K4 internal-tuner mode/status and explicit `TU3` start handling.
 - Implement K4 repeater shift/offset read/write through the documented `RP`
   command while rejecting unsupported tone fields.
+- Add the K4 mode-qualified `VT$` tuning-step control and response matching;
+  legacy-family step writes remain explicitly profile-gated.
 - Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
   outside this initial radio slice.
 

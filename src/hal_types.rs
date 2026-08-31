@@ -88,6 +88,8 @@ pub enum ControlId {
     ManualNotchPosition,
     DataMode,
     Filter,
+    /// Vendor-native tuning-step selector where the protocol exposes one.
+    TuningStep,
     Agc,
     Rit,
     Xit,

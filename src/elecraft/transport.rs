@@ -157,6 +157,16 @@ impl ElecraftTransport {
         self.transact_with_handler(&frame, Some(command.as_bytes()), on_unmatched)
     }
 
+    pub(crate) fn query_with_response_prefix(
+        &self,
+        command: &str,
+        response_prefix: &str,
+    ) -> Result<Vec<u8>> {
+        let mut frame = command.as_bytes().to_vec();
+        frame.push(b';');
+        self.transact(&frame, Some(response_prefix.as_bytes()))
+    }
+
     pub(crate) fn set(&self, command: &str, parameter: &str) -> Result<()> {
         let mut frame = command.as_bytes().to_vec();
         frame.extend_from_slice(parameter.as_bytes());

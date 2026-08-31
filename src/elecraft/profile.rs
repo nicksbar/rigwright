@@ -59,6 +59,7 @@ pub struct ElecraftProfile {
     pub supports_agc: bool,
     pub supports_tuner: bool,
     pub supports_repeater: bool,
+    pub supports_tuning_step: bool,
     pub filter_max_hz: Option<u16>,
     pub filter_command: &'static str,
     pub af_gain_max: Option<u16>,
@@ -113,6 +114,7 @@ impl ElecraftProfile {
             ControlId::Agc => self.supports_agc,
             ControlId::Filter => self.filter_max_hz.is_some(),
             ControlId::Tuner => self.supports_tuner,
+            ControlId::TuningStep => self.supports_tuning_step,
             ControlId::Squelch
             | ControlId::RfPower
             | ControlId::Vfo
