@@ -42,9 +42,14 @@ controls or meters until a concrete model profile is selected.
 
 ## Elecraft first implementation slice
 
-| Model profiles | Support level | Manual evidence |
-|---|---|---|
-| K2, KX2, KX3, K3, K3S, K4 | Framework | `KIO2 Pgmrs Ref rev E.pdf`, `K3S&K3&KX3&KX2 Pgmrs Ref, G5.pdf`, `K4 Programmer's Reference, rev. D5.pdf` |
+| Model profiles | Support level | Profile module | Manual evidence |
+|---|---|---|---|
+| K2 | Framework | `src/elecraft/k2.rs` | `KIO2 Pgmrs Ref rev E.pdf` |
+| KX2 | Framework | `src/elecraft/kx2.rs` | `K3S&K3&KX3&KX2 Pgmrs Ref, G5.pdf` |
+| KX3 | Framework | `src/elecraft/kx3.rs` | `K3S&K3&KX3&KX2 Pgmrs Ref, G5.pdf` |
+| K3 | Framework | `src/elecraft/k3.rs` | `K3S&K3&KX3&KX2 Pgmrs Ref, G5.pdf` |
+| K3S | Framework | `src/elecraft/k3s.rs` | `K3S&K3&KX3&KX2 Pgmrs Ref, G5.pdf` |
+| K4 | Framework | `src/elecraft/k4.rs` | `K4 Programmer's Reference, rev. D5.pdf` |
 
 | Operation | HAL surface | Elecraft status |
 |---|---|---:|
@@ -59,9 +64,11 @@ controls or meters until a concrete model profile is selected.
 
 Elecraft profile differences currently cover K2 versus K3-family mode tables,
 model-specific baud lists, conservative HF frequency ranges, and normalized
-S-meter limits. Auto-Info event routing is now available through the shared
-event router. K4 Ethernet/streaming, VFO-B selection, RF power, and the wider
-K3-family control surface remain open.
+S-meter limits. The model-specific declarations live in the six modules listed
+above; shared profile validation remains in `src/elecraft/profile.rs`.
+Auto-Info event routing is now available through the shared event router. K4
+Ethernet/streaming, VFO-B selection, RF power, and the wider K3-family control
+surface remain open.
 KH1 and P3/PX3/KAT/KPA/KXPA equipment are separate future profiles or station
 components and are not included in this row.
 

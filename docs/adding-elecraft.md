@@ -32,10 +32,12 @@ profile-owned.
 2. Add an `elecraft::transceiver` backend implementing `Radio`. Its model
    profile should describe command forms, frequency/mode fields, readback,
    baud options, VFO/subreceiver targeting, meters, and optional controls.
-3. Keep K2/KX2/KX3/K3/K3S/K4 profiles in declarative tables. Shared commands
-   belong in the backend; model applicability, widths, ranges, and exceptions
-   belong in profiles. K4 streaming and Ethernet should be optional transport
-   capabilities, not requirements of `Radio`.
+3. Keep each transceiver profile in its own focused module:
+   `src/elecraft/k2.rs`, `kx2.rs`, `kx3.rs`, `k3.rs`, `k3s.rs`, and `k4.rs`.
+   `profile.rs` contains only shared contracts and lookup; `transceiver.rs`
+   contains shared commands. Model applicability, widths, ranges, and
+   exceptions belong in the model files. K4 streaming and Ethernet should be
+   optional transport capabilities, not requirements of `Radio`.
 4. Treat KH1 as a separate profile only where the command semantics genuinely
    match. Its documented SET-only `FA` and `MD`, display-mediated status, and
    `FO`/`HK` FT8 keying must not be represented as ordinary readable frequency,
