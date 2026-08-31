@@ -10,6 +10,7 @@ use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 
 use super::{
+    options::{self, ElecraftOptions},
     profile::{profile_for_model, ElecraftModel, ElecraftProfile},
     transport::ElecraftTransport,
     tuning::{self, VfoDirection},
@@ -143,6 +144,15 @@ impl ElecraftRadio {
             "Elecraft KH1 does not document the OM option probe"
         );
         self.query("OM")
+    }
+
+    /// Query and parse the documented K3/K3S/KX2/KX3 option response while
+    /// preserving its family-specific raw flag string.
+    pub fn probe_options_decoded(&self) -> Result<ElecraftOptions> {
+        let model = self
+            .model
+            .context("Elecraft option probing requires a selected model")?;
+        options::parse(model, &self.probe_options()?)
     }
 
     /// Enable or disable K4 unsolicited TX meter reports (`TM` frames).
@@ -1110,12 +1120,15 @@ mod tests {
             Some(ElecraftModel::K3),
             9_600,
             MemoryTransport {
-                input: b"OM APXSDFfLVR--;".to_vec(),
+                input: b"OM APXSDFfLVR--;OM APXSDFfLVR--;".to_vec(),
                 output: Arc::new(Mutex::new(Vec::new())),
             },
         )
         .unwrap();
         assert_eq!(radio.probe_options().unwrap(), b"OM APXSDFfLVR--;".to_vec());
+        let decoded = radio.probe_options_decoded().unwrap();
+        assert!(decoded.has_flag('A'));
+        assert_eq!(decoded.model_hint(), Some(ElecraftModel::K3s));
     }
 
     #[test]

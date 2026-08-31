@@ -41,6 +41,8 @@
   event alongside ALC, forward power, and SWR.
 - Add model-specific Elecraft VFO movement through `UP`/`DN` and `UPB`/`DNB`,
   including K3-family step-table indices and K2/K4 current-step behavior.
+- Decode documented K3/K3S/KX2/KX3 `OM` option responses while retaining the
+  raw family-specific flag string and explicit K4/KH1 schema boundary.
 - Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
   outside this initial radio slice.
 
