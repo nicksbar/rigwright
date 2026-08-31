@@ -562,6 +562,13 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         support: SupportLevel::Framework,
         capabilities: HF_BASE,
     },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Elecraft,
+        model: "KH1",
+        protocol: Protocol::ElecraftCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
 ];
 
 pub fn find_model(model: &str) -> Option<&'static RadioModelProfile> {

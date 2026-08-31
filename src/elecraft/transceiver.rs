@@ -137,14 +137,16 @@ impl ElecraftRadio {
         "FA"
     }
 
-    fn parse_frequency(response: &[u8]) -> Result<u64> {
+    fn parse_frequency(profile: ElecraftProfile, response: &[u8]) -> Result<u64> {
         let text =
             std::str::from_utf8(response).context("Elecraft frequency response is not ASCII")?;
-        text.strip_prefix("FA")
+        let value: u64 = text
+            .strip_prefix("FA")
             .and_then(|v| v.strip_suffix(';'))
             .context("unexpected Elecraft frequency response")?
             .parse()
-            .context("invalid Elecraft frequency")
+            .context("invalid Elecraft frequency")?;
+        Ok(value * profile.frequency_scale_hz)
     }
 
     fn parse_mode(profile: ElecraftProfile, response: &[u8]) -> Result<Mode> {
@@ -365,11 +367,22 @@ impl Radio for ElecraftRadio {
         Some(self.event_router.clone())
     }
     async fn get_frequency_hz(&self) -> Result<u64> {
-        Self::parse_frequency(&self.query(self.selected_frequency())?)
+        let profile = self
+            .profile()
+            .context("Elecraft frequency profile is unavailable")?;
+        anyhow::ensure!(
+            profile.can_get_frequency,
+            "Elecraft frequency readback is not supported"
+        );
+        Self::parse_frequency(profile, &self.query(self.selected_frequency())?)
     }
 
     async fn set_frequency_hz(&self, frequency_hz: u64) -> Result<()> {
         if let Some(profile) = self.profile() {
+            anyhow::ensure!(
+                profile.can_set_frequency,
+                "Elecraft frequency writes are not supported"
+            );
             if !profile.supports_frequency(frequency_hz) {
                 bail!(
                     "{} frequency is outside the profiled range",
@@ -377,13 +390,28 @@ impl Radio for ElecraftRadio {
                 );
             }
         }
-        self.set("FA", &format!("{frequency_hz:011}"))
+        let profile = self
+            .profile()
+            .context("Elecraft frequency profile is unavailable")?;
+        anyhow::ensure!(
+            frequency_hz.is_multiple_of(profile.frequency_scale_hz),
+            "Elecraft frequency has unsupported resolution"
+        );
+        let value = frequency_hz / profile.frequency_scale_hz;
+        self.set(
+            "FA",
+            &format!("{value:0width$}", width = profile.frequency_width),
+        )
     }
 
     async fn get_mode(&self) -> Result<Mode> {
         let profile = self
             .profile()
             .context("Elecraft mode decoding requires a selected model")?;
+        anyhow::ensure!(
+            profile.can_get_mode,
+            "Elecraft mode readback is not supported"
+        );
         Self::parse_mode(profile, &self.query("MD")?)
     }
 
@@ -391,14 +419,26 @@ impl Radio for ElecraftRadio {
         let profile = self
             .profile()
             .context("Elecraft mode encoding requires a selected model")?;
+        anyhow::ensure!(
+            profile.can_set_mode,
+            "Elecraft mode writes are not supported"
+        );
         self.set("MD", &profile.encode_mode(mode)?.to_string())
     }
 
     async fn set_ptt(&self, enabled: bool) -> Result<()> {
+        anyhow::ensure!(
+            self.profile().is_some_and(|profile| profile.can_set_ptt),
+            "Elecraft PTT writes are not supported"
+        );
         self.set(if enabled { "TX" } else { "RX" }, "")
     }
 
     async fn get_ptt(&self) -> Result<bool> {
+        anyhow::ensure!(
+            self.profile().is_some_and(|profile| profile.can_get_ptt),
+            "Elecraft PTT readback is not supported"
+        );
         let response = self.query("TQ")?;
         let text = std::str::from_utf8(&response).context("Elecraft TQ response is not ASCII")?;
         match text
@@ -692,12 +732,16 @@ impl Radio for ElecraftRadio {
     }
     fn capabilities(&self) -> RadioCapabilities {
         RadioCapabilities {
-            can_get_frequency: true,
-            can_set_frequency: true,
-            can_get_mode: self.model.is_some(),
-            can_set_mode: self.model.is_some(),
-            can_get_ptt: true,
-            can_set_ptt: true,
+            can_get_frequency: self
+                .profile()
+                .is_some_and(|profile| profile.can_get_frequency),
+            can_set_frequency: self
+                .profile()
+                .is_some_and(|profile| profile.can_set_frequency),
+            can_get_mode: self.profile().is_some_and(|profile| profile.can_get_mode),
+            can_set_mode: self.profile().is_some_and(|profile| profile.can_set_mode),
+            can_get_ptt: self.profile().is_some_and(|profile| profile.can_get_ptt),
+            can_set_ptt: self.profile().is_some_and(|profile| profile.can_set_ptt),
             can_get_power: false,
             can_set_power: false,
             can_raw_protocol: true,
@@ -1019,5 +1063,25 @@ mod tests {
         );
         block_on(radio.set_control(ControlId::TuningStep, ControlValue::U8(3))).unwrap();
         assert_eq!(&*output.lock().unwrap(), b"VT$X;MD;VT$32;");
+    }
+
+    #[test]
+    fn kh1_uses_set_only_frequency_and_mode_commands() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::Kh1),
+            9_600,
+            MemoryTransport {
+                input: Vec::new(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        block_on(radio.set_frequency_hz(14_000_000)).unwrap();
+        block_on(radio.set_mode(Mode::Usb)).unwrap();
+        assert!(block_on(radio.get_frequency_hz()).is_err());
+        assert!(block_on(radio.get_mode()).is_err());
+        assert!(block_on(radio.set_ptt(true)).is_err());
+        assert_eq!(&*output.lock().unwrap(), b"FA1400000;MD2;");
     }
 }

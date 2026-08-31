@@ -2,6 +2,14 @@
 use super::profile::{ElecraftModel, ElecraftProfile, BAUD_RATES, HF_RANGES};
 pub const PROFILE: ElecraftProfile = ElecraftProfile {
     model: ElecraftModel::K3,
+    can_get_frequency: true,
+    can_set_frequency: true,
+    can_get_mode: true,
+    can_set_mode: true,
+    can_get_ptt: true,
+    can_set_ptt: true,
+    frequency_scale_hz: 1,
+    frequency_width: 11,
     baud_rates: BAUD_RATES,
     frequency_ranges: HF_RANGES,
     modes: super::kx3::MODES,

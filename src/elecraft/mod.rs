@@ -7,6 +7,7 @@ pub mod k2;
 pub mod k3;
 pub mod k3s;
 pub mod k4;
+pub mod kh1;
 pub mod kx2;
 pub mod kx3;
 pub mod profile;

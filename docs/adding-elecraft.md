@@ -33,7 +33,8 @@ profile-owned.
    profile should describe command forms, frequency/mode fields, readback,
    baud options, VFO/subreceiver targeting, meters, and optional controls.
 3. Keep each transceiver profile in its own focused module:
-   `src/elecraft/k2.rs`, `kx2.rs`, `kx3.rs`, `k3.rs`, `k3s.rs`, and `k4.rs`.
+   `src/elecraft/k2.rs`, `kx2.rs`, `kx3.rs`, `k3.rs`, `k3s.rs`, `k4.rs`, and
+   `kh1.rs`.
    `profile.rs` contains only shared contracts and lookup; `transceiver.rs`
    contains shared commands. Model applicability, widths, ranges, and
    exceptions belong in the model files. K4 streaming and Ethernet should be
@@ -98,9 +99,12 @@ command encoders/decoders, captured-frame tests, and explicit unsupported
 capabilities. We should not mark a model `Hardware validated` based on manual
 review or loopback tests alone.
 
-KH1 should follow as its own limited profile after the common transport is
-stable. Accessories should be added after the station-component trait shape is
-settled; otherwise tuner/amplifier controls risk leaking into the radio HAL.
+KH1 has a separate limited profile. Its fixed 9,600-baud, SET-only `FA`/`MD`
+surface is implemented as write-only frequency/mode support; display-mediated
+readback, `HK` CW keying, and `FO` FT8 offset control remain separate APIs to
+avoid falsely advertising ordinary `Radio` semantics. Accessories should be
+added after the station-component trait shape is settled; otherwise
+tuner/amplifier controls risk leaking into the radio HAL.
 
 All Elecraft profiles begin at `Framework` maturity. The local manuals prove
 command documentation and parser contracts, not physical-radio behavior.

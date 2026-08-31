@@ -50,11 +50,12 @@ controls or meters until a concrete model profile is selected.
 | K3 | Framework | `src/elecraft/k3.rs` | `K3S&K3&KX3&KX2 Pgmrs Ref, G5.pdf` |
 | K3S | Framework | `src/elecraft/k3s.rs` | `K3S&K3&KX3&KX2 Pgmrs Ref, G5.pdf` |
 | K4 | Framework | `src/elecraft/k4.rs` | `K4 Programmer's Reference, rev. D5.pdf` |
+| KH1 | Framework | `src/elecraft/kh1.rs` | `Elecraft KH1 Programmer's Ref, rev B2.pdf` |
 
 | Operation | HAL surface | Elecraft status |
 |---|---|---:|
-| Frequency read/write | `get/set_frequency_hz` | H/P |
-| Operating mode read/write | `get/set_mode` | H/P for selected profiles |
+| Frequency read/write | `get/set_frequency_hz` | H/P for K2/KX2/KX3/K3/K3S/K4; KH1 write-only |
+| Operating mode read/write | `get/set_mode` | H/P for K2/KX2/KX3/K3/K3S/K4; KH1 write-only |
 | PTT write/read | `set_ptt`, `get_ptt` | H/P via `TX`/`RX` and `TQ` |
 | RF power | `ControlId::RfPower` | H/P via profile-scaled `PC` |
 | VFO selection / split | `ControlId::Vfo`, `ControlId::Split` | H/P via `FR`/`FT`; K3/K3S VFO-B selection remains profile-limited |
@@ -79,7 +80,9 @@ S-meter limits. The model-specific declarations live in the six modules listed
 above; shared profile validation remains in `src/elecraft/profile.rs`.
 Auto-Info event routing is now available through the shared event router. K4
 Ethernet/streaming, precise VFO-B semantics, and the wider K3-family control
-surface remain open.
+surface remain open. KH1 is intentionally limited to fixed-baud, write-only
+frequency/mode control; its display-mediated status and `FO`/`HK` FT8/CW
+operations require a separate capability surface.
 KH1 and P3/PX3/KAT/KPA/KXPA equipment are separate future profiles or station
 components and are not included in this row.
 

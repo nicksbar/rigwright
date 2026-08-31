@@ -11,6 +11,7 @@ pub enum ElecraftModel {
     K3,
     K3s,
     K4,
+    Kh1,
 }
 
 impl ElecraftModel {
@@ -22,6 +23,7 @@ impl ElecraftModel {
             Self::K3 => "K3",
             Self::K3s => "K3S",
             Self::K4 => "K4",
+            Self::Kh1 => "KH1",
         }
     }
     pub fn from_model_name(model: &str) -> Option<Self> {
@@ -32,6 +34,7 @@ impl ElecraftModel {
             "K3" => Some(Self::K3),
             "K3S" => Some(Self::K3s),
             "K4" => Some(Self::K4),
+            "KH1" => Some(Self::Kh1),
             _ => None,
         }
     }
@@ -46,6 +49,14 @@ pub struct ElecraftModeSpec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ElecraftProfile {
     pub model: ElecraftModel,
+    pub can_get_frequency: bool,
+    pub can_set_frequency: bool,
+    pub can_get_mode: bool,
+    pub can_set_mode: bool,
+    pub can_get_ptt: bool,
+    pub can_set_ptt: bool,
+    pub frequency_scale_hz: u64,
+    pub frequency_width: usize,
     pub baud_rates: &'static [u32],
     pub frequency_ranges: &'static [(u64, u64)],
     pub modes: &'static [ElecraftModeSpec],
@@ -144,6 +155,7 @@ pub const fn profile_for_model(model: ElecraftModel) -> ElecraftProfile {
         ElecraftModel::K3 => super::k3::PROFILE,
         ElecraftModel::K3s => super::k3s::PROFILE,
         ElecraftModel::K4 => super::k4::PROFILE,
+        ElecraftModel::Kh1 => super::kh1::PROFILE,
     }
 }
 
