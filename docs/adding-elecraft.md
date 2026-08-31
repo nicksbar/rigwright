@@ -72,20 +72,20 @@ tester before the model can be promoted beyond `Framework`.
 
 | CAT surface | Likely Elecraft command family | Rigwright work needed | Tester requirement |
 |---|---|---|---|
-| RF power | `PC` | Add normalized HAL mapping, native limits, read/write capability, and TX-safety validation per model | Confirm readback, minimum/maximum power, and behavior while transmitting |
-| VFO-A/B and independent operations | `FA`/`FB`, VFO selection commands | Add selected-VFO state, profile applicability, and routing for frequency/mode/control queries | Exercise both VFOs, switching, persistence, and unsolicited updates |
-| Split | VFO selection plus split/status commands | Map to `ControlId::Split` only where read/write semantics are documented; preserve selected-VFO context | Verify transmit VFO, receive VFO, and split on/off without changing activity context |
-| RIT/XIT | RIT/XIT enable and offset commands | Extend the HAL/profile contract for enable and signed offsets where available | Verify sign, range, zeroing, and independent RIT/XIT behavior |
-| Tuning step | Step-size command family | Add a typed control or capability only after deciding whether the HAL should expose step size | Verify each supported step and its effect on tuning/navigation |
-| Filter and bandwidth | Filter/width command family | Add model-owned enumerations/ranges; do not flatten named filters into arbitrary `U8` values | Confirm accepted values, readback, and mode-dependent limits |
-| AGC | AGC command family | Add a model-specific control encoding and capability declaration | Exercise mode-specific AGC choices and readback |
-| Noise blanker/reduction | NB/NR command families | Add separate enable/level controls where the manual provides them | Confirm level ranges, interaction with modes, and persistence |
-| Preamp/attenuator | Preamp/attenuation command families | Distinguish preamp levels from attenuation and expose only documented controls | Verify RF-path state and mutually exclusive combinations |
-| Internal tuner | Tuner enable/status/start commands | Add tuner HAL behavior with explicit transmit authorization and status states | Confirm tuning start, completion, failure, and TX interlock behavior |
-| Memory/channel operations | Memory select/read/write command families | Map Elecraft memory records into `MemoryChannel` only where fields are losslessly representable | Verify empty slots, names, mode, frequency, and write/read round trips |
-| Repeater/tone | Tone, offset, and repeater command families | Add profile-gated `RepeaterSettings`; keep unsupported/SET-only fields explicit | Verify tone modes, CTCSS/DCS, offsets, and VHF/UHF model behavior |
-| Transmit status and meters | TX/status plus power/SWR/ALC/voltage/current families | Add typed meters/status events with native-range normalization and read-only/write semantics | Capture idle, RX, tune, and TX readings under safe test conditions |
-| Identification and probing | `ID` and model/status queries | Add bounded identification, model selection, and capability probing without guessing a profile | Test known models, unknown firmware, timeout, and malformed replies |
+| RF power | `PC` | Implemented as normalized profile-scaled control; tester coverage remains open | Confirm readback, minimum/maximum power, and behavior while transmitting |
+| VFO-A/B and independent operations | `FA`/`FB`, VFO selection commands | Implemented with independent VFO frequency methods plus profile-gated selection | Exercise both VFOs, switching, persistence, and unsolicited updates |
+| Split | VFO selection plus split/status commands | Implemented through profile-gated `ControlId::Split`; preserve selected-VFO context | Verify transmit VFO, receive VFO, and split on/off without changing activity context |
+| RIT/XIT | RIT/XIT enable and offset commands | Implemented for signed offsets and enable controls where profiled | Verify sign, range, zeroing, and independent RIT/XIT behavior |
+| Tuning step | `VT$` and model step families | K4 typed step control implemented; legacy movement/step semantics remain model-specific and open | Verify each supported step and its effect on tuning/navigation |
+| Filter and bandwidth | Filter/width command family | Implemented with model-owned normalized `BW`/`FW` ranges; named-filter fidelity remains open | Confirm accepted values, readback, and mode-dependent limits |
+| AGC | AGC command family | Implemented through profile-owned `GT` mapping | Exercise mode-specific AGC choices and readback |
+| Noise blanker/reduction | NB/NR command families | NB enable is implemented broadly; K4 level-bearing `NB$`/`NR$` controls are implemented | Confirm level ranges, interaction with modes, and persistence |
+| Preamp/attenuator | Preamp/attenuation command families | Implemented with distinct profile controls and ranges | Verify RF-path state and mutually exclusive combinations |
+| Internal tuner | Tuner enable/status/start commands | K4 mode/status/start implemented with explicit command path; other models remain gated | Confirm tuning start, completion, failure, and TX interlock behavior |
+| Memory/channel operations | Memory select/read/write command families | KX2/KX3/K3/K3S selection implemented via `MC`; lossless records remain open | Verify empty slots, names, mode, frequency, and write/read round trips |
+| Repeater/tone | Tone, offset, and repeater command families | K4 shift/offset implemented; tone fields remain explicitly unsupported | Verify tone modes, CTCSS/DCS, offsets, and VHF/UHF model behavior |
+| Transmit status and meters | TX/status plus power/SWR/ALC/voltage/current families | Generic queried meters plus typed K4 `TM` TX events implemented; further status remains open | Capture idle, RX, tune, and TX readings under safe test conditions |
+| Identification and probing | `ID` and model/status queries | Raw `ID` and model-specific `OM` probes implemented; interpretation remains profile-specific | Test known models, unknown firmware, timeout, and malformed replies |
 
 The implementation order should be: identification/probing, VFO context, split
 and RIT/XIT, RF power, then receiver controls and meters. Tuner start and any
