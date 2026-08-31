@@ -72,6 +72,36 @@ surface remain open.
 KH1 and P3/PX3/KAT/KPA/KXPA equipment are separate future profiles or station
 components and are not included in this row.
 
+### Direct CAT control backlog and evidence gate
+
+The following controls are known from the local Elecraft programmer references
+and are intentionally tracked even though they are not yet exposed by the
+Elecraft `Radio` implementation. “Manual” means the command family is known
+enough to design against; it is not proof of correct code or physical behavior.
+
+| Direct CAT surface | Current Rigwright status | Required implementation evidence | Physical tester evidence |
+|---|---|---|---|
+| RF power (`PC`) | Manual; not implemented | Profile-native limits, normalized `RfPower`, read/write fixtures, TX-safety tests | Readback and safe min/max power on each model |
+| VFO-A/B and selected-VFO routing (`FA`/`FB` plus selection) | Manual; not implemented | Explicit VFO state and command-routing tests | Both VFOs, switching, and unsolicited updates |
+| Split | Manual; not implemented | Profile-gated `ControlId::Split` and selected-VFO tests | RX/TX VFO behavior and split transitions |
+| RIT/XIT | Manual; not implemented | Signed offset/enable contract and boundary tests | Sign, range, zero, and independent operation |
+| Tuning step | Manual; not implemented | HAL shape and model-specific value tests | Every supported step on a physical dial/navigation workflow |
+| Filters/bandwidth | Manual; not implemented | Named/value profile tables and readback fixtures | Accepted values and mode-dependent behavior |
+| AGC | Manual; not implemented | Model-specific control encoding and capability tests | AGC choices and readback |
+| Noise blanker/reduction | Manual; not implemented | Separate enable/level controls and range tests | Level behavior and mode interaction |
+| Preamp/attenuator | Manual; not implemented | Distinct profile controls and mutual-exclusion tests | RF-path state and combinations |
+| Internal tuner | Manual; not implemented | Tuner state model, explicit-start path, and failure tests | Tune start/completion/failure and TX interlock |
+| Memory/channel operations | Manual; not implemented | Lossless `MemoryChannel` mapping or explicit unsupported fields | Empty/read/write/name/mode/frequency round trips |
+| Repeater/tone | Manual; not implemented | Profile-gated `RepeaterSettings` and unsupported-field tests | Tone, offset, and model-specific repeater behavior |
+| TX status and additional meters | Manual; not implemented | Typed status/events, normalized meter fixtures, read-only semantics | RX/TX/tune captures for power/SWR/ALC/etc. |
+| Identification and capability probing (`ID`/status) | Manual; not implemented | Bounded probe, unknown-model, timeout, and malformed-frame tests | Known model and firmware identification |
+
+The tester gate is deliberate: all rows may reach `Implemented` with manual
+review and deterministic fixtures, but no Elecraft model should move from
+`Framework` to `Hardware validated` until a tester exercises the relevant CAT
+surface on physical equipment. Tester captures should be retained as fixtures
+with model, firmware, baud, transport, and operating-state metadata.
+
 ## Typed controls
 
 The following table lists every current `ControlId`. “Icom” means the selected

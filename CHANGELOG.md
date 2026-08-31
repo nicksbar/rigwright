@@ -12,6 +12,8 @@
   normalized HAL value range.
 - Split the K2/KX2/KX3/K3/K3S/K4 declarations into focused per-model profile
   modules, leaving shared contracts and driver behavior separate.
+- Record the direct-CAT backlog, command-family audit, implementation evidence,
+  and physical-tester gate in the Elecraft matrix and contributor guidance.
 - Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
   outside this initial radio slice.
 

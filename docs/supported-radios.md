@@ -34,7 +34,11 @@ local references currently available under `_manuals/elecraft` are:
 
 The current Rigwright transceiver slice covers K2, KX2, KX3, K3, K3S, and K4
 core frequency, mode, PTT, AF-gain, signal-meter, and raw-command operations.
-All remain framework-level until tested against physical equipment.
+The direct-CAT backlog is tracked in the capability matrix: RF power, VFO
+context, split, RIT/XIT, receiver controls, tuner, memory, repeater/tone,
+additional meters, and identification/probing are documented targets but are
+not current Elecraft driver claims. All models remain framework-level until
+tested against physical equipment.
 
 These documents establish command syntax and documented capabilities only.
 They do not constitute physical-radio or accessory validation. The proposed

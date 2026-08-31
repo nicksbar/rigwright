@@ -55,10 +55,48 @@ profile-owned.
 
 ## First implementation slice
 
-The safest first slice is the shared K3-family transceiver path for KX2/KX3,
-K3/K3S, and K4 over the existing `RadioTransport`, with exact profile tests
-for `ID`, `FA`/`FB`, `MD`, `TX`/`RX`, `PC`, `SM`, and `AI`. K4 Ethernet and
-streaming should follow as a separate capability-tested transport layer.
+The first slice is the shared K3-family transceiver path for KX2/KX3, K3/K3S,
+and K4 over the existing `RadioTransport`. Its current contract coverage is
+`FA`, `MD`, `TX`/`RX`, `TQ`, `SM`, and `AI`; `PC` is a documented next control,
+not an implemented one. K4 Ethernet and streaming should follow as a separate
+capability-tested transport layer.
+
+## Direct CAT control roadmap
+
+The local manuals give us enough information to plan the remaining direct CAT
+surface, but a manual citation is not an implementation or a hardware-support
+claim. Every row below needs three separate outcomes: a model/profile contract,
+deterministic transport tests using captured or authored frames, and a physical
+tester before the model can be promoted beyond `Framework`.
+
+| CAT surface | Likely Elecraft command family | Rigwright work needed | Tester requirement |
+|---|---|---|---|
+| RF power | `PC` | Add normalized HAL mapping, native limits, read/write capability, and TX-safety validation per model | Confirm readback, minimum/maximum power, and behavior while transmitting |
+| VFO-A/B and independent operations | `FA`/`FB`, VFO selection commands | Add selected-VFO state, profile applicability, and routing for frequency/mode/control queries | Exercise both VFOs, switching, persistence, and unsolicited updates |
+| Split | VFO selection plus split/status commands | Map to `ControlId::Split` only where read/write semantics are documented; preserve selected-VFO context | Verify transmit VFO, receive VFO, and split on/off without changing activity context |
+| RIT/XIT | RIT/XIT enable and offset commands | Extend the HAL/profile contract for enable and signed offsets where available | Verify sign, range, zeroing, and independent RIT/XIT behavior |
+| Tuning step | Step-size command family | Add a typed control or capability only after deciding whether the HAL should expose step size | Verify each supported step and its effect on tuning/navigation |
+| Filter and bandwidth | Filter/width command family | Add model-owned enumerations/ranges; do not flatten named filters into arbitrary `U8` values | Confirm accepted values, readback, and mode-dependent limits |
+| AGC | AGC command family | Add a model-specific control encoding and capability declaration | Exercise mode-specific AGC choices and readback |
+| Noise blanker/reduction | NB/NR command families | Add separate enable/level controls where the manual provides them | Confirm level ranges, interaction with modes, and persistence |
+| Preamp/attenuator | Preamp/attenuation command families | Distinguish preamp levels from attenuation and expose only documented controls | Verify RF-path state and mutually exclusive combinations |
+| Internal tuner | Tuner enable/status/start commands | Add tuner HAL behavior with explicit transmit authorization and status states | Confirm tuning start, completion, failure, and TX interlock behavior |
+| Memory/channel operations | Memory select/read/write command families | Map Elecraft memory records into `MemoryChannel` only where fields are losslessly representable | Verify empty slots, names, mode, frequency, and write/read round trips |
+| Repeater/tone | Tone, offset, and repeater command families | Add profile-gated `RepeaterSettings`; keep unsupported/SET-only fields explicit | Verify tone modes, CTCSS/DCS, offsets, and VHF/UHF model behavior |
+| Transmit status and meters | TX/status plus power/SWR/ALC/voltage/current families | Add typed meters/status events with native-range normalization and read-only/write semantics | Capture idle, RX, tune, and TX readings under safe test conditions |
+| Identification and probing | `ID` and model/status queries | Add bounded identification, model selection, and capability probing without guessing a profile | Test known models, unknown firmware, timeout, and malformed replies |
+
+The implementation order should be: identification/probing, VFO context, split
+and RIT/XIT, RF power, then receiver controls and meters. Tuner start and any
+other transmit-capable command must have an explicit operator action and must
+not be triggered by background polling. The driver must continue to preserve
+the application-selected activity mode while CAT navigation changes radio
+state.
+
+Until testers are available, we should still implement the profile contracts,
+command encoders/decoders, captured-frame tests, and explicit unsupported
+capabilities. We should not mark a model `Hardware validated` based on manual
+review or loopback tests alone.
 
 KH1 should follow as its own limited profile after the common transport is
 stable. Accessories should be added after the station-component trait shape is
