@@ -16,7 +16,5 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo check --locked --all-features --all-targets
       - run: cargo clippy --locked --all-features --all-targets -- -D warnings
-      - name: Run Elecraft driver tests
-        run: cargo test --locked --all-features --lib elecraft::
       - name: Run the complete test suite
         run: cargo test --locked --all-features --all-targets

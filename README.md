@@ -197,11 +197,10 @@ The report is written to `target/llvm-cov/html/index.html`; open that file in a
 browser to inspect line and branch coverage. For a terminal summary instead,
 run `cargo llvm-cov --locked --all-features --workspace`.
 
-Pull requests run formatting, locked checks, strict Clippy, an explicit
-Elecraft-driver test step, and the complete test suite in `ci.yml`. LLVM
-coverage runs as a separate `coverage.yml` workflow; it prints the test and
-coverage summary in the pull request's check details and uploads the complete
-HTML report as a workflow artifact.
+Pull requests run formatting, locked checks, strict Clippy, and the complete
+test suite in `ci.yml`. LLVM coverage runs as a separate `coverage.yml`
+workflow; it prints the test and coverage summary in the pull request's check
+details and uploads the complete HTML report as a workflow artifact.
 
 The README coverage labels are the latest measured line-coverage snapshot; the
 workflow badge is the authoritative pass/fail result. The coverage gate is
