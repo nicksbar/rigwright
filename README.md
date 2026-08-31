@@ -1,6 +1,6 @@
 # Rigwright
 
-[![Version](https://img.shields.io/badge/version-v0.1.16-2ea44f)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-v0.1.17-2ea44f)](Cargo.toml)
 [![CI](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml)
 [![Release workflow](https://github.com/nicksbar/rigwright/actions/workflows/release.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/nicksbar/rigwright?display_name=tag&sort=semver)](https://github.com/nicksbar/rigwright/releases)
@@ -17,6 +17,7 @@
 [![Kenwood profile 93.28%](https://img.shields.io/badge/Kenwood%20profile-93.28%25-brightgreen)](docs/radio-capability-matrix.md)
 [![Yaesu profile 85%](https://img.shields.io/badge/Yaesu%20profile-85%25-yellow)](docs/radio-capability-matrix.md)
 [![Classic Yaesu profile 100%](https://img.shields.io/badge/Classic%20Yaesu%20profile-100%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Elecraft 85.92%](https://img.shields.io/badge/Elecraft-85.92%25-brightgreen)](docs/radio-capability-matrix.md)
 [![CodeQL](https://github.com/nicksbar/rigwright/actions/workflows/codeql.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/codeql.yml)
 
 Rigwright is a reusable Rust radio-control HAL with native radio drivers. It was
@@ -41,6 +42,9 @@ reported through the CodeQL check and GitHub code-scanning alerts.
 - Strict IC-7300 USB scope assembly: ordered 11-division input produces one
   complete 475-bin sweep, with documented center-span and fixed-edge controls.
 - Captured-frame unit tests and a direct CI-V probe example.
+- Profile-driven Elecraft CAT support for K2, KX2, KX3, K3, K3S, K4, and KH1,
+  including direct controls, model-specific option probing, normalized meters,
+  and explicit accessory/protocol boundaries.
 - Profile-gated receiver controls, RF power, split, clarifiers, VFO, tuner,
   memory, repeater, event, and normalized-meter support for modern Yaesu;
   profile-gated receiver controls, RF power, split, clarifiers, VFO, tuner,
@@ -84,7 +88,7 @@ references.
 
 ```toml
 [dependencies]
-rigwright = "0.1.16"
+rigwright = "0.1.17"
 ```
 
 ```rust,no_run
@@ -193,14 +197,18 @@ The report is written to `target/llvm-cov/html/index.html`; open that file in a
 browser to inspect line and branch coverage. For a terminal summary instead,
 run `cargo llvm-cov --locked --all-features --workspace`.
 
-Pull requests run formatting, checks, and tests in `ci.yml`. LLVM coverage runs
-as a separate `coverage.yml` workflow; it prints the test and coverage summary
-in the pull request's check details and uploads the complete HTML report as a
-workflow artifact.
+Pull requests run formatting, locked checks, strict Clippy, an explicit
+Elecraft-driver test step, and the complete test suite in `ci.yml`. LLVM
+coverage runs as a separate `coverage.yml` workflow; it prints the test and
+coverage summary in the pull request's check details and uploads the complete
+HTML report as a workflow artifact.
 
 The README coverage labels are the latest measured line-coverage snapshot; the
 workflow badge is the authoritative pass/fail result. The coverage gate is
-enforced by `scripts/check-icom-coverage.sh` and currently
+enforced by `scripts/check-icom-coverage.sh` and
+`scripts/check-elecraft-coverage.sh`. The Elecraft gate requires at least 80%
+aggregate line coverage; the current measured Elecraft snapshot is 85.92%.
+The existing gates currently
 requires at least 85% Icom, 90% HAL, 80% Android, 90% transport, 85% driver,
 95% IQ, 90% rigctld, 90% DX Lab, 80% Kenwood CAT, 90% Kenwood profile, 85%
 modern Yaesu profile, and 85% classic Yaesu profile line coverage. The latest
