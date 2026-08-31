@@ -1571,6 +1571,14 @@ impl IcomCiVRadio {
         match op {
             ControlOp::Set => {
                 let v = value.context("missing control value for set operation")?;
+                if id == ControlId::Attenuator {
+                    let db = match v {
+                        ControlValue::U8(db) if db <= 99 => ((db / 10) << 4) | (db % 10),
+                        _ => anyhow::bail!("Icom attenuator expects a documented dB value"),
+                    };
+                    let _ = self.transact(&[0x11, db], false)?;
+                    return Ok(None);
+                }
                 let encoded = encode_control_value(
                     match spec.encoding {
                         super::profile::ControlEncoding::Bool => ControlEncoding::Bool,
@@ -2614,6 +2622,14 @@ fn decode_profile_control_response(
     response: &[u8],
 ) -> Result<ControlValue> {
     let data = response_data_after_prefix(response, spec.command_prefix)?;
+    if spec.id == ControlId::Attenuator {
+        let value = *data.first().context("missing attenuator control data")?;
+        anyhow::ensure!(
+            value & 0x0F <= 9 && value >> 4 <= 9,
+            "invalid Icom attenuator BCD value {value:#04x}"
+        );
+        return Ok(ControlValue::U8((value >> 4) * 10 + (value & 0x0F)));
+    }
     Ok(match spec.encoding {
         super::profile::ControlEncoding::Bool => {
             ControlValue::Bool(*data.first().context("missing boolean control data")? != 0)

@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use futures::executor::block_on;
-use rigwright::{ControlId, IcomCiVRadio, MeterId, Radio};
+use rigwright::{ControlId, ControlValue, IcomCiVRadio, MeterId, Radio};
 
 const CONTROLS: &[ControlId] = &[
     ControlId::Rit,
@@ -39,6 +39,51 @@ const METERS: &[MeterId] = &[
     MeterId::Current,
 ];
 
+fn alternate_control(id: ControlId, value: &ControlValue) -> Option<ControlValue> {
+    match value {
+        ControlValue::Bool(value) => Some(ControlValue::Bool(!value)),
+        ControlValue::U8(value) => {
+            let alternate = match id {
+                ControlId::Attenuator => {
+                    if *value == 0 {
+                        20
+                    } else {
+                        0
+                    }
+                }
+                ControlId::Preamp => {
+                    if *value == 0 {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                ControlId::Agc => {
+                    if *value == 2 {
+                        1
+                    } else {
+                        2
+                    }
+                }
+                ControlId::Filter => match *value {
+                    1 => 2,
+                    2 => 3,
+                    _ => 1,
+                },
+                _ => {
+                    if *value == 0 {
+                        1
+                    } else {
+                        0
+                    }
+                }
+            };
+            Some(ControlValue::U8(alternate))
+        }
+        _ => None,
+    }
+}
+
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let port = args.next().unwrap_or_else(|| "/dev/ttyUSB0".to_string());
@@ -66,6 +111,7 @@ fn main() -> Result<()> {
     println!("tuner status: {:?}", block_on(radio.get_tuner_status())?);
     if exercise {
         block_on(radio.set_frequency_hz(frequency))?;
+        // Keep the current operating mode unchanged while exercising controls.
         block_on(radio.set_mode(mode))?;
     }
     for &id in CONTROLS {
@@ -77,8 +123,14 @@ fn main() -> Result<()> {
                 println!("control {id:?}: {value:?}");
                 if exercise && radio.supports_control_write(id) {
                     if let Some(value) = value {
+                        if let Some(alternate) = alternate_control(id, &value) {
+                            if let Err(error) = block_on(radio.set_control(id, alternate)) {
+                                eprintln!("control {id:?} alternate write failed: {error}");
+                                failures += 1;
+                            }
+                        }
                         if let Err(error) = block_on(radio.set_control(id, value)) {
-                            eprintln!("control {id:?} write-back failed: {error}");
+                            eprintln!("control {id:?} restore failed: {error}");
                             failures += 1;
                         }
                     }

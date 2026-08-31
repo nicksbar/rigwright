@@ -38,8 +38,18 @@ fn main() -> Result<()> {
     );
     println!("serial policy: {:?}", radio.serial_policy());
     if exercise {
+        block_on(
+            radio.set_frequency_hz(frequency.checked_add(1_000).context("frequency overflow")?),
+        )?;
         block_on(radio.set_frequency_hz(frequency))?;
+        let alternate_mode = if mode == rigwright::Mode::Usb {
+            rigwright::Mode::Lsb
+        } else {
+            rigwright::Mode::Usb
+        };
+        block_on(radio.set_mode(alternate_mode))?;
         block_on(radio.set_mode(mode))?;
+        radio.set_split(!split)?;
         radio.set_split(split)?;
         radio.toggle_vfo()?;
         radio.toggle_vfo()?;
