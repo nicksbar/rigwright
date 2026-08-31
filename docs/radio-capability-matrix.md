@@ -111,7 +111,7 @@ correct code or physical behavior.
 | Memory/channel operations | KX2/KX3/K3/K3S selection implemented via `MC`; record read/write remains open | Lossless `MemoryChannel` mapping or explicit unsupported fields | Empty/read/write/name/mode/frequency round trips |
 | Repeater/tone | K4 shift/offset implemented; tone and other models open | Profile-gated `RepeaterSettings` and unsupported-field tests | Tone, offset, and model-specific repeater behavior |
 | TX status and additional meters | Power/ALC/SWR implemented where the protocol permits; K4 actual TX state via `TQX`, K3/K3S `TM` source selection, K4 `SM$`/`PO` queries, and K4 `TM` ALC/compression/power/SWR event reports implemented; voltage/current/temperature remain unavailable in the transceiver HAL | Typed status/events, normalized meter fixtures, read-only semantics | RX/TX/tune captures for power/SWR/ALC/etc. |
-| Identification and capability probing (`ID`/`OM`/status) | `ID` and raw/decoded model-specific `OM` probes implemented for K3/K3S/KX2/KX3; K4/KH1 schemas remain explicit gaps | Bounded probe, unknown-model, timeout, malformed-frame, and family-parser tests | Known model, firmware, and installed-option identification |
+| Identification and capability probing (`ID`/`OM`/status) | `ID` and decoded model-specific `OM` probes implemented for K3/K3S/KX2/KX3/K4; KH1 schema remains an explicit gap | Bounded probe, unknown-model, timeout, malformed-frame, and family-parser tests | Known model, firmware, and installed-option identification |
 
 The tester gate is deliberate: all rows may reach `Implemented` with manual
 review and deterministic fixtures, but no Elecraft model should move from

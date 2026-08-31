@@ -40,6 +40,8 @@
 - Correct K4 meter routing to use `SM$` signal and `PO` output-power queries;
   K4 polled SWR is no longer advertised where the manual provides `TM`
   unsolicited metering instead.
+- Decode the K4 fixed-position `OM` option bitmap while preserving its raw
+  option string for forward-compatible probing.
 - Add explicit independent Elecraft VFO-A/VFO-B frequency read/write methods
   using `FA`/`FB`, while keeping receive/transmit selection semantics separate.
 - Add K3/K3S transmit meter-source selection through documented `TM0`/`TM1`

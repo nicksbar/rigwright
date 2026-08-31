@@ -31,6 +31,7 @@ impl ElecraftOptions {
                     _ => None,
                 })
             }
+            ElecraftModel::K4 => Some(ElecraftModel::K4),
             _ => None,
         }
     }
@@ -40,7 +41,11 @@ pub(crate) fn parse(model: ElecraftModel, response: &[u8]) -> Result<ElecraftOpt
     anyhow::ensure!(
         matches!(
             model,
-            ElecraftModel::Kx2 | ElecraftModel::Kx3 | ElecraftModel::K3 | ElecraftModel::K3s
+            ElecraftModel::Kx2
+                | ElecraftModel::Kx3
+                | ElecraftModel::K3
+                | ElecraftModel::K3s
+                | ElecraftModel::K4
         ),
         "Elecraft OM option parsing is not documented for this model"
     );
@@ -74,5 +79,14 @@ mod tests {
         let kx3 = parse(ElecraftModel::Kx2, b"OM APF---TBXI02;").unwrap();
         assert!(kx3.has_flag('A') && kx3.has_flag('F'));
         assert_eq!(kx3.model_hint(), Some(ElecraftModel::Kx3));
+    }
+
+    #[test]
+    fn parses_the_fixed_position_k4_option_bitmap() {
+        let k4 = parse(ElecraftModel::K4, b"OM APXSHML14---;").unwrap();
+        assert_eq!(k4.raw, "APXSHML14---");
+        assert!(k4.has_flag('A') && k4.has_flag('P') && k4.has_flag('4'));
+        assert!(!k4.has_flag('D'));
+        assert_eq!(k4.model_hint(), Some(ElecraftModel::K4));
     }
 }

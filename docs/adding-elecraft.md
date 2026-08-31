@@ -87,7 +87,7 @@ tester before the model can be promoted beyond `Framework`.
 | Memory/channel operations | Memory select/read/write command families | KX2/KX3/K3/K3S selection implemented via `MC`; lossless records remain open | Verify empty slots, names, mode, frequency, and write/read round trips |
 | Repeater/tone | Tone, offset, and repeater command families | K4 shift/offset implemented; tone fields remain explicitly unsupported | Verify tone modes, CTCSS/DCS, offsets, and VHF/UHF model behavior |
 | Transmit status and meters | TX/status plus power/SWR/ALC/voltage/current families | K4 `SM$`/`PO` queries, generic queried meters, K4 actual `TQX` state, and typed K4 `TM` TX events implemented; K4 ALC/compression/SWR are event-only and voltage/current remain unavailable in the transceiver HAL | Capture idle, RX, tune, and TX readings under safe test conditions |
-| Identification and probing | `ID` and model/status queries | Raw `ID` plus decoded K3/K3S/KX2/KX3 `OM` probes implemented; K4/KH1 schemas remain explicit gaps | Test known models, unknown firmware, timeout, and malformed replies |
+| Identification and probing | `ID` and model/status queries | Raw `ID` plus decoded K3/K3S/KX2/KX3/K4 `OM` probes implemented; KH1 schema remains an explicit gap | Test known models, unknown firmware, timeout, and malformed replies |
 
 The implementation order should be: identification/probing, VFO context, split
 and RIT/XIT, RF power, then receiver controls and meters. Tuner start and any
