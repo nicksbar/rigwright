@@ -13,11 +13,11 @@
 [![IQ 100%](https://img.shields.io/badge/IQ-100%25-brightgreen)](docs/radio-capability-matrix.md)
 [![rigctld 94.76%](https://img.shields.io/badge/rigctld-94.76%25-brightgreen)](docs/radio-capability-matrix.md)
 [![DX Lab 95.27%](https://img.shields.io/badge/DX%20Lab-95.27%25-brightgreen)](docs/radio-capability-matrix.md)
-[![Kenwood CAT 84.47%](https://img.shields.io/badge/Kenwood%20CAT-84.47%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Kenwood CAT 85.21%](https://img.shields.io/badge/Kenwood%20CAT-85.21%25-brightgreen)](docs/radio-capability-matrix.md)
 [![Kenwood profile 93.47%](https://img.shields.io/badge/Kenwood%20profile-93.47%25-brightgreen)](docs/radio-capability-matrix.md)
 [![Yaesu profile 86.48%](https://img.shields.io/badge/Yaesu%20profile-86.48%25-brightgreen)](docs/radio-capability-matrix.md)
 [![Classic Yaesu profile 100%](https://img.shields.io/badge/Classic%20Yaesu%20profile-100%25-brightgreen)](docs/radio-capability-matrix.md)
-[![Elecraft 84.07%](https://img.shields.io/badge/Elecraft-84.07%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Elecraft 84.56%](https://img.shields.io/badge/Elecraft-84.56%25-brightgreen)](docs/radio-capability-matrix.md)
 [![CodeQL](https://github.com/nicksbar/rigwright/actions/workflows/codeql.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/codeql.yml)
 
 Rigwright is a reusable Rust radio-control HAL with native radio drivers. It was
@@ -81,7 +81,9 @@ The [radio capability matrix](docs/radio-capability-matrix.md) is the canonical
 status report. It tracks every HAL operation, typed control, normalized meter,
 manual-only surface, exact model profile, and current QSONaut consumption. It
 distinguishes documented behavior from implemented, profile-gated, consumed,
-and hardware-validated behavior.
+and hardware-validated behavior. Normalized HAL controls and meter values use
+shared half-up conversion rules; model-native limits remain in profiles, while
+generic undocumented values stay explicitly approximate or unavailable.
 
 - [Radio capability matrix](docs/radio-capability-matrix.md) — detailed status,
   normalization, model exceptions, and QSONaut coverage.
@@ -232,17 +234,17 @@ workflow; it prints the test and coverage summary in the pull request's check
 details and uploads the complete HTML report as a workflow artifact.
 
 The README coverage labels are the latest measured line-coverage snapshot from
-242 tests; the
+251 tests; the
 workflow badge is the authoritative pass/fail result. The coverage gate is
 enforced by `scripts/check-icom-coverage.sh` and
-`scripts/check-elecraft-coverage.sh`. The Elecraft gate requires at least 80%
-aggregate line coverage; the current measured Elecraft snapshot is 84.07%.
+`scripts/check-elecraft-coverage.sh`. The Elecraft gate requires at least 84%
+aggregate line coverage; the current measured Elecraft snapshot is 84.56%.
 The existing gates currently
-requires at least 85% Icom, 90% HAL, 80% Android, 90% transport, 85% driver,
-95% IQ, 90% rigctld, 90% DX Lab, 80% Kenwood CAT, 90% Kenwood profile, 85%
-modern Yaesu profile, and 85% classic Yaesu profile line coverage. The latest
-local run reached 81.49% overall line coverage, including 85.65% Icom CI-V,
-84.47% Kenwood CAT, 75.85% modern Yaesu CAT, 92.58% transport, and 88.31%
+requires at least 85% Icom, 96% HAL, 84% Android, 92% transport, 88% driver,
+100% IQ, 94% rigctld, 95% DX Lab, 85% Kenwood CAT, 93% Kenwood profile, 86%
+modern Yaesu profile, and 100% classic Yaesu profile line coverage. The latest
+local run reached 81.96% overall line coverage, including 85.65% Icom CI-V,
+85.21% Kenwood CAT, 75.98% modern Yaesu CAT, 92.58% transport, and 88.31%
 configured-driver dispatch coverage. All current local coverage gates pass.
 The workflow badge reports whether these
 tests and gates pass; the uploaded LLVM report provides the detailed source,

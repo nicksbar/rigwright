@@ -40,14 +40,14 @@ check_target() {
 }
 
 check_target "Icom" '^icom/' 85
-check_target "HAL" '^hal\.rs$' 90
-check_target "Android" '^android\.rs$' 80
-check_target "Transport" '^transport\.rs$' 90
-check_target "Drivers" '^drivers\.rs$' 85
-check_target "IQ" '^iq\.rs$' 95
-check_target "rigctld" '^rigctld\.rs$' 90
-check_target "DX Lab" '^dxlab\.rs$' 90
-check_target "Kenwood CAT" '^kenwood/cat_radio\.rs$' 80
-check_target "Kenwood profile" '^kenwood/profile\.rs$' 90
-check_target "Yaesu profile" '^yaesu/profile\.rs$' 85
-check_target "Classic Yaesu profile" '^yaesu/legacy_profile\.rs$' 85
+check_target "HAL" '^hal\.rs$' 96
+check_target "Android" '^android\.rs$' 84
+check_target "Transport" '^transport\.rs$' 92
+check_target "Drivers" '^drivers\.rs$' 88
+check_target "IQ" '^iq\.rs$' 100
+check_target "rigctld" '^rigctld\.rs$' 94
+check_target "DX Lab" '^dxlab\.rs$' 95
+check_target "Kenwood CAT" '^kenwood/cat_radio\.rs$' 85
+check_target "Kenwood profile" '^kenwood/profile\.rs$' 93
+check_target "Yaesu profile" '^yaesu/profile\.rs$' 86
+check_target "Classic Yaesu profile" '^yaesu/legacy_profile\.rs$' 100

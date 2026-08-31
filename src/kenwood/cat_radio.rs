@@ -16,8 +16,8 @@ use crate::{
     events::{RadioEvent, RadioEventRouter},
     hal::{Mode, Radio, RadioCapabilities},
     hal_types::{
-        normalize_meter_level, ControlId, ControlValue, MemoryChannel, MeterId, RepeaterSettings,
-        RepeaterShift, ToneMode, ToneSettings,
+        denormalize_meter_level, normalize_meter_level, ControlId, ControlValue, MemoryChannel,
+        MeterId, RepeaterSettings, RepeaterShift, ToneMode, ToneSettings,
     },
     models::KenwoodCatModel,
     protocol::ascii_cat,
@@ -939,8 +939,8 @@ impl KenwoodCatRadio {
         if !(minimum..=maximum).contains(&watts) {
             bail!("CAT power response is outside the profiled range: {watts} W");
         }
-        let span = u32::from(maximum - minimum);
-        Ok((((u32::from(watts - minimum) * 255) + span / 2) / span) as u8)
+        normalize_meter_level(watts - minimum, maximum - minimum)
+            .context("Kenwood RF power range cannot be normalized")
     }
 
     fn normalized_to_watts(&self, level: u8) -> Result<u16> {
@@ -948,8 +948,9 @@ impl KenwoodCatRadio {
             .selected_profile()?
             .power_range_watts
             .context("RF power control is not profiled for this Kenwood model")?;
-        let span = u32::from(maximum - minimum);
-        Ok(minimum + (((u32::from(level) * span) + 127) / 255) as u16)
+        Ok(minimum
+            + denormalize_meter_level(level, maximum - minimum)
+                .context("Kenwood RF power range cannot be denormalized")?)
     }
 }
 
@@ -1996,5 +1997,13 @@ mod tests {
         assert!(writes.lock().unwrap().iter().any(|frame| frame == b"FT0;"));
         assert!(futures::executor::block_on(radio.set_frequency_hz(145_000_000)).is_ok());
         assert!(futures::executor::block_on(radio.set_frequency_hz(1_301_000_000)).is_err());
+    }
+
+    #[test]
+    fn power_controls_use_the_shared_hal_rounding_policy() {
+        let radio =
+            KenwoodCatRadio::new_for_model(KenwoodCatModel::Ts590Sg, "test", 9_600).unwrap();
+        assert_eq!(radio.watts_to_normalized(53).unwrap(), 129);
+        assert_eq!(radio.normalized_to_watts(128).unwrap(), 53);
     }
 }

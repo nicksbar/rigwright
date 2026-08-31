@@ -264,6 +264,7 @@ mod tests {
     fn every_supported_model_has_profile_and_scope_commands() {
         for model in [
             IcomCivModel::Ic705,
+            IcomCivModel::Ic718,
             IcomCivModel::Ic7200,
             IcomCivModel::Ic7300,
             IcomCivModel::Ic7610,

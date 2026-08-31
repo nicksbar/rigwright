@@ -187,4 +187,33 @@ mod tests {
         assert!(k2::PROFILE.encode_mode(Mode::Rtty).is_ok());
         assert!(k2::PROFILE.encode_mode(Mode::Am).is_err());
     }
+
+    #[test]
+    fn every_profile_linear_control_range_reaches_both_hal_endpoints() {
+        for model in [
+            ElecraftModel::K2,
+            ElecraftModel::Kx2,
+            ElecraftModel::Kx3,
+            ElecraftModel::K3,
+            ElecraftModel::K3s,
+            ElecraftModel::K4,
+            ElecraftModel::Kh1,
+        ] {
+            let profile = profile_for_model(model);
+            for maximum in [
+                profile.af_gain_max,
+                profile.rf_gain_max,
+                Some(profile.squelch_max),
+                profile.power_max_watts,
+            ]
+            .into_iter()
+            .flatten()
+            .filter(|maximum| *maximum > 0)
+            {
+                assert_eq!(crate::normalize_meter_level(maximum, maximum), Some(255));
+                assert_eq!(crate::denormalize_meter_level(0, maximum), Some(0));
+                assert_eq!(crate::denormalize_meter_level(255, maximum), Some(maximum));
+            }
+        }
+    }
 }

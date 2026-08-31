@@ -183,12 +183,12 @@ Icom profile exposes the operation; “Yaesu” and “Kenwood” are the curren
 profile-wide implementation claims. A model-specific exception is listed in
 the final column.
 
-| HAL control | Value | Icom CI-V | Modern Yaesu | Classic Yaesu | Kenwood | QSONaut native use |
-|---|---|---:|---:|---:|---:|---|
-| `AfGain` | normalized `U8` 0–255 | RW/P all four profiles | M, not typed | M, not typed | RW/P all three profiles | Q slider |
-| `RfGain` | normalized `U8` 0–255 | RW/P all four profiles | M, not typed | M, not typed | RW/P all three profiles | Q slider |
-| `Squelch` | normalized `U8` 0–255 | RW/P all four profiles | M, not typed | M, not typed | RW/P all three profiles | Q slider |
-| `RfPower` | normalized `U8` 0–255 | RW/P all four profiles | RW/P modern profiles; exact watts also available | M, not typed; power write intentionally absent | RW/P all three profiles; exact watts also available | Q slider and SWR sweep power |
+| HAL control | Value | Icom CI-V | Modern Yaesu | Classic Yaesu | Kenwood | Elecraft | QSONaut native use |
+|---|---|---:|---:|---:|---:|---:|---|
+| `AfGain` | normalized `U8` 0–255 | RW/P all profiled models | M, not typed | M, not typed | RW/P all three profiles | RW/P profile-native maximums | Q slider |
+| `RfGain` | normalized `U8` 0–255 | RW/P all profiled models | M, not typed | M, not typed | RW/P all three profiles | RW/P profile-native maximums; attenuation direction is profile-owned | Q slider |
+| `Squelch` | normalized `U8` 0–255 | RW/P all profiled models | M, not typed | M, not typed | RW/P all three profiles | RW/P profile-native maximums | Q slider |
+| `RfPower` | normalized `U8` 0–255 | RW/P all profiled models; exact watts also available | RW/P modern profiles; exact watts also available | M, not typed; power write intentionally absent | RW/P all three profiles; exact watts also available | RW/P profiled models; native watt limits remain model-specific | Q slider and SWR sweep power |
 | `Preamp` | model-specific `U8` | RW/P all four profiles | M, not typed | M, not typed | RW/P all three profiles | Q compact control |
 | `ExternalPreamp` | model-specific `U8` | RW/P IC-9700 only | M, not typed | M, not typed | M, not typed | Not currently used |
 | `Attenuator` | model-specific `U8` | RW/P all four profiles | M, not typed | M, not typed | M, not typed | Q compact control |
@@ -269,16 +269,32 @@ All typed meter values are normalized to a HAL deflection level of 0–255. This
 is not a universal physical-unit conversion. For example, Icom SWR values have
 documented ratio anchors, but those anchors are not shared by Yaesu or Kenwood.
 
-| HAL meter | Icom CI-V | Modern Yaesu CAT | Classic Yaesu CAT | Kenwood | QSONaut native use |
-|---|---:|---:|---:|---:|---|
-| `Signal` | R/P via `15 02`; IC-7300 V | R/P via `RM1` | R/P via `E7`, 0-15 | R/P via `SM`, profile max 30 or 70 | Q normalized meter panel where advertised |
-| `Power` | R/P via `15 11`; IC-7300 V | R/P via `RM5` | R/P via `F7`, 0-15 | R/P via `SM` (TX), profile max 30 or 70 | Q normalized meter panel where advertised |
-| `Swr` | R/P via `15 12`; IC-7300 V | R/P via `RM6` | M, not typed | R/P via `RM`; selector and range profile-specific | Q live meter and stepped SWR chart |
-| `Alc` | R/P via `15 13`; IC-7300 V | R/P via `RM4` | M, not typed | R/P TS-890S via `RM1` | Q normalized meter panel where advertised |
-| `Compression` | R/P via `15 14`; IC-7300 V | R/P via `RM3` | M, not typed | R/P TS-890S via `RM3` | Q normalized meter panel where advertised |
-| `Current` | R/P via `15 16`; IC-7300 V | R/P via `RM7` | M, not typed | R/P TS-890S via `RM4` | Q normalized meter panel where advertised |
-| `Voltage` | R/P via `15 15`; IC-7300 V | R/P via `RM8` | M, not typed | R/P TS-890S via `RM5` | Q normalized meter panel where advertised |
-| `Temperature` | Manual/protocol surface varies; intentionally not profiled | R/P FTDX101D/MP via `RM9`; not exposed by FT-710, FTDX10, or FT-991A | M, not typed | R/P TS-890S via `RM6` | Q normalized meter panel where advertised |
+| HAL meter | Icom CI-V | Modern Yaesu CAT | Classic Yaesu CAT | Kenwood | Elecraft | QSONaut native use |
+|---|---:|---:|---:|---:|---:|---|
+| `Signal` | R/P via `15 02`; IC-7300 V | R/P via `RM1` | R/P via `E7`, 0-15 | R/P via `SM`, profile max 30 or 70 | R/P profile-native maximums | Q normalized meter panel where advertised |
+| `Power` | R/P via `15 11`; IC-7300 V | R/P via `RM5` | R/P via `F7`, 0-15 | R/P via `SM` (TX), profile max 30 or 70 | R/P `BG`/`PO`, profile-native maximums | Q normalized meter panel where advertised |
+| `Swr` | R/P via `15 12`; IC-7300 V | R/P via `RM6` | M, not typed | R/P via `RM`; selector and range profile-specific | R/P where model profile exposes it | Q live meter and stepped SWR chart |
+| `Alc` | R/P via `15 13`; IC-7300 V | R/P via `RM4` | M, not typed | R/P TS-890S via `RM1` | R/P K3/K3S and K4 event surface | Q normalized meter panel where advertised |
+| `Compression` | R/P via `15 14`; IC-7300 V | R/P via `RM3` | M, not typed | R/P TS-890S via `RM3` | R/P K4 event surface | Q normalized meter panel where advertised |
+| `Current` | R/P via `15 16`; IC-7300 V | R/P via `RM7` | M, not typed | R/P TS-890S via `RM4` | M, not typed | Q normalized meter panel where advertised |
+| `Voltage` | R/P via `15 15`; IC-7300 V | R/P via `RM8` | M, not typed | R/P TS-890S via `RM5` | M, not typed | Q normalized meter panel where advertised |
+| `Temperature` | Manual/protocol surface varies; intentionally not profiled | R/P FTDX101D/MP via `RM9`; not exposed by FT-710, FTDX10, or FT-991A | M, not typed | R/P TS-890S via `RM6` | M, not typed | Q normalized meter panel where advertised |
+
+Normalization policy: all linear HAL levels use the common 0..255 scale and
+half-up rounding in both directions. Vendor-native maxima and model-specific
+power ranges remain profile facts. Generic or undocumented meters are not
+forced into physical units; they remain normalized or unavailable.
+
+### Model normalization facts
+
+| Vendor/models | Native source | HAL treatment |
+|---|---|---|
+| Icom IC-705, IC-718, IC-7200, IC-7300, IC-7610, IC-9700 | CI-V level BCD values already encoded as 0–255 | Exact 0–255 decode; model profiles gate availability |
+| Modern Yaesu FT-710, FTDX10, FTDX101D, FTDX101MP, FT-991A | `RM` meters 0–255; `PC` power has model watt range | Exact meter values; power maps profile minimum/maximum watts to 0–255 |
+| Classic Yaesu FT-817ND, FT-818, FT-857D, FT-897D | `E7`/`F7` meter dots 0–15 | Profile-independent half-up scaling to 0–255 |
+| Kenwood TS-590SG, TS-890S, TS-2000 | `SM`/`RM` meter dots, profile maxima 30 or 70 | Half-up scaling by the selected model profile; power maps 5–100 W |
+| Elecraft K2, KX2, KX3, K3, K3S, K4 | Model-native `SM$`, `BG`, `SW`, `PO`, and profile control maxima | Half-up scaling using model maxima; K4/K3-family meter availability remains profile-gated |
+| Generic Icom/Yaesu/Kenwood adapters and DX Lab/rigctld | No authoritative model range | Expose only protocol-neutral values they can prove; no guessed physical calibration |
 
 Yaesu `RM` selector meanings are documented by the modern CAT manuals: `1`
 signal, `3` compression, `4` ALC, `5` power, `6` SWR, `7` current, and `8`

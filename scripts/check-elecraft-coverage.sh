@@ -24,7 +24,7 @@ if (( total_lines == 0 )); then
 fi
 
 covered_lines=$((total_lines - missed_lines))
-threshold_percent=80
+threshold_percent=84
 printf 'Elecraft line coverage: %d/%d (%d.%02d%%), required: %d%%\n' \
   "$covered_lines" "$total_lines" \
   "$((covered_lines * 100 / total_lines))" \

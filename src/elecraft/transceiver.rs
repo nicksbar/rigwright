@@ -385,11 +385,14 @@ impl ElecraftRadio {
             bail!("Elecraft control value exceeds profile maximum");
         }
         Ok(if id == ControlId::RfPower {
-            ((u32::from(native) * 255) / u32::from(maximum)) as u8
+            crate::normalize_meter_level(native, maximum)
+                .context("Elecraft RF power exceeds normalized range")?
         } else if id == ControlId::RfGain && profile.rf_gain_is_attenuation {
-            ((u32::from(maximum - native) * 255) / u32::from(maximum)) as u8
+            crate::normalize_meter_level(maximum - native, maximum)
+                .context("Elecraft RF gain exceeds normalized range")?
         } else {
-            ((u32::from(native) * 255) / u32::from(maximum)) as u8
+            crate::normalize_meter_level(native, maximum)
+                .context("Elecraft control exceeds normalized range")?
         })
     }
 
@@ -406,9 +409,12 @@ impl ElecraftRadio {
         }
         .context("Elecraft control is not profiled")?;
         let native = if id == ControlId::RfGain && profile.rf_gain_is_attenuation {
-            maximum - (((u32::from(value) * u32::from(maximum)) / 255) as u16)
+            maximum
+                - crate::denormalize_meter_level(value, maximum)
+                    .context("Elecraft RF gain has an invalid normalized range")?
         } else {
-            ((u32::from(value) * u32::from(maximum)) / 255) as u16
+            crate::denormalize_meter_level(value, maximum)
+                .context("Elecraft control has an invalid normalized range")?
         };
         Ok(match id {
             ControlId::RfPower => format!("{native:03}"),
@@ -426,7 +432,8 @@ impl ElecraftRadio {
         let maximum = profile
             .power_max_watts
             .context("Elecraft RF power is not profiled")?;
-        let native = (u16::from(value) * maximum) / 255;
+        let native = crate::denormalize_meter_level(value, maximum)
+            .context("Elecraft RF power has an invalid normalized range")?;
         if profile.model == ElecraftModel::K4 {
             Ok(format!("{native:03}H"))
         } else {
@@ -736,7 +743,10 @@ impl Radio for ElecraftRadio {
             return Ok(Some(if id == ControlId::NoiseReduction {
                 ControlValue::Bool(enabled)
             } else {
-                ControlValue::U8(((u16::from(level) * 255) / u16::from(maximum)) as u8)
+                ControlValue::U8(
+                    crate::normalize_meter_level(u16::from(level), u16::from(maximum))
+                        .context("Elecraft noise-reduction level exceeds normalized range")?,
+                )
             }));
         }
         if let (ControlId::NoiseBlanker, Some(maximum)) = (id, profile.noise_blanker_level_max) {
@@ -828,7 +838,8 @@ impl Radio for ElecraftRadio {
             {
                 let maximum = profile.noise_reduction_level_max.unwrap();
                 let (_, enabled) = Self::parse_level_enabled(&self.query("NR$")?, "NR$", maximum)?;
-                let level = (u16::from(value) * u16::from(maximum) / 255) as u8;
+                let level = crate::denormalize_meter_level(value, u16::from(maximum))
+                    .context("Elecraft noise-reduction level has an invalid normalized range")?;
                 self.set("NR$", &format!("{level:02}{}", if enabled { 1 } else { 0 }))
             }
             (ControlId::NoiseBlanker, ControlValue::Bool(enabled))
@@ -1176,15 +1187,15 @@ mod tests {
         .unwrap();
         assert_eq!(
             block_on(radio.get_control(ControlId::AfGain)).unwrap(),
-            Some(ControlValue::U8(127))
+            Some(ControlValue::U8(128))
         );
         assert_eq!(
             block_on(radio.get_control(ControlId::RfGain)).unwrap(),
-            Some(ControlValue::U8(127))
+            Some(ControlValue::U8(128))
         );
         assert_eq!(
             block_on(radio.get_control(ControlId::Squelch)).unwrap(),
-            Some(ControlValue::U8(127))
+            Some(ControlValue::U8(128))
         );
         block_on(radio.set_control(ControlId::RfGain, ControlValue::U8(255))).unwrap();
         assert!(String::from_utf8(output.lock().unwrap().clone())
@@ -1209,7 +1220,7 @@ mod tests {
         assert_eq!(radio.identify().unwrap(), b"ID017;".to_vec());
         assert_eq!(
             block_on(radio.get_control(ControlId::RfPower)).unwrap(),
-            Some(ControlValue::U8(127))
+            Some(ControlValue::U8(128))
         );
         assert_eq!(
             block_on(radio.get_control(ControlId::Vfo)).unwrap(),
@@ -1249,7 +1260,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             block_on(radio.get_control(ControlId::RfPower)).unwrap(),
-            Some(ControlValue::U8(115))
+            Some(ControlValue::U8(116))
         );
         block_on(radio.set_control(ControlId::RfPower, ControlValue::U8(255))).unwrap();
         assert_eq!(&*output.lock().unwrap(), b"PC;PC110H;");
@@ -1500,7 +1511,7 @@ mod tests {
         );
         assert_eq!(
             block_on(radio.get_control(ControlId::NoiseReductionLevel)).unwrap(),
-            Some(ControlValue::U8(76))
+            Some(ControlValue::U8(77))
         );
         assert_eq!(
             block_on(radio.get_control(ControlId::NoiseBlanker)).unwrap(),

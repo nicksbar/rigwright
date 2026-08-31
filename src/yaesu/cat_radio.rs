@@ -16,8 +16,8 @@ use crate::{
     events::{RadioEvent, RadioEventRouter, RadioEventSubscription},
     hal::{Mode, Radio, RadioCapabilities},
     hal_types::{
-        ControlId, ControlValue, MemoryChannel, MeterId, RepeaterSettings, RepeaterShift, ToneMode,
-        ToneSettings, TunerStatus,
+        denormalize_meter_level, normalize_meter_level, ControlId, ControlValue, MemoryChannel,
+        MeterId, RepeaterSettings, RepeaterShift, ToneMode, ToneSettings, TunerStatus,
     },
     models::YaesuCatModel,
     protocol::ascii_cat,
@@ -1195,8 +1195,8 @@ impl YaesuCatRadio {
         if !(minimum..=maximum).contains(&watts) {
             bail!("CAT power response is outside the profiled range: {watts} W");
         }
-        let span = u32::from(maximum - minimum);
-        Ok((((u32::from(watts - minimum) * 255) + span / 2) / span) as u8)
+        normalize_meter_level(watts - minimum, maximum - minimum)
+            .context("Yaesu RF power range cannot be normalized")
     }
 
     fn normalized_to_watts(&self, level: u8) -> Result<u16> {
@@ -1204,8 +1204,9 @@ impl YaesuCatRadio {
             .selected_profile()?
             .power_range_watts
             .context("RF power control is not profiled for this Yaesu model")?;
-        let span = u32::from(maximum - minimum);
-        Ok(minimum + (((u32::from(level) * span) + 127) / 255) as u16)
+        Ok(minimum
+            + denormalize_meter_level(level, maximum - minimum)
+                .context("Yaesu RF power range cannot be denormalized")?)
     }
 }
 
@@ -1225,11 +1226,11 @@ fn parse_payload<'a>(frame: &'a [u8], command: &str) -> Result<&'a str> {
 }
 
 fn normalize_percent(value: u8) -> u8 {
-    ((u16::from(value) * 255 + 50) / 100) as u8
+    normalize_meter_level(u16::from(value), 100).expect("percent range is non-zero")
 }
 
 fn denormalize_percent(value: u8) -> u8 {
-    ((u16::from(value) * 100 + 127) / 255) as u8
+    denormalize_meter_level(value, 100).expect("percent range is non-zero") as u8
 }
 
 fn decode_repeater_shift(payload: &str) -> Result<RepeaterShift> {
@@ -1972,8 +1973,16 @@ mod tests {
         assert_eq!(ftdx10.normalized_to_watts(255).unwrap(), 100);
         assert_eq!(ftdx10.watts_to_normalized(5).unwrap(), 0);
         assert_eq!(ftdx10.watts_to_normalized(100).unwrap(), 255);
+        assert_eq!(ftdx10.watts_to_normalized(53).unwrap(), 129);
+        assert_eq!(ftdx10.normalized_to_watts(128).unwrap(), 53);
 
         let mp = YaesuCatRadio::new_for_model(YaesuCatModel::Ftdx101Mp, "test", 38_400).unwrap();
         assert_eq!(mp.normalized_to_watts(255).unwrap(), 200);
+    }
+
+    #[test]
+    fn percent_controls_use_the_shared_hal_rounding_policy() {
+        assert_eq!(normalize_percent(50), 128);
+        assert_eq!(denormalize_percent(128), 50);
     }
 }

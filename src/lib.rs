@@ -26,8 +26,9 @@ pub use elecraft::ElecraftRadio;
 pub use events::{RadioEvent, RadioEventRouter, RadioEventSubscription, SubscriptionId};
 pub use hal::{NullRadio, Radio, RadioCapabilities, RadioStatus};
 pub use hal_types::{
-    normalize_meter_level, BaseMode, ControlId, ControlValue, DtmfSequence, MemoryChannel, MeterId,
-    Mode, OperatingMode, RepeaterSettings, RepeaterShift, ToneMode, ToneSettings, TunerStatus,
+    denormalize_meter_level, normalize_meter_level, BaseMode, ControlId, ControlValue,
+    DtmfSequence, MemoryChannel, MeterId, Mode, OperatingMode, RepeaterSettings, RepeaterShift,
+    ToneMode, ToneSettings, TunerStatus,
 };
 pub use icom::civ_radio::{
     enumerate_serial_port_descriptors, enumerate_serial_ports, IcomCiVRadio, IcomProbeResult,

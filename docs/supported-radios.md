@@ -164,6 +164,13 @@ documented `RM` selectors and already return 0..255 values. This is normalized m
 deflection, not a universal physical SWR-ratio conversion; the manuals do not
 define enough cross-vendor ratio calibration to infer one safely.
 
+Elecraft’s profiled K2, KX2, KX3, K3, K3S, and K4 controls and meters follow
+the same HAL normalization policy. Their model-native maxima remain in the
+Elecraft profiles, including the different K4/K3-family meter ranges; linear
+conversions use shared half-up rounding. Generic protocol adapters do not
+invent a model range or physical calibration when the connected radio is
+unknown.
+
 The model-aware `ConfiguredRadio` wrapper delegates optional controls, meters,
 clarifiers, tuner, memory, repeater, and event-router behavior to the selected
 vendor backend. It does not own vendor command semantics. Generic vendor
