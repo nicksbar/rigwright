@@ -4,6 +4,12 @@
 It wraps one `Radio` connection and owns the command worker, refresh cadence,
 state reconciliation, and recovery status.
 
+The snapshot also carries a monotonically increasing session `generation` and
+an explicit `synchronized` flag. Call `advance_generation()` after replacing
+or reconnecting the underlying device; queued work from the previous
+generation is completed with `StaleGeneration`, and in-flight results cannot
+overwrite the new observed state.
+
 Clients submit intent and await a `SessionTicket`. The session provides:
 
 - bounded admission with explicit `QueueFull` backpressure;
@@ -12,7 +18,11 @@ Clients submit intent and await a `SessionTicket`. The session provides:
 - safety-priority PTT commands ahead of ordinary state updates;
 - desired, observed, and pending state in every `RadioSnapshot`;
 - worker-owned refresh polling and ingestion of driver event-router updates;
-- snapshot events and `Starting`, `Ready`, `Degraded`, and `Stopped` status.
+- snapshot events and explicit `Opening`, `Probing`, `Synchronizing`,
+  `Ready`, `Recovering`, `Degraded`, `Closing`, and `Stopped` status values;
+- raw protocol operations that preserve queue order and are never coalesced;
+- `SessionDiagnostics` counters for admission, completion, failure,
+  coalescing, recovery, and generation changes.
 
 The session does not replace vendor drivers. Protocol framing, model ranges,
 control encoding, serial ownership, and profile-specific baud lists remain in

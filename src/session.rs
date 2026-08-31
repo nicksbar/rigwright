@@ -21,9 +21,15 @@ const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionStatus {
+    Disconnected,
+    Opening,
+    Probing,
+    Synchronizing,
     Starting,
     Ready,
+    Recovering,
     Degraded,
+    Closing,
     Stopped,
 }
 
@@ -42,7 +48,19 @@ pub struct RadioSnapshot {
     pub observed: RadioState,
     pub pending: Vec<SessionOperation>,
     pub sequence: u64,
+    pub generation: u64,
+    pub synchronized: bool,
     pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SessionDiagnostics {
+    pub generation: u64,
+    pub queued: u64,
+    pub completed: u64,
+    pub failed: u64,
+    pub coalesced: u64,
+    pub recoveries: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,6 +70,15 @@ pub enum SessionOperation {
     SetMode(Mode),
     SetPtt(bool),
     SetControl(ControlId, ControlValue),
+    Raw(Vec<u8>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionCommandClass {
+    Query,
+    StateWrite,
+    SafetyCritical,
+    Raw,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -66,17 +93,31 @@ impl SessionOperation {
         match self {
             Self::SetPtt(_) => Priority::Safety,
             Self::Refresh => Priority::Refresh,
-            Self::SetFrequency(_) | Self::SetMode(_) | Self::SetControl(_, _) => Priority::State,
+            Self::SetFrequency(_) | Self::SetMode(_) | Self::SetControl(_, _) | Self::Raw(_) => {
+                Priority::State
+            }
         }
     }
 
-    fn coalesce_key(&self) -> CoalesceKey {
+    pub fn class(&self) -> SessionCommandClass {
         match self {
-            Self::Refresh => CoalesceKey::Refresh,
-            Self::SetFrequency(_) => CoalesceKey::Frequency,
-            Self::SetMode(_) => CoalesceKey::Mode,
-            Self::SetPtt(_) => CoalesceKey::Ptt,
-            Self::SetControl(id, _) => CoalesceKey::Control(*id),
+            Self::Refresh => SessionCommandClass::Query,
+            Self::SetPtt(_) => SessionCommandClass::SafetyCritical,
+            Self::SetFrequency(_) | Self::SetMode(_) | Self::SetControl(_, _) => {
+                SessionCommandClass::StateWrite
+            }
+            Self::Raw(_) => SessionCommandClass::Raw,
+        }
+    }
+
+    fn coalesce_key(&self) -> Option<CoalesceKey> {
+        match self {
+            Self::Refresh => Some(CoalesceKey::Refresh),
+            Self::SetFrequency(_) => Some(CoalesceKey::Frequency),
+            Self::SetMode(_) => Some(CoalesceKey::Mode),
+            Self::SetPtt(_) => Some(CoalesceKey::Ptt),
+            Self::SetControl(id, _) => Some(CoalesceKey::Control(*id)),
+            Self::Raw(_) => None,
         }
     }
 }
@@ -98,6 +139,10 @@ pub enum SessionError {
     Closed,
     Superseded,
     Backend(String),
+    InvalidFrame(String),
+    StaleGeneration,
+    TimedOut,
+    Disconnected,
 }
 
 impl fmt::Display for SessionError {
@@ -109,6 +154,12 @@ impl fmt::Display for SessionError {
             Self::Closed => write!(f, "radio session is closed"),
             Self::Superseded => write!(f, "radio session command was superseded"),
             Self::Backend(error) => write!(f, "radio session backend error: {error}"),
+            Self::InvalidFrame(error) => write!(f, "invalid radio session frame: {error}"),
+            Self::StaleGeneration => {
+                write!(f, "radio session command belongs to a stale generation")
+            }
+            Self::TimedOut => write!(f, "radio session command timed out"),
+            Self::Disconnected => write!(f, "radio session is disconnected"),
         }
     }
 }
@@ -183,6 +234,7 @@ impl SessionEventSubscription {
 
 struct QueuedOperation {
     operation: SessionOperation,
+    generation: u64,
     waiters: Vec<oneshot::Sender<Result<RadioSnapshot, SessionError>>>,
 }
 
@@ -190,6 +242,7 @@ struct SharedState {
     queue: VecDeque<QueuedOperation>,
     snapshot: RadioSnapshot,
     closed: bool,
+    diagnostics: SessionDiagnostics,
 }
 
 struct Shared {
@@ -295,6 +348,8 @@ impl RadioSession {
             observed: RadioState::default(),
             pending: Vec::new(),
             sequence: 0,
+            generation: 0,
+            synchronized: false,
             last_error: None,
         };
         let shared = Arc::new(Shared {
@@ -302,6 +357,7 @@ impl RadioSession {
                 queue: VecDeque::new(),
                 snapshot,
                 closed: false,
+                diagnostics: SessionDiagnostics::default(),
             }),
             wake: Condvar::new(),
             events: SessionEventRouter::default(),
@@ -343,6 +399,8 @@ impl RadioSession {
                 observed: RadioState::default(),
                 pending: Vec::new(),
                 sequence: 0,
+                generation: 0,
+                synchronized: false,
                 last_error: Some("radio session lock poisoned".to_string()),
             })
     }
@@ -353,6 +411,14 @@ impl RadioSession {
 
     pub fn capabilities(&self) -> RadioCapabilities {
         self.radio.capabilities()
+    }
+
+    pub fn diagnostics(&self) -> SessionDiagnostics {
+        self.shared
+            .state
+            .lock()
+            .map(|state| state.diagnostics)
+            .unwrap_or_default()
     }
 
     async fn wait(
@@ -374,28 +440,31 @@ impl RadioSession {
             return Err(SessionError::Closed);
         }
         let key = operation.coalesce_key();
-        if let Some(existing) = state
-            .queue
-            .iter_mut()
-            .find(|queued| queued.operation.coalesce_key() == key)
-        {
-            if existing.operation == operation {
+        if let Some(key) = key {
+            if let Some(existing) = state
+                .queue
+                .iter_mut()
+                .find(|queued| queued.operation.coalesce_key() == Some(key))
+            {
+                if existing.operation == operation {
+                    existing.waiters.push(sender);
+                    return Ok(receiver);
+                }
+                for waiter in existing.waiters.drain(..) {
+                    let _ = waiter.send(Err(SessionError::Superseded));
+                }
+                existing.operation = operation.clone();
                 existing.waiters.push(sender);
+                update_desired(&mut state.snapshot.desired, &operation);
+                state.snapshot.pending = state
+                    .queue
+                    .iter()
+                    .map(|item| item.operation.clone())
+                    .collect();
+                self.shared.wake.notify_one();
+                state.diagnostics.coalesced = state.diagnostics.coalesced.wrapping_add(1);
                 return Ok(receiver);
             }
-            for waiter in existing.waiters.drain(..) {
-                let _ = waiter.send(Err(SessionError::Superseded));
-            }
-            existing.operation = operation.clone();
-            existing.waiters.push(sender);
-            update_desired(&mut state.snapshot.desired, &operation);
-            state.snapshot.pending = state
-                .queue
-                .iter()
-                .map(|item| item.operation.clone())
-                .collect();
-            self.shared.wake.notify_one();
-            return Ok(receiver);
         }
         if operation_matches_observed(&state.snapshot, &operation) {
             let _ = sender.send(Ok(state.snapshot.clone()));
@@ -407,6 +476,7 @@ impl RadioSession {
         update_desired(&mut state.snapshot.desired, &operation);
         let queued = QueuedOperation {
             operation,
+            generation: state.diagnostics.generation,
             waiters: vec![sender],
         };
         let index = state
@@ -415,6 +485,7 @@ impl RadioSession {
             .position(|item| item.operation.priority() > queued.operation.priority())
             .unwrap_or(state.queue.len());
         state.queue.insert(index, queued);
+        state.diagnostics.queued = state.diagnostics.queued.wrapping_add(1);
         state.snapshot.pending = state
             .queue
             .iter()
@@ -427,6 +498,16 @@ impl RadioSession {
     fn validate(&self, operation: &SessionOperation) -> Result<(), SessionError> {
         match operation {
             SessionOperation::Refresh => Ok(()),
+            SessionOperation::Raw(frame) if frame.is_empty() => Err(SessionError::InvalidFrame(
+                "raw frame cannot be empty".into(),
+            )),
+            SessionOperation::Raw(_) => {
+                if self.radio.capabilities().can_raw_protocol {
+                    Ok(())
+                } else {
+                    Err(SessionError::Unsupported("raw protocol write".into()))
+                }
+            }
             SessionOperation::SetFrequency(hz) => {
                 if *hz == 0 {
                     return Err(SessionError::Invalid("frequency must be non-zero".into()));
@@ -472,6 +553,29 @@ impl RadioSession {
         self.submit(SessionOperation::Refresh)
     }
 
+    pub fn raw(&self, frame: Vec<u8>) -> Result<SessionTicket, SessionError> {
+        self.submit(SessionOperation::Raw(frame))
+    }
+
+    /// Advance the session generation after a reconnect or device replacement.
+    /// Queued work from the prior connection is rejected before it can reach
+    /// the newly attached transport.
+    pub fn advance_generation(&self) -> Result<u64, SessionError> {
+        let mut state = self.shared.state.lock().map_err(|_| SessionError::Closed)?;
+        state.diagnostics.generation = state.diagnostics.generation.wrapping_add(1);
+        state.snapshot.generation = state.diagnostics.generation;
+        state.snapshot.synchronized = false;
+        state.snapshot.status = SessionStatus::Synchronizing;
+        for queued in state.queue.drain(..) {
+            for waiter in queued.waiters {
+                let _ = waiter.send(Err(SessionError::StaleGeneration));
+            }
+        }
+        state.snapshot.pending.clear();
+        self.shared.wake.notify_one();
+        Ok(state.diagnostics.generation)
+    }
+
     pub fn close(&self) {
         if let Ok(mut state) = self.shared.state.lock() {
             state.closed = true;
@@ -501,7 +605,7 @@ fn update_desired(state: &mut RadioState, operation: &SessionOperation) {
         SessionOperation::SetMode(value) => state.mode = Some(*value),
         SessionOperation::SetPtt(value) => state.ptt = Some(*value),
         SessionOperation::SetControl(id, value) => set_control(state, *id, value.clone()),
-        SessionOperation::Refresh => {}
+        SessionOperation::Refresh | SessionOperation::Raw(_) => {}
     }
 }
 
@@ -531,7 +635,7 @@ fn operation_matches_observed(snapshot: &RadioSnapshot, operation: &SessionOpera
             .controls
             .iter()
             .any(|(existing, current)| existing == id && current == value),
-        SessionOperation::Refresh => false,
+        SessionOperation::Refresh | SessionOperation::Raw(_) => false,
     }
 }
 
@@ -563,6 +667,7 @@ fn worker_loop(
             } else if refresh_interval.is_some_and(|_| Instant::now() >= next_refresh) {
                 Some(QueuedOperation {
                     operation: SessionOperation::Refresh,
+                    generation: state.diagnostics.generation,
                     waiters: Vec::new(),
                 })
             } else {
@@ -585,14 +690,22 @@ fn worker_loop(
         }
         match result {
             Ok(observed) => {
+                if queued.generation != state.diagnostics.generation {
+                    for waiter in queued.waiters {
+                        let _ = waiter.send(Err(SessionError::StaleGeneration));
+                    }
+                    continue;
+                }
                 if let Some(observed) = observed {
                     state.snapshot.observed = observed;
                 } else {
                     update_observed(&mut state.snapshot.observed, &queued.operation);
                 }
                 state.snapshot.status = SessionStatus::Ready;
+                state.snapshot.synchronized = true;
                 state.snapshot.last_error = None;
                 state.snapshot.sequence = state.snapshot.sequence.wrapping_add(1);
+                state.diagnostics.completed = state.diagnostics.completed.wrapping_add(1);
                 let snapshot = state.snapshot.clone();
                 for waiter in queued.waiters {
                     let _ = waiter.send(Ok(snapshot.clone()));
@@ -602,8 +715,17 @@ fn worker_loop(
                     .publish(SessionEvent::SnapshotChanged(snapshot));
             }
             Err(error) => {
-                state.snapshot.status = SessionStatus::Degraded;
+                if queued.generation != state.diagnostics.generation {
+                    for waiter in queued.waiters {
+                        let _ = waiter.send(Err(SessionError::StaleGeneration));
+                    }
+                    continue;
+                }
+                state.snapshot.status = SessionStatus::Recovering;
+                state.snapshot.synchronized = false;
                 state.snapshot.last_error = Some(error.to_string());
+                state.diagnostics.failed = state.diagnostics.failed.wrapping_add(1);
+                state.diagnostics.recoveries = state.diagnostics.recoveries.wrapping_add(1);
                 let error = SessionError::Backend(error.to_string());
                 for waiter in queued.waiters {
                     let _ = waiter.send(Err(error.clone()));
@@ -680,6 +802,10 @@ fn execute(
             futures::executor::block_on(radio.set_control(*id, value.clone()))?;
             Ok(None)
         }
+        SessionOperation::Raw(frame) => {
+            futures::executor::block_on(radio.protocol_write_read(frame))?;
+            Ok(None)
+        }
     }
 }
 
@@ -726,6 +852,10 @@ mod tests {
         async fn get_ptt(&self) -> anyhow::Result<bool> {
             Ok(*self.ptt.lock().unwrap())
         }
+        async fn protocol_write_read(&self, _request: &[u8]) -> anyhow::Result<Vec<u8>> {
+            self.writes.fetch_add(1, Ordering::SeqCst);
+            Ok(Vec::new())
+        }
         fn capabilities(&self) -> RadioCapabilities {
             RadioCapabilities {
                 can_get_frequency: true,
@@ -734,6 +864,7 @@ mod tests {
                 can_set_mode: true,
                 can_get_ptt: true,
                 can_set_ptt: true,
+                can_raw_protocol: true,
                 ..RadioCapabilities::default()
             }
         }
@@ -805,5 +936,83 @@ mod tests {
         });
         std::thread::sleep(Duration::from_millis(10));
         assert_eq!(session.snapshot().observed.frequency_hz, Some(7_000_000));
+    }
+
+    #[test]
+    fn raw_commands_are_admitted_without_coalescing() {
+        let radio = fake();
+        let session = RadioSession::from_radio(
+            Arc::clone(&radio),
+            SessionConfig {
+                queue_capacity: 4,
+                refresh_interval: None,
+            },
+        )
+        .unwrap();
+        let first = session.raw(vec![0xFE, 0xFD]).unwrap();
+        let second = session.raw(vec![0xFE, 0xFD]).unwrap();
+        futures::executor::block_on(first).unwrap().unwrap();
+        futures::executor::block_on(second).unwrap().unwrap();
+        assert_eq!(radio.writes.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            SessionOperation::Raw(vec![1]).class(),
+            SessionCommandClass::Raw
+        );
+        assert!(matches!(
+            session.raw(Vec::new()),
+            Err(SessionError::InvalidFrame(_))
+        ));
+        assert_eq!(session.diagnostics().completed, 2);
+    }
+
+    #[test]
+    fn one_thousand_state_writes_collapse_to_the_latest_intent() {
+        let radio = fake();
+        let session = RadioSession::from_radio(
+            Arc::clone(&radio),
+            SessionConfig {
+                queue_capacity: 4,
+                refresh_interval: None,
+            },
+        )
+        .unwrap();
+        let mut latest = None;
+        for value in 1..=1_000 {
+            let ticket = session.set_frequency(value).unwrap();
+            latest = Some(ticket);
+        }
+        assert_eq!(
+            futures::executor::block_on(latest.unwrap())
+                .unwrap()
+                .unwrap()
+                .observed
+                .frequency_hz,
+            Some(1_000)
+        );
+        assert!(radio.writes.load(Ordering::SeqCst) < 1_000);
+    }
+
+    #[test]
+    fn generation_advance_invalidates_queued_work_and_marks_unsynchronized() {
+        let radio = fake();
+        let session = RadioSession::from_radio(
+            Arc::clone(&radio),
+            SessionConfig {
+                queue_capacity: 4,
+                refresh_interval: None,
+            },
+        )
+        .unwrap();
+        let first = session.set_frequency(1).unwrap();
+        let second = session.set_mode(Mode::Cw).unwrap();
+        let generation = session.advance_generation().unwrap();
+        assert_eq!(generation, 1);
+        assert_eq!(session.snapshot().generation, 1);
+        assert!(!session.snapshot().synchronized);
+        assert!(matches!(
+            futures::executor::block_on(second).unwrap(),
+            Err(SessionError::StaleGeneration)
+        ));
+        let _ = futures::executor::block_on(first);
     }
 }

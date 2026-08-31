@@ -43,8 +43,9 @@ pub use protocol::yaesu_legacy_cat::{
     RxStatus as YaesuLegacyRxStatus, TxStatus as YaesuLegacyTxStatus,
 };
 pub use session::{
-    RadioSession, RadioSnapshot, RadioState, SessionConfig, SessionError, SessionEvent,
-    SessionEventRouter, SessionEventSubscription, SessionOperation, SessionStatus, SessionTicket,
+    RadioSession, RadioSnapshot, RadioState, SessionCommandClass, SessionConfig,
+    SessionDiagnostics, SessionError, SessionEvent, SessionEventRouter, SessionEventSubscription,
+    SessionOperation, SessionStatus, SessionTicket,
 };
 pub use transport::RadioTransport;
 pub use yaesu::cat_radio::{YaesuSerialPolicy, YaesuTransportMetrics};
