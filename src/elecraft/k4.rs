@@ -16,7 +16,7 @@ pub const PROFILE: ElecraftProfile = ElecraftProfile {
     supports_vfo_b: true,
     supports_split: true,
     supports_rit_xit: true,
-    power_max_watts: Some(100),
+    power_max_watts: Some(110),
     preamp_max: Some(2),
     attenuator_max: Some(30),
     supports_noise_blanker: true,

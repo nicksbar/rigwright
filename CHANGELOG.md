@@ -45,6 +45,8 @@
   raw family-specific flag string and explicit K4/KH1 schema boundary.
 - Expose K4's actual-RF transmit query through `TQX`, distinct from logical
   `TQ` state during the documented S-meter holdoff interval.
+- Correct K4 RF-power handling to use the documented 110 W `PCnnnH` range
+  framing while preserving legacy numeric `PC` behavior on other models.
 - Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
   outside this initial radio slice.
 

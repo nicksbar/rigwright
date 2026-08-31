@@ -72,7 +72,7 @@ tester before the model can be promoted beyond `Framework`.
 
 | CAT surface | Likely Elecraft command family | Rigwright work needed | Tester requirement |
 |---|---|---|---|
-| RF power | `PC` | Implemented as normalized profile-scaled control; tester coverage remains open | Confirm readback, minimum/maximum power, and behavior while transmitting |
+| RF power | `PC` | Implemented as normalized profile-scaled control; K4 uses `PCnnnH` high-power framing; tester coverage remains open | Confirm readback, minimum/maximum power, and behavior while transmitting |
 | VFO-A/B and independent operations | `FA`/`FB`, VFO selection commands | Implemented with independent VFO frequency methods plus profile-gated selection | Exercise both VFOs, switching, persistence, and unsolicited updates |
 | Split | VFO selection plus split/status commands | Implemented through profile-gated `ControlId::Split`; preserve selected-VFO context | Verify transmit VFO, receive VFO, and split on/off without changing activity context |
 | RIT/XIT | RIT/XIT enable and offset commands | Implemented for signed offsets and enable controls where profiled | Verify sign, range, zeroing, and independent RIT/XIT behavior |

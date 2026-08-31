@@ -57,7 +57,7 @@ controls or meters until a concrete model profile is selected.
 | Frequency read/write | `get/set_frequency_hz` | H/P for K2/KX2/KX3/K3/K3S/K4; KH1 write-only |
 | Operating mode read/write | `get/set_mode` | H/P for K2/KX2/KX3/K3/K3S/K4; KH1 write-only |
 | PTT write/read | `set_ptt`, `get_ptt`, `get_actual_tx_state` | H/P via `TX`/`RX` and `TQ`; K4 actual-RF state also via `TQX` |
-| RF power | `ControlId::RfPower` | H/P via profile-scaled `PC` |
+| RF power | `ControlId::RfPower` | H/P via profile-scaled `PC`; K4 uses documented `PCnnnH` range framing |
 | VFO selection / split | `ControlId::{Vfo,Split}`, `get/set_vfo_frequency_hz` | H/P via `FR`/`FT` and independent `FA`/`FB`; K3/K3S receive-selection semantics remain distinct |
 | RIT/XIT enable and offset | `ControlId::{Rit,Xit}`, offset methods | H/P via `RT`/`XT`/`RO`/`IF` |
 | Signal meter | `MeterId::Signal` | H/P via `SM` |

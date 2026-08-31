@@ -344,7 +344,18 @@ impl ElecraftRadio {
         }
         .context("unexpected Elecraft receiver-control response")?
         .trim_end_matches(';');
-        let native = raw.strip_prefix('-').unwrap_or(raw).parse::<u16>()?;
+        let native_text = if id == ControlId::RfPower && profile.model == ElecraftModel::K4 {
+            raw.strip_suffix('L')
+                .or_else(|| raw.strip_suffix('H'))
+                .or_else(|| raw.strip_suffix('X'))
+                .context("K4 power response is missing its range suffix")?
+        } else {
+            raw
+        };
+        let native = native_text
+            .strip_prefix('-')
+            .unwrap_or(native_text)
+            .parse::<u16>()?;
         let maximum = match id {
             ControlId::AfGain => profile.af_gain_max,
             ControlId::RfGain => profile.rf_gain_max,
@@ -401,7 +412,12 @@ impl ElecraftRadio {
         let maximum = profile
             .power_max_watts
             .context("Elecraft RF power is not profiled")?;
-        Ok(format!("{:03}", (u16::from(value) * maximum) / 255))
+        let native = (u16::from(value) * maximum) / 255;
+        if profile.model == ElecraftModel::K4 {
+            Ok(format!("{native:03}H"))
+        } else {
+            Ok(format!("{native:03}"))
+        }
     }
 
     fn is_split(&self) -> Result<bool> {
@@ -1136,6 +1152,26 @@ mod tests {
             &*output.lock().unwrap(),
             b"ID;PC;FR;FR;FT;IF;IF;FB;FB00014061000;PC110;FR0;FT1;RT1;XT0;RO-0999;"
         );
+    }
+
+    #[test]
+    fn k4_power_control_uses_documented_high_power_suffix() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K4),
+            9_600,
+            MemoryTransport {
+                input: b"PC050H;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            block_on(radio.get_control(ControlId::RfPower)).unwrap(),
+            Some(ControlValue::U8(115))
+        );
+        block_on(radio.set_control(ControlId::RfPower, ControlValue::U8(255))).unwrap();
+        assert_eq!(&*output.lock().unwrap(), b"PC;PC110H;");
     }
 
     #[test]
