@@ -28,7 +28,10 @@ pub fn supports_mode(model: IcomCivModel, mode: BaseMode) -> bool {
                 | BaseMode::RttyR
                 | BaseMode::Wfm
         ),
-        IcomCivModel::Ic7200 | IcomCivModel::Ic7300 | IcomCivModel::Ic7610 => matches!(
+        IcomCivModel::Ic718
+        | IcomCivModel::Ic7200
+        | IcomCivModel::Ic7300
+        | IcomCivModel::Ic7610 => matches!(
             mode,
             BaseMode::Lsb
                 | BaseMode::Usb

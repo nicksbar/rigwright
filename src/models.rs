@@ -340,6 +340,7 @@ impl RadioModelProfile {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IcomCivModel {
     Ic705,
+    Ic718,
     Ic7200,
     Ic7300,
     Ic7610,
@@ -390,6 +391,7 @@ impl IcomCivModel {
     pub fn model_name(self) -> &'static str {
         match self {
             Self::Ic705 => "IC-705",
+            Self::Ic718 => "IC-718",
             Self::Ic7200 => "IC-7200",
             Self::Ic7300 => "IC-7300",
             Self::Ic7610 => "IC-7610",
@@ -400,6 +402,7 @@ impl IcomCivModel {
     pub fn from_model_name(model: &str) -> Option<Self> {
         match model.to_ascii_uppercase().as_str() {
             "IC-705" => Some(Self::Ic705),
+            "IC-718" => Some(Self::Ic718),
             "IC-7200" => Some(Self::Ic7200),
             "IC-7300" => Some(Self::Ic7300),
             "IC-7610" => Some(Self::Ic7610),
@@ -523,6 +526,15 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         model: "IC-7200",
         protocol: Protocol::IcomCiV {
             default_address: 0x76,
+        },
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Icom,
+        model: "IC-718",
+        protocol: Protocol::IcomCiV {
+            default_address: 0x5E,
         },
         support: SupportLevel::Framework,
         capabilities: HF_BASE,

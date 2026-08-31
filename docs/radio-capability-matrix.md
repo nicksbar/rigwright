@@ -65,6 +65,13 @@ frequency and mode operations, RIT/split/VFO/memory/tuner paths, receiver
 controls, tuning-step selection, and signal/power/SWR/ALC meters. It has no
 native scope profile and remains untested on physical hardware.
 
+The IC-718 is also cataloged at framework maturity from the local
+`IC-718 ADVANCED MANUAL 2024.pdf`. Its profile uses CI-V address `5E` and
+covers the manual's HF/50 MHz frequency and mode, VFO, split, tuning-step,
+AGC, preamp, noise, attenuator, RF power, memory, and S-meter surfaces. It
+does not advertise scope, repeater, or I/Q support, and remains untested on
+physical hardware.
+
 | Transport behavior | Status |
 |---|---|
 | One in-flight CI-V transaction | H; deliberately retained because CI-V frames have no transaction ID |

@@ -247,6 +247,7 @@ impl IcomCivProfile {
 pub fn profile_for_model(model: crate::models::IcomCivModel) -> &'static IcomCivProfile {
     match model {
         crate::models::IcomCivModel::Ic705 => &crate::icom::ic705::CIV_PROFILE,
+        crate::models::IcomCivModel::Ic718 => &crate::icom::ic718::CIV_PROFILE,
         crate::models::IcomCivModel::Ic7200 => &crate::icom::ic7200::CIV_PROFILE,
         crate::models::IcomCivModel::Ic7300 => &crate::icom::ic7300::CIV_PROFILE,
         crate::models::IcomCivModel::Ic7610 => &crate::icom::ic7610::CIV_PROFILE,

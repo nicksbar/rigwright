@@ -3120,6 +3120,7 @@ mod tests {
                 0xE0,
                 match model {
                     crate::models::IcomCivModel::Ic705 => 0xA4,
+                    crate::models::IcomCivModel::Ic718 => 0x5E,
                     crate::models::IcomCivModel::Ic7200 => 0x76,
                     crate::models::IcomCivModel::Ic7300 => 0x94,
                     crate::models::IcomCivModel::Ic7610 => 0x98,
@@ -3148,6 +3149,7 @@ mod tests {
             let (transport, writes) = TestTransport::with_reads(vec![TestTransport::ack(
                 match model {
                     crate::models::IcomCivModel::Ic705 => 0xA4,
+                    crate::models::IcomCivModel::Ic718 => 0x5E,
                     crate::models::IcomCivModel::Ic7200 => 0x76,
                     crate::models::IcomCivModel::Ic7300 => 0x94,
                     crate::models::IcomCivModel::Ic7610 => 0x98,
@@ -3160,6 +3162,7 @@ mod tests {
                 0xE0,
                 match model {
                     crate::models::IcomCivModel::Ic705 => 0xA4,
+                    crate::models::IcomCivModel::Ic718 => 0x5E,
                     crate::models::IcomCivModel::Ic7200 => 0x76,
                     crate::models::IcomCivModel::Ic7300 => 0x94,
                     crate::models::IcomCivModel::Ic7610 => 0x98,
