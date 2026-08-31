@@ -35,6 +35,8 @@
   events and expose the documented `TM1`/`TM0` reporting toggle.
 - Add explicit independent Elecraft VFO-A/VFO-B frequency read/write methods
   using `FA`/`FB`, while keeping receive/transmit selection semantics separate.
+- Add K3/K3S transmit meter-source selection through documented `TM0`/`TM1`
+  commands, keeping it distinct from K4's streaming `TM` reports.
 - Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
   outside this initial radio slice.
 

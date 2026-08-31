@@ -153,6 +153,16 @@ impl ElecraftRadio {
         self.set("TM", if enabled { "1" } else { "0" })
     }
 
+    /// Select the K3/K3S transmit bargraph source used by `BG`: RF power
+    /// (`false`, `TM0`) or ALC (`true`, `TM1`).
+    pub fn set_tx_meter_mode(&self, alc: bool) -> Result<()> {
+        anyhow::ensure!(
+            matches!(self.model, Some(ElecraftModel::K3 | ElecraftModel::K3s)),
+            "Elecraft TM meter-mode control is only profiled for K3/K3S"
+        );
+        self.set("TM", if alc { "1" } else { "0" })
+    }
+
     /// Read the independent frequency register for VFO A (`0`) or VFO B
     /// (`1`). This is separate from selecting the active receive VFO.
     pub fn get_vfo_frequency_hz(&self, vfo: u8) -> Result<u64> {
@@ -1124,6 +1134,23 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn k3_tx_meter_mode_selects_bg_rf_or_alc_source() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K3s),
+            9_600,
+            MemoryTransport {
+                input: b"TM1;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        radio.set_tx_meter_mode(true).unwrap();
+        radio.set_tx_meter_mode(false).unwrap();
+        assert_eq!(&*output.lock().unwrap(), b"TM1;TM0;");
     }
 
     #[test]
