@@ -17,6 +17,27 @@ working end-to-end driver for that radio.
 | Yaesu legacy binary CAT | FT-817ND, FT-818, FT-857D, FT-897D | Framework | [FT-817ND manual](https://www.yaesu.com/product-detail.aspx?CatName=Legacy&Model=FT-817ND), [FT-818 manual](https://public2024.yaesu.com/product-detail.aspx?CatName=Legacy&Model=FT-818), [FT-857D manual](https://www.yaesu.com/product-detail.aspx?CatName=Legacy&Model=FT-857D), [FT-897D manual](https://www.yaesu.com/product-detail.aspx?CatName=Legacy&Model=FT-897D) |
 | Kenwood | TS-590SG, TS-890S, TS-2000 | Framework | [Kenwood command-reference downloads](https://www.kenwood.com/i/products/info/amateur/software_download.html), [TS-2000 manual](https://www.kenwood.com/usa/Support/pdf/TS-2000-Owner-Manual.PDF) |
 
+## Elecraft component audit
+
+Elecraft is intentionally not listed as a supported radio until the
+transceiver backend and station-component boundary are implemented. The local
+references currently available under `_manuals/elecraft` are:
+
+| Surface | Reference | Initial boundary |
+|---|---|---|
+| K2 | `KIO2 Pgmrs Ref rev E.pdf` | Transceiver profile |
+| KX2/KX3/K3/K3S | `K3S&K3&KX3&KX2 Pgmrs Ref, G5.pdf` | Shared transceiver family with profile differences |
+| K4 | `K4 Programmer's Reference, rev. D5.pdf`; `K4 Command Index Rev3.pdf` | Transceiver plus optional Ethernet/streaming capabilities |
+| KH1 | `Elecraft KH1 Programmer's Ref, rev B2.pdf` | Separate limited transceiver profile |
+| P3/PX3 | `P3_Pgmrs_Ref_Rev_A7.pdf`; `PX3_Pgmrs_Ref_A6.pdf` | Separate spectrum components |
+| KAT500 | `KAT500 Automatic Antenna Tuner Serial Command Reference.pdf` | Separate tuner component |
+| KPA500/KXPA100 | `KPA500 Programmers Ref.pdf`; `KXPA100 Amplifier Command Reference.pdf` | Separate amplifier components |
+
+These documents establish command syntax and documented capabilities only.
+They do not constitute physical-radio or accessory validation. The proposed
+component boundary and implementation order are recorded in
+[`adding-elecraft.md`](adding-elecraft.md).
+
 ## Icom manual audit
 
 The Icom profiles were checked against the official manuals available in the

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.17 — Elecraft component architecture groundwork
+
+- Document the Elecraft boundary between K2/KX/K3/K4/KH1 transceivers and
+  separate P3/PX3, KAT, and KPA/KXPA station components.
+- Establish the profile-driven implementation plan for shared semicolon CAT,
+  K4 streaming/Ethernet, and limited KH1 command semantics.
+
 ## 0.1.16 — model-correct meter capabilities
 
 - Correct the IC-7300 capability profile to omit temperature, which is

@@ -34,6 +34,10 @@ mutex or another latency-sensitive application lock.
   five-byte binary CAT as a separate profiled backend.
 - `kenwood/cat_radio.rs` is the persistent, model-neutral Kenwood PC-control
   transport; `kenwood/profile.rs` owns per-model command differences.
+- `elecraft/` will contain the shared semicolon-framed transceiver transport
+  and declarative transceiver profiles. Tuners, amplifiers, and panadapters
+  are station components rather than `Radio` variants; see
+  [`adding-elecraft.md`](adding-elecraft.md).
 - `rigctld.rs` contains the Hamlib TCP backend.
 - `dxlab.rs` contains the DX Lab Suite Commander TCP backend.
 - `NullRadio` is an in-memory backend for tests and offline UI work.
@@ -172,3 +176,9 @@ See [`adding-icom-model.md`](adding-icom-model.md) and
 and
 [`supported-radios.md`](supported-radios.md) for exact manual editions and the
 boundary between implementation and validation.
+
+Elecraft follows the same profile rule but adds a component boundary. A
+transceiver can implement `Radio`, while P3/PX3 spectrum instruments and
+KAT/KPA/KXPA tuner/amplifier equipment remain separate station components.
+Their shared ASCII framing is reusable transport code, not evidence that they
+share one HAL or one model catalog.
