@@ -40,6 +40,28 @@ check `Radio::capabilities()`, `supports_control()`, and `supports_meter()` as
 appropriate. A generic vendor driver deliberately reports no optional typed
 controls or meters until a concrete model profile is selected.
 
+## Elecraft first implementation slice
+
+| Model profiles | Support level | Manual evidence |
+|---|---|---|
+| K2, KX2, KX3, K3, K3S, K4 | Framework | `KIO2 Pgmrs Ref rev E.pdf`, `K3S&K3&KX3&KX2 Pgmrs Ref, G5.pdf`, `K4 Programmer's Reference, rev. D5.pdf` |
+
+| Operation | HAL surface | Elecraft status |
+|---|---|---:|
+| Frequency read/write | `get/set_frequency_hz` | H/P |
+| Operating mode read/write | `get/set_mode` | H/P for selected profiles |
+| PTT write/read | `set_ptt`, `get_ptt` | H/P via `TX`/`RX` and `TQ` |
+| Signal meter | `MeterId::Signal` | H/P via `SM` |
+| AF gain | `ControlId::AfGain` | H/P via `AG` |
+| Raw protocol | `protocol_write_read` | H/P |
+
+Elecraft profile differences currently cover K2 versus K3-family mode tables,
+model-specific baud lists, conservative HF frequency ranges, and normalized
+S-meter limits. K4 Ethernet/streaming, Auto-Info event routing, VFO-B
+selection, RF power, and the wider K3-family control surface remain open.
+KH1 and P3/PX3/KAT/KPA/KXPA equipment are separate future profiles or station
+components and are not included in this row.
+
 ## Typed controls
 
 The following table lists every current `ControlId`. “Icom” means the selected

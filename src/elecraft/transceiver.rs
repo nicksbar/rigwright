@@ -1,39 +1,23 @@
 //! Shared semicolon-framed Elecraft transceiver driver.
 
-use std::{
-    io::ErrorKind,
-    sync::{Arc, Mutex},
-    thread,
-    time::{Duration, Instant},
-};
-
-use anyhow::{bail, Context, Result};
-use async_trait::async_trait;
-use serialport::{DataBits, FlowControl, Parity, StopBits};
-
 use crate::{
     hal::{Mode, Radio, RadioCapabilities},
     hal_types::{ControlId, ControlValue, MeterId},
-    transport::{RadioTransport, SerialPortTransport},
+    transport::RadioTransport,
 };
+use anyhow::{bail, Context, Result};
+use async_trait::async_trait;
 
-use super::profile::{profile_for_model, ElecraftModel, ElecraftProfile};
-
-const RESPONSE_TIMEOUT: Duration = Duration::from_millis(1_200);
-const MAX_FRAME_LEN: usize = 512;
-
-#[derive(Default)]
-struct TransportState {
-    port: Option<Box<dyn RadioTransport>>,
-    external: Option<Box<dyn RadioTransport>>,
-    pending: Vec<u8>,
-}
+use super::{
+    profile::{profile_for_model, ElecraftModel, ElecraftProfile},
+    transport::ElecraftTransport,
+};
 
 pub struct ElecraftRadio {
     model: Option<ElecraftModel>,
     port: String,
     baud_rate: u32,
-    transport: Arc<Mutex<TransportState>>,
+    transport: ElecraftTransport,
 }
 
 impl Clone for ElecraftRadio {
@@ -42,7 +26,7 @@ impl Clone for ElecraftRadio {
             model: self.model,
             port: self.port.clone(),
             baud_rate: self.baud_rate,
-            transport: Arc::clone(&self.transport),
+            transport: self.transport.clone(),
         }
     }
 }
@@ -86,11 +70,7 @@ impl ElecraftRadio {
             model,
             port: String::new(),
             baud_rate,
-            transport: Arc::new(Mutex::new(TransportState {
-                port: None,
-                external: Some(Box::new(transport)),
-                pending: Vec::new(),
-            })),
+            transport: ElecraftTransport::external(transport),
         })
     }
 
@@ -99,11 +79,12 @@ impl ElecraftRadio {
     }
 
     fn new_internal(model: Option<ElecraftModel>, port: impl Into<String>, baud_rate: u32) -> Self {
+        let port = port.into();
         Self {
             model,
-            port: port.into(),
+            port: port.clone(),
             baud_rate,
-            transport: Arc::new(Mutex::new(TransportState::default())),
+            transport: ElecraftTransport::serial(port, baud_rate),
         }
     }
 
@@ -111,99 +92,12 @@ impl ElecraftRadio {
         self.model.map(profile_for_model)
     }
 
-    fn with_transport<T>(
-        &self,
-        operation: impl FnOnce(&mut TransportState) -> Result<T>,
-    ) -> Result<T> {
-        let mut state = self
-            .transport
-            .lock()
-            .map_err(|_| anyhow::anyhow!("Elecraft transport lock poisoned"))?;
-        if state.port.is_none() && state.external.is_none() {
-            if self.port.trim().is_empty() {
-                bail!("a serial port is required for Elecraft control");
-            }
-            state.port = Some(Box::new(SerialPortTransport(
-                serialport::new(&self.port, self.baud_rate)
-                    .data_bits(DataBits::Eight)
-                    .parity(Parity::None)
-                    .stop_bits(StopBits::One)
-                    .flow_control(FlowControl::None)
-                    .timeout(RESPONSE_TIMEOUT)
-                    .open()
-                    .with_context(|| {
-                        format!("failed to open Elecraft serial port {}", self.port)
-                    })?,
-            )));
-        }
-        let result = operation(&mut state);
-        if result.is_err() {
-            state.port = None;
-            state.pending.clear();
-        }
-        result
-    }
-
-    fn transact(&self, command: &[u8], response_prefix: Option<&[u8]>) -> Result<Vec<u8>> {
-        self.with_transport(|state| {
-            let transport = state
-                .external
-                .as_mut()
-                .or(state.port.as_mut())
-                .map(|p| &mut **p)
-                .context("Elecraft transport unavailable")?;
-            transport
-                .set_timeout(RESPONSE_TIMEOUT)
-                .context("failed to set Elecraft timeout")?;
-            transport
-                .write_all(command)
-                .context("failed to write Elecraft command")?;
-            transport
-                .flush()
-                .context("failed to flush Elecraft command")?;
-            let Some(prefix) = response_prefix else {
-                return Ok(Vec::new());
-            };
-            let deadline = Instant::now() + RESPONSE_TIMEOUT;
-            loop {
-                if let Some(end) = state.pending.iter().position(|b| *b == b';') {
-                    let frame: Vec<u8> = state.pending.drain(..=end).collect();
-                    if frame.starts_with(prefix) {
-                        return Ok(frame);
-                    }
-                    continue;
-                }
-                if state.pending.len() > MAX_FRAME_LEN {
-                    bail!("Elecraft receive frame exceeded safety limit");
-                }
-                if Instant::now() >= deadline {
-                    bail!(
-                        "timed out waiting for Elecraft response to {}",
-                        String::from_utf8_lossy(command)
-                    );
-                }
-                let mut buffer = [0_u8; 128];
-                match transport.read(&mut buffer) {
-                    Ok(count) if count > 0 => state.pending.extend_from_slice(&buffer[..count]),
-                    Ok(_) => thread::sleep(Duration::from_millis(5)),
-                    Err(error) if error.kind() == ErrorKind::TimedOut => {}
-                    Err(error) => return Err(error).context("failed to read Elecraft response"),
-                }
-            }
-        })
-    }
-
     fn query(&self, command: &str) -> Result<Vec<u8>> {
-        let mut frame = command.as_bytes().to_vec();
-        frame.push(b';');
-        self.transact(&frame, Some(command.as_bytes()))
+        self.transport.query(command)
     }
 
     fn set(&self, command: &str, parameter: &str) -> Result<()> {
-        let mut frame = command.as_bytes().to_vec();
-        frame.extend_from_slice(parameter.as_bytes());
-        frame.push(b';');
-        self.transact(&frame, None).map(|_| ())
+        self.transport.set(command, parameter)
     }
 
     fn selected_frequency(&self) -> &'static str {
@@ -353,7 +247,8 @@ impl Radio for ElecraftRadio {
         if !command.ends_with(b";") {
             command.push(b';');
         }
-        self.transact(&command, Some(&command[..command.len() - 1]))
+        self.transport
+            .transact(&command, Some(&command[..command.len() - 1]))
     }
 }
 
@@ -362,6 +257,8 @@ mod tests {
     use super::*;
     use futures::executor::block_on;
     use std::io::{Read, Write};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     struct MemoryTransport {
         input: Vec<u8>,

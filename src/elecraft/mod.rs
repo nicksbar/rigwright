@@ -5,5 +5,6 @@
 
 pub mod profile;
 pub mod transceiver;
+pub(crate) mod transport;
 
 pub use transceiver::ElecraftRadio;
