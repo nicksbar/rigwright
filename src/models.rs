@@ -254,6 +254,7 @@ impl RadioModelProfile {
                 let profile = crate::icom::profile::profile_for_model(model);
                 match id {
                     ControlId::Attenuator => Some(profile.attenuator_values),
+                    ControlId::Filter => Some(profile.control_capabilities.filter_values),
                     _ => None,
                 }
             }
