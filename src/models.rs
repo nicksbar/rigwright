@@ -278,6 +278,44 @@ impl RadioModelProfile {
             _ => None,
         }
     }
+
+    /// Convert a normalized meter reading to a documented physical value when
+    /// the selected model has an authoritative calibration. `None` means the
+    /// neutral HAL should remain in normalized units.
+    pub fn calibrated_meter_value(self, id: crate::MeterId, raw: u8) -> Option<f32> {
+        use crate::MeterId;
+
+        if !matches!(self.protocol, Protocol::IcomCiV { .. }) || self.model != "IC-7300" {
+            return None;
+        }
+        match id {
+            MeterId::Swr => {
+                let anchors = [(0_u8, 1.0_f32), (48, 1.5), (80, 2.0), (120, 3.0)];
+                Some(
+                    anchors
+                        .windows(2)
+                        .find(|window| raw <= window[1].0)
+                        .map(|window| {
+                            let (low_level, low_ratio) = window[0];
+                            let (high_level, high_ratio) = window[1];
+                            let fraction = f32::from(raw.saturating_sub(low_level))
+                                / f32::from(high_level - low_level);
+                            low_ratio + fraction * (high_ratio - low_ratio)
+                        })
+                        .unwrap_or(3.0),
+                )
+            }
+            MeterId::Voltage => {
+                let value = f32::from(raw);
+                Some(if raw <= 13 {
+                    (value * 10.0 / 13.0).clamp(0.0, 10.0)
+                } else {
+                    (10.0 + (value - 13.0) * 6.0 / (241.0 - 13.0)).min(16.0)
+                })
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -658,6 +696,21 @@ mod tests {
     #[test]
     fn model_lookup_is_case_insensitive() {
         assert_eq!(find_model("ic-7300").unwrap().model, "IC-7300");
+    }
+
+    #[test]
+    fn model_profiles_own_documented_meter_calibration() {
+        let ic7300 = find_model("IC-7300").expect("IC-7300 profile");
+        assert_eq!(
+            ic7300.calibrated_meter_value(crate::MeterId::Swr, 80),
+            Some(2.0)
+        );
+        assert_eq!(
+            ic7300.calibrated_meter_value(crate::MeterId::Voltage, 13),
+            Some(10.0)
+        );
+        let ft710 = find_model("FT-710").expect("FT-710 profile");
+        assert_eq!(ft710.calibrated_meter_value(crate::MeterId::Swr, 80), None);
     }
 
     #[test]
