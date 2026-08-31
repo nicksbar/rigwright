@@ -13,5 +13,7 @@ pub mod kx3;
 pub mod profile;
 pub mod transceiver;
 pub(crate) mod transport;
+pub(crate) mod tuning;
 
 pub use transceiver::ElecraftRadio;
+pub use tuning::VfoDirection;

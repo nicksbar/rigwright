@@ -39,6 +39,8 @@
   commands, keeping it distinct from K4's streaming `TM` reports.
 - Preserve the K4 `TM` compressor field as a typed normalized compression-meter
   event alongside ALC, forward power, and SWR.
+- Add model-specific Elecraft VFO movement through `UP`/`DN` and `UPB`/`DNB`,
+  including K3-family step-table indices and K2/K4 current-step behavior.
 - Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
   outside this initial radio slice.
 

@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use super::{
     profile::{profile_for_model, ElecraftModel, ElecraftProfile},
     transport::ElecraftTransport,
+    tuning::{self, VfoDirection},
 };
 
 pub struct ElecraftRadio {
@@ -199,6 +200,16 @@ impl ElecraftRadio {
             command,
             &format!("{value:0width$}", width = profile.frequency_width),
         )
+    }
+
+    /// Move VFO A (`0`) or VFO B (`1`) by one of Elecraft's documented CAT
+    /// step-table entries. K2/K4 use the radio's current step size and must
+    /// receive `None`; K3-family radios accept indices 0..=9.
+    pub fn move_vfo(&self, vfo: u8, direction: VfoDirection, step_index: Option<u8>) -> Result<()> {
+        let model = self
+            .model
+            .context("Elecraft VFO movement requires a selected model")?;
+        self.set(&tuning::command(model, vfo, direction, step_index)?, "")
     }
 
     fn selected_frequency(&self) -> &'static str {
@@ -1174,6 +1185,23 @@ mod tests {
         .unwrap();
         block_on(radio.select_memory_channel(7)).unwrap();
         assert_eq!(&*output.lock().unwrap(), b"MC007;");
+    }
+
+    #[test]
+    fn vfo_movement_uses_model_specific_up_down_frames() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K3),
+            9_600,
+            MemoryTransport {
+                input: Vec::new(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        radio.move_vfo(0, VfoDirection::Up, Some(8)).unwrap();
+        radio.move_vfo(1, VfoDirection::Down, Some(5)).unwrap();
+        assert_eq!(&*output.lock().unwrap(), b"UP8;DNB5;");
     }
 
     #[test]

@@ -76,7 +76,7 @@ tester before the model can be promoted beyond `Framework`.
 | VFO-A/B and independent operations | `FA`/`FB`, VFO selection commands | Implemented with independent VFO frequency methods plus profile-gated selection | Exercise both VFOs, switching, persistence, and unsolicited updates |
 | Split | VFO selection plus split/status commands | Implemented through profile-gated `ControlId::Split`; preserve selected-VFO context | Verify transmit VFO, receive VFO, and split on/off without changing activity context |
 | RIT/XIT | RIT/XIT enable and offset commands | Implemented for signed offsets and enable controls where profiled | Verify sign, range, zeroing, and independent RIT/XIT behavior |
-| Tuning step | `VT$` and model step families | K4 typed step control implemented; legacy movement/step semantics remain model-specific and open | Verify each supported step and its effect on tuning/navigation |
+| Tuning step | `VT$`, `UP`/`DN` and `UPB`/`DNB` | K4 typed step control plus model-specific VFO movement implemented; legacy step-size readback remains unavailable | Verify each supported step and its effect on tuning/navigation |
 | Filter and bandwidth | Filter/width command family | Implemented with model-owned normalized `BW`/`FW` ranges; named-filter fidelity remains open | Confirm accepted values, readback, and mode-dependent limits |
 | AGC | AGC command family | Implemented through profile-owned `GT` mapping | Exercise mode-specific AGC choices and readback |
 | Noise blanker/reduction | NB/NR command families | NB enable is implemented broadly; K4 level-bearing `NB$`/`NR$` controls are implemented | Confirm level ranges, interaction with modes, and persistence |

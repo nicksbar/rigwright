@@ -68,7 +68,7 @@ controls or meters until a concrete model profile is selected.
 | Noise blanker | `ControlId::NoiseBlanker` | H/P via `NB` enable state |
 | AGC | `ControlId::Agc` | H/P via `GT` fast/slow mapping |
 | Filter bandwidth | `ControlId::Filter` | H/P via model-owned `BW`/`FW` bandwidth mapping |
-| Tuning step | `ControlId::TuningStep` | H/P for K4 via mode-qualified `VT$`; K2/K3-family step writes remain open |
+| Tuning step / VFO movement | `ControlId::TuningStep`, `move_vfo` | H/P for K4 via `VT$`; K2/K4 current-step `UP`/`DN` and K3-family indexed `UP`/`DN` movement implemented |
 | Internal tuner mode/start | `ControlId::Tuner`, `start_tuner` | H/P for K4 via `AT`/`TU3`; other models remain profile-gated |
 | Repeater shift/offset | `RepeaterSettings` | H/P for K4 via `RP`; tone fields remain unsupported |
 | Memory/channel selection | `select_memory_channel` | H/P for KX2/KX3/K3/K3S via `MC`; full record read/write remains open |
@@ -100,7 +100,7 @@ correct code or physical behavior.
 | VFO-A/B and selected-VFO routing (`FA`/`FB` plus selection) | Independent `FA`/`FB` operations and `FR`/`FT` selection implemented; K3/K3S receive-selection semantics remain distinct | Explicit VFO state and command-routing tests | Both VFOs, switching, and unsolicited updates |
 | Split | Implemented in driver; framework-level | Profile-gated `ControlId::Split` and selected-VFO tests | RX/TX VFO behavior and split transitions |
 | RIT/XIT | Implemented in driver; framework-level | Signed offset/enable contract and boundary tests | Sign, range, zero, and independent operation |
-| Tuning step | K4 implemented; K2/K3-family step writes open | HAL shape and model-specific value tests | Every supported step on a physical dial/navigation workflow |
+| Tuning step | K4 step selector plus K2/K4 current-step and K3-family indexed VFO movement implemented; no generic legacy step-size readback | HAL shape and model-specific value tests | Every supported step on a physical dial/navigation workflow |
 | Filters/bandwidth | Implemented as normalized bandwidth; framework-level | Named/value profile tables and readback fixtures | Accepted values and mode-dependent behavior |
 | AGC | Implemented in driver; framework-level | Model-specific control encoding and capability tests | AGC choices and readback |
 | Noise blanker/reduction | NB enable implemented; K4 `NB$`/`NR$` levels implemented; non-K4 NR remains open | Separate enable/level controls and range tests | Level behavior and mode interaction |
