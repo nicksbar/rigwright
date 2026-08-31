@@ -73,7 +73,7 @@ controls or meters until a concrete model profile is selected.
 | Repeater shift/offset | `RepeaterSettings` | H/P for K4 via `RP`; tone fields remain unsupported |
 | Memory/channel selection | `select_memory_channel` | H/P for KX2/KX3/K3/K3S via `MC`; full record read/write remains open |
 | Raw protocol | `protocol_write_read` | H/P |
-| TX meters | `MeterId::{Power,Alc,Swr}` | H/P via `BG`/`SW` where queried; K3/K3S `TM0`/`TM1` source selection and K4 typed unsolicited `TM` reports |
+| TX meters | `MeterId::{Power,Alc,Swr,Compression}` | H/P via `BG`/`SW` where queried; K3/K3S `TM0`/`TM1` source selection and K4 typed unsolicited `TM` reports |
 
 Elecraft profile differences currently cover K2 versus K3-family mode tables,
 model-specific baud lists, conservative HF frequency ranges, and normalized
@@ -108,7 +108,7 @@ correct code or physical behavior.
 | Internal tuner | K4 mode/start implemented; other models open | Tuner state model, explicit-start path, and failure tests | Tune start/completion/failure and TX interlock |
 | Memory/channel operations | KX2/KX3/K3/K3S selection implemented via `MC`; record read/write remains open | Lossless `MemoryChannel` mapping or explicit unsupported fields | Empty/read/write/name/mode/frequency round trips |
 | Repeater/tone | K4 shift/offset implemented; tone and other models open | Profile-gated `RepeaterSettings` and unsupported-field tests | Tone, offset, and model-specific repeater behavior |
-| TX status and additional meters | Power/ALC/SWR implemented; K3/K3S `TM` source selection and K4 `TM` event reports implemented; further status remains | Typed status/events, normalized meter fixtures, read-only semantics | RX/TX/tune captures for power/SWR/ALC/etc. |
+| TX status and additional meters | Power/ALC/SWR implemented; K3/K3S `TM` source selection and K4 `TM` ALC/compression/power/SWR event reports implemented; further status remains | Typed status/events, normalized meter fixtures, read-only semantics | RX/TX/tune captures for power/SWR/ALC/etc. |
 | Identification and capability probing (`ID`/`OM`/status) | `ID` and raw model-specific `OM` probes implemented; option interpretation remains profile-specific | Bounded probe, unknown-model, timeout, malformed-frame, and family-parser tests | Known model, firmware, and installed-option identification |
 
 The tester gate is deliberate: all rows may reach `Implemented` with manual

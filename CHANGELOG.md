@@ -37,6 +37,8 @@
   using `FA`/`FB`, while keeping receive/transmit selection semantics separate.
 - Add K3/K3S transmit meter-source selection through documented `TM0`/`TM1`
   commands, keeping it distinct from K4's streaming `TM` reports.
+- Preserve the K4 `TM` compressor field as a typed normalized compression-meter
+  event alongside ALC, forward power, and SWR.
 - Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
   outside this initial radio slice.
 

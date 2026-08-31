@@ -423,9 +423,12 @@ fn publish_event(router: &RadioEventRouter, model: Option<ElecraftModel>, frame:
         let fields = payload.strip_prefix("TM").unwrap_or_default();
         if fields.len() == 12 && fields.bytes().all(|value| value.is_ascii_digit()) {
             let parse = |start| fields[start..start + 3].parse::<u16>().ok();
-            if let (Some(alc), Some(power), Some(swr)) = (parse(0), parse(6), parse(9)) {
+            if let (Some(alc), Some(compression), Some(power), Some(swr)) =
+                (parse(0), parse(3), parse(6), parse(9))
+            {
                 for (id, value) in [
                     (MeterId::Alc, alc),
+                    (MeterId::Compression, compression),
                     (MeterId::Power, power),
                     (MeterId::Swr, swr),
                 ] {
@@ -1123,6 +1126,10 @@ mod tests {
                 RadioEvent::MeterChanged {
                     id: MeterId::Alc,
                     value: 3,
+                },
+                RadioEvent::MeterChanged {
+                    id: MeterId::Compression,
+                    value: 1,
                 },
                 RadioEvent::MeterChanged {
                     id: MeterId::Power,
