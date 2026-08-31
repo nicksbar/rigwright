@@ -312,6 +312,9 @@ fn detect_likely_radio_model(
     if product_lc.contains("ic-7300") || (vid == 0x0C26 && product_lc.contains("7300")) {
         return Some("Icom IC-7300 (CI-V)".to_string());
     }
+    if product_lc.contains("ic-7200") || product_lc.contains("7200") {
+        return Some("Icom IC-7200 (CI-V)".to_string());
+    }
 
     if manufacturer_lc.contains("icom") || product_lc.contains("icom") {
         return Some("Icom CI-V radio".to_string());
@@ -1565,6 +1568,22 @@ impl IcomCiVRadio {
             };
         }
 
+        if id == ControlId::TuningStep {
+            return match op {
+                ControlOp::Set => {
+                    let step = match value.context("missing tuning-step value")? {
+                        ControlValue::U8(value) if value <= 5 => value,
+                        _ => anyhow::bail!("IC-7200 tuning step expects U8 0..=5"),
+                    };
+                    self.transact_ack(&[0x10, step])?;
+                    Ok(None)
+                }
+                ControlOp::Get => {
+                    anyhow::bail!("IC-7200 tuning-step selection is write-only through CI-V")
+                }
+            };
+        }
+
         let spec = profile
             .control(id)
             .with_context(|| format!("unsupported CI-V control: {id:?}"))?;
@@ -2016,6 +2035,7 @@ impl Radio for IcomCiVRadio {
         };
         self.supports_control(id)
             && id != ControlId::RawCiV
+            && id != ControlId::TuningStep
             && (id != ControlId::Vfo || profile_for_model(model).control_capabilities.vfo_readable)
     }
 
@@ -3089,6 +3109,7 @@ mod tests {
     fn model_value_boundaries_reject_before_transport() {
         for (model, attenuator, invalid_attenuator, max_preamp) in [
             (crate::models::IcomCivModel::Ic705, 20, 10, 2_u8),
+            (crate::models::IcomCivModel::Ic7200, 20, 10, 1_u8),
             (crate::models::IcomCivModel::Ic7300, 20, 10, 1_u8),
             (crate::models::IcomCivModel::Ic7610, 45, 5, 2_u8),
             (crate::models::IcomCivModel::Ic9700, 10, 20, 1_u8),
@@ -3099,6 +3120,7 @@ mod tests {
                 0xE0,
                 match model {
                     crate::models::IcomCivModel::Ic705 => 0xA4,
+                    crate::models::IcomCivModel::Ic7200 => 0x76,
                     crate::models::IcomCivModel::Ic7300 => 0x94,
                     crate::models::IcomCivModel::Ic7610 => 0x98,
                     crate::models::IcomCivModel::Ic9700 => 0xA2,
@@ -3126,6 +3148,7 @@ mod tests {
             let (transport, writes) = TestTransport::with_reads(vec![TestTransport::ack(
                 match model {
                     crate::models::IcomCivModel::Ic705 => 0xA4,
+                    crate::models::IcomCivModel::Ic7200 => 0x76,
                     crate::models::IcomCivModel::Ic7300 => 0x94,
                     crate::models::IcomCivModel::Ic7610 => 0x98,
                     crate::models::IcomCivModel::Ic9700 => 0xA2,
@@ -3137,6 +3160,7 @@ mod tests {
                 0xE0,
                 match model {
                     crate::models::IcomCivModel::Ic705 => 0xA4,
+                    crate::models::IcomCivModel::Ic7200 => 0x76,
                     crate::models::IcomCivModel::Ic7300 => 0x94,
                     crate::models::IcomCivModel::Ic7610 => 0x98,
                     crate::models::IcomCivModel::Ic9700 => 0xA2,

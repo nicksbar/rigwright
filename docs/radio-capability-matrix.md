@@ -59,6 +59,12 @@ controls or meters until a concrete model profile is selected.
 
 ### Icom CI-V transport hardening
 
+The IC-7200 is now cataloged at framework maturity from the local
+`IC-7200_ENG_CD_0b.pdf` manual. Its profile covers documented HF/50 MHz CI-V
+frequency and mode operations, RIT/split/VFO/memory/tuner paths, receiver
+controls, tuning-step selection, and signal/power/SWR/ALC meters. It has no
+native scope profile and remains untested on physical hardware.
+
 | Transport behavior | Status |
 |---|---|
 | One in-flight CI-V transaction | H; deliberately retained because CI-V frames have no transaction ID |

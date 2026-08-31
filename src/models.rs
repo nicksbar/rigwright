@@ -110,7 +110,10 @@ impl RadioModelProfile {
         const KENWOOD_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
 
         match self.protocol {
-            Protocol::IcomCiV { .. } => CIV_BAUD_RATES,
+            Protocol::IcomCiV { .. } => match IcomCivModel::from_model_name(self.model) {
+                Some(IcomCivModel::Ic7200) => &[300, 1_200, 4_800, 9_600, 19_200],
+                _ => CIV_BAUD_RATES,
+            },
             Protocol::YaesuCat => YaesuCatModel::from_model_name(self.model)
                 .map(crate::yaesu::profile::profile_for_model)
                 .map(|profile| profile.baud_rates)
@@ -163,6 +166,7 @@ impl RadioModelProfile {
     /// Operators must still match the value configured on the radio.
     pub fn preferred_baud_rate(self) -> u32 {
         match self.protocol {
+            Protocol::IcomCiV { .. } if self.model == "IC-7200" => 19_200,
             Protocol::IcomCiV { .. } => 115_200,
             Protocol::YaesuCat => YaesuCatModel::from_model_name(self.model)
                 .map(crate::yaesu::profile::profile_for_model)
@@ -275,7 +279,10 @@ impl RadioModelProfile {
                     ControlId::Preamp => Some(profile.preamp_max_level),
                     // CI-V preset controls currently share the documented
                     // ranges used by the model profiles.
-                    ControlId::Agc => Some(3),
+                    ControlId::Agc => match model {
+                        IcomCivModel::Ic7200 => Some(2),
+                        _ => Some(3),
+                    },
                     ControlId::NoiseReductionLevel => Some(15),
                     _ => None,
                 }
@@ -363,6 +370,7 @@ impl RadioModelProfile {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IcomCivModel {
     Ic705,
+    Ic7200,
     Ic7300,
     Ic7610,
     Ic9700,
@@ -412,6 +420,7 @@ impl IcomCivModel {
     pub fn model_name(self) -> &'static str {
         match self {
             Self::Ic705 => "IC-705",
+            Self::Ic7200 => "IC-7200",
             Self::Ic7300 => "IC-7300",
             Self::Ic7610 => "IC-7610",
             Self::Ic9700 => "IC-9700",
@@ -421,6 +430,7 @@ impl IcomCivModel {
     pub fn from_model_name(model: &str) -> Option<Self> {
         match model.to_ascii_uppercase().as_str() {
             "IC-705" => Some(Self::Ic705),
+            "IC-7200" => Some(Self::Ic7200),
             "IC-7300" => Some(Self::Ic7300),
             "IC-7610" => Some(Self::Ic7610),
             "IC-9700" => Some(Self::Ic9700),
@@ -537,6 +547,15 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         },
         support: SupportLevel::HardwareValidated,
         capabilities: HF_SCOPE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Icom,
+        model: "IC-7200",
+        protocol: Protocol::IcomCiV {
+            default_address: 0x76,
+        },
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Icom,
@@ -874,17 +893,24 @@ mod tests {
 
     #[test]
     fn catalog_exposes_profile_baud_choices_and_fastest_option() {
+        let ic7200 = *find_model("IC-7200").unwrap();
         let k3 = *find_model("K3").unwrap();
         let k4 = *find_model("K4").unwrap();
         assert_eq!(k3.supported_baud_rates(), &[4_800, 9_600, 19_200, 38_400]);
         assert_eq!(k3.fastest_supported_baud_rate(), Some(38_400));
         assert_eq!(k4.fastest_supported_baud_rate(), Some(115_200));
         assert!(k4.supported_baud_rates().starts_with(&[4_800, 9_600]));
+        assert_eq!(
+            ic7200.supported_baud_rates(),
+            &[300, 1_200, 4_800, 9_600, 19_200]
+        );
+        assert_eq!(ic7200.preferred_baud_rate(), 19_200);
     }
 
     #[test]
     fn typed_control_support_matches_driver_profiles() {
         let ic7300 = *find_model("IC-7300").unwrap();
+        let ic7200 = *find_model("IC-7200").unwrap();
         let ic7610 = *find_model("IC-7610").unwrap();
         let ic9700 = *find_model("IC-9700").unwrap();
         let ftdx10 = *find_model("FTDX10").unwrap();
@@ -893,6 +919,8 @@ mod tests {
         let ts890s = *find_model("TS-890S").unwrap();
         assert!(ic7300.supports_control(crate::ControlId::AfGain));
         assert!(ic7300.supports_control(crate::ControlId::Filter));
+        assert_eq!(ic7200.control_max(crate::ControlId::Agc), Some(2));
+        assert!(ic7200.supports_control(crate::ControlId::TuningStep));
         assert!(!ic7610.supports_control(crate::ControlId::Agc));
         assert!(ic9700.supports_control(crate::ControlId::MainSub));
         assert!(ic9700.supports_control(crate::ControlId::ExternalPreamp));
