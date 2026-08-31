@@ -12,6 +12,7 @@ pub mod icom;
 pub mod iq;
 pub mod kenwood;
 pub mod models;
+pub mod probe;
 pub mod protocol;
 pub mod rigctld;
 pub mod session;

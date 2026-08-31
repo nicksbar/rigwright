@@ -115,7 +115,7 @@ radio.set_ptt(false).await?;
 ```
 
 Run the model-backed read-mostly hardware probe with
-`cargo run --example ci_v_probe -- /dev/ttyUSB0 115200`. Add `--exercise` to
+`cargo run --example ci_v_probe -- /dev/ttyUSB0 115200 --log ic7300.json`. Add `--exercise` to
 move reversible settings to safe alternate values and restore the original
 state where the radio accepts the documented operation. It never keys the
 transmitter or writes memories; tuner start and scope streaming are reported as
@@ -165,7 +165,7 @@ Use the Enhanced virtual COM port for FTDX10 CAT. The Standard port is for
 PTT/keying/digital-mode signals, not frequency and mode CAT commands.
 
 For a read-only identity/frequency/mode/PTT check, run
-`cargo run --example yaesu_probe -- FTDX10 /dev/ttyUSB0 38400`. Match the baud
+`cargo run --example yaesu_probe -- FTDX10 /dev/ttyUSB0 38400 --log yaesu.json`. Match the baud
 rate and one-stop-bit setting in the radio's CAT menu. No example command keys
 the transmitter. FTDX10 automatically reads its CAT RTS setting and adapts the
 serial flow-control mode; `--hardware-flow` remains available for adapters that
@@ -176,7 +176,7 @@ For an older FT-817ND, FT-818, FT-857D, or FT-897D, set the radio's CAT menu to
 interface. The driver configures 8N2 automatically. A read-only check is:
 
 ```text
-cargo run --example classic_yaesu_probe -- FT-857D /dev/ttyUSB0 4800
+cargo run --example classic_yaesu_probe -- FT-857D /dev/ttyUSB0 4800 --log classic-yaesu.json
 ```
 
 Add `--exercise` to modify and restore frequency, mode, split, and a double VFO toggle;
@@ -191,12 +191,19 @@ bits at 4800 baud and one stop bit at higher rates. A read-only identity and
 status probe is:
 
 ```text
-cargo run --example kenwood_probe -- TS-590SG /dev/ttyUSB0 115200
+cargo run --example kenwood_probe -- TS-590SG /dev/ttyUSB0 115200 --log kenwood.json
 ```
 
 The probe never sends `TX`. TS-590SG and TS-2000 PTT state is read from `IF`;
 TS-890S does not advertise readable PTT because its documented `TX` command is
 set/auto-information only.
+
+Every vendor probe accepts `--log PATH` and writes the same JSON report shape:
+tool/model/serial parameters, timestamp, named pass/fail/skip records, and
+transport metrics. Share the JSON file together with the console output when a
+hardware result needs investigation; it preserves the exact connection
+context and distinguishes an unsupported operation from a skipped or failed
+one.
 
 ## Tests and coverage
 

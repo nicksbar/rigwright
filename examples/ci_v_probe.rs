@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use futures::executor::block_on;
-use rigwright::{ControlId, ControlValue, IcomCiVRadio, MeterId, Radio};
+use rigwright::{probe::ProbeLog, ControlId, ControlValue, IcomCiVRadio, MeterId, Radio};
 
 const CONTROLS: &[ControlId] = &[
     ControlId::Rit,
@@ -95,11 +95,22 @@ fn main() -> Result<()> {
     let flags: Vec<_> = args.collect();
     let exercise = flags.iter().any(|flag| flag == "--exercise");
     let restore_rit_off = flags.iter().any(|flag| flag == "--restore-rit-off");
+    let log_path = flags
+        .windows(2)
+        .find(|pair| pair[0] == "--log")
+        .map(|pair| pair[1].clone());
     anyhow::ensure!(
-        flags
-            .iter()
-            .all(|flag| flag == "--exercise" || flag == "--restore-rit-off"),
-        "usage: ci_v_probe [PORT] [BAUD] [--exercise] [--restore-rit-off]"
+        flags.iter().enumerate().all(|(index, flag)| {
+            flag == "--exercise"
+                || flag == "--restore-rit-off"
+                || flag == "--log"
+                || (index > 0 && flags[index - 1] == "--log")
+        }),
+        "usage: ci_v_probe [PORT] [BAUD] [--exercise] [--restore-rit-off] [--log PATH]"
+    );
+    anyhow::ensure!(
+        !flags.iter().any(|flag| flag == "--log") || log_path.is_some(),
+        "--log requires a PATH"
     );
     let radio = IcomCiVRadio::new_for_model_default_address(
         rigwright::models::IcomCivModel::Ic7300,
@@ -107,13 +118,25 @@ fn main() -> Result<()> {
         baud,
         0xE0,
     );
+    let mut report = ProbeLog::new("ci_v_probe", "IC-7300", &port, baud);
     let frequency = block_on(radio.get_frequency_hz())?;
     let mode = block_on(radio.get_mode())?;
     let ptt = block_on(radio.get_ptt())?;
     println!("IC-7300 {port} @ {baud}: {frequency} Hz, {mode:?}, PTT={ptt}");
+    report.pass("frequency", frequency);
+    report.pass("mode", format!("{mode:?}"));
+    report.pass("PTT", ptt);
     if restore_rit_off {
         block_on(radio.set_control(ControlId::Rit, ControlValue::Bool(false)))?;
         println!("RIT restored OFF");
+        report.pass("RIT restore", "OFF");
+        report.set_metrics(radio.transport_metrics());
+        if let Some(path) = log_path {
+            report
+                .write(&path)
+                .with_context(|| format!("writing probe log {path}"))?;
+            println!("probe log: {path}");
+        }
         return Ok(());
     }
     let mut failures = 0;
@@ -220,6 +243,15 @@ fn main() -> Result<()> {
     println!("memory read/write: skipped (would alter operator memory)");
     println!("PTT/tuner start/scope stream: skipped (operator-impacting)");
     println!("transport metrics: {:?}", radio.transport_metrics());
+    report.skip("memory read/write", "would alter operator memory");
+    report.skip("PTT/tuner start/scope stream", "operator-impacting");
+    report.set_metrics(radio.transport_metrics());
+    if let Some(path) = log_path {
+        report
+            .write(&path)
+            .with_context(|| format!("writing probe log {path}"))?;
+        println!("probe log: {path}");
+    }
     anyhow::ensure!(failures == 0, "{failures} IC-7300 checks failed");
     Ok(())
 }
