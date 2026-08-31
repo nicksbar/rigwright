@@ -27,6 +27,8 @@
   legacy-family step writes remain explicitly profile-gated.
 - Add K4-native level-bearing noise blanker and noise reduction controls via
   `NB$`/`NR$`, preserving configured levels when toggling either feature.
+- Add a bounded raw `OM` option probe alongside `ID`, retaining family-specific
+  option interpretation for later model capability negotiation.
 - Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
   outside this initial radio slice.
 

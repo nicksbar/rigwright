@@ -89,9 +89,9 @@ components and are not included in this row.
 ### Direct CAT control backlog and evidence gate
 
 The following controls are known from the local Elecraft programmer references
-and are intentionally tracked even though they are not yet exposed by the
-Elecraft `Radio` implementation. “Manual” means the command family is known
-enough to design against; it is not proof of correct code or physical behavior.
+and are tracked with implementation and tester evidence separately. “Manual”
+means the command family is known enough to design against; it is not proof of
+correct code or physical behavior.
 
 | Direct CAT surface | Current Rigwright status | Required implementation evidence | Physical tester evidence |
 |---|---|---|---|
@@ -108,7 +108,7 @@ enough to design against; it is not proof of correct code or physical behavior.
 | Memory/channel operations | Manual; not implemented | Lossless `MemoryChannel` mapping or explicit unsupported fields | Empty/read/write/name/mode/frequency round trips |
 | Repeater/tone | K4 shift/offset implemented; tone and other models open | Profile-gated `RepeaterSettings` and unsupported-field tests | Tone, offset, and model-specific repeater behavior |
 | TX status and additional meters | Power/ALC/SWR implemented; further status remains | Typed status/events, normalized meter fixtures, read-only semantics | RX/TX/tune captures for power/SWR/ALC/etc. |
-| Identification and capability probing (`ID`/status) | `ID` query implemented; option probing remains | Bounded probe, unknown-model, timeout, and malformed-frame tests | Known model and firmware identification |
+| Identification and capability probing (`ID`/`OM`/status) | `ID` and raw model-specific `OM` probes implemented; option interpretation remains profile-specific | Bounded probe, unknown-model, timeout, malformed-frame, and family-parser tests | Known model, firmware, and installed-option identification |
 
 The tester gate is deliberate: all rows may reach `Implemented` with manual
 review and deterministic fixtures, but no Elecraft model should move from

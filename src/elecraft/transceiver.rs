@@ -133,6 +133,17 @@ impl ElecraftRadio {
         self.query("ID")
     }
 
+    /// Query the model option bitmap used by K2/K3-family and K4 CAT.
+    /// The raw response is retained because option letters differ by family
+    /// and must not be interpreted as a universal accessory inventory.
+    pub fn probe_options(&self) -> Result<Vec<u8>> {
+        anyhow::ensure!(
+            !matches!(self.model, Some(ElecraftModel::Kh1)),
+            "Elecraft KH1 does not document the OM option probe"
+        );
+        self.query("OM")
+    }
+
     fn selected_frequency(&self) -> &'static str {
         "FA"
     }
@@ -980,6 +991,20 @@ mod tests {
             &*output.lock().unwrap(),
             b"ID;PC;FR;FR;FT;IF;IF;PC110;FR0;FT1;RT1;XT0;RO-0999;"
         );
+    }
+
+    #[test]
+    fn option_probe_returns_the_raw_model_specific_bitmap() {
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K3),
+            9_600,
+            MemoryTransport {
+                input: b"OM APXSDFfLVR--;".to_vec(),
+                output: Arc::new(Mutex::new(Vec::new())),
+            },
+        )
+        .unwrap();
+        assert_eq!(radio.probe_options().unwrap(), b"OM APXSDFfLVR--;".to_vec());
     }
 
     #[test]
