@@ -31,6 +31,8 @@
   option interpretation for later model capability negotiation.
 - Add KX2/KX3/K3/K3S memory-channel selection through the documented three-digit
   `MC` command while keeping undocumented record persistence unsupported.
+- Decode K4 unsolicited `TM` TX-meter frames into typed ALC, power, and SWR
+  events and expose the documented `TM1`/`TM0` reporting toggle.
 - Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
   outside this initial radio slice.
 

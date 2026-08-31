@@ -144,6 +144,15 @@ impl ElecraftRadio {
         self.query("OM")
     }
 
+    /// Enable or disable K4 unsolicited TX meter reports (`TM` frames).
+    pub fn set_tx_meter_reporting(&self, enabled: bool) -> Result<()> {
+        anyhow::ensure!(
+            matches!(self.model, Some(ElecraftModel::K4)),
+            "Elecraft TX meter reporting is only profiled for K4"
+        );
+        self.set("TM", if enabled { "1" } else { "0" })
+    }
+
     fn selected_frequency(&self) -> &'static str {
         "FA"
     }
@@ -356,6 +365,26 @@ fn publish_event(router: &RadioEventRouter, model: Option<ElecraftModel>, frame:
                     id,
                     value: ControlValue::U8(value),
                 });
+                return;
+            }
+        }
+        router.publish(RadioEvent::Raw {
+            payload: frame.to_vec(),
+        });
+    } else if model == Some(ElecraftModel::K4) && payload.starts_with("TM") {
+        let fields = payload.strip_prefix("TM").unwrap_or_default();
+        if fields.len() == 12 && fields.bytes().all(|value| value.is_ascii_digit()) {
+            let parse = |start| fields[start..start + 3].parse::<u16>().ok();
+            if let (Some(alc), Some(power), Some(swr)) = (parse(0), parse(6), parse(9)) {
+                for (id, value) in [
+                    (MeterId::Alc, alc),
+                    (MeterId::Power, power),
+                    (MeterId::Swr, swr),
+                ] {
+                    if let Some(value) = crate::normalize_meter_level(value, 999) {
+                        router.publish(RadioEvent::MeterChanged { id, value });
+                    }
+                }
                 return;
             }
         }
@@ -1022,6 +1051,38 @@ mod tests {
         )
         .unwrap();
         assert_eq!(radio.probe_options().unwrap(), b"OM APXSDFfLVR--;".to_vec());
+    }
+
+    #[test]
+    fn k4_tx_meter_frames_publish_typed_alc_power_and_swr_events() {
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K4),
+            9_600,
+            MemoryTransport {
+                input: b"TM012003150123;ID017;".to_vec(),
+                output: Arc::new(Mutex::new(Vec::new())),
+            },
+        )
+        .unwrap();
+        let subscription = radio.event_router().subscribe();
+        radio.identify().unwrap();
+        assert_eq!(
+            subscription.drain(),
+            vec![
+                RadioEvent::MeterChanged {
+                    id: MeterId::Alc,
+                    value: 3,
+                },
+                RadioEvent::MeterChanged {
+                    id: MeterId::Power,
+                    value: 38,
+                },
+                RadioEvent::MeterChanged {
+                    id: MeterId::Swr,
+                    value: 31,
+                },
+            ]
+        );
     }
 
     #[test]
