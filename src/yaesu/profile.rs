@@ -6,7 +6,7 @@
 
 use anyhow::{bail, Result};
 
-use crate::{hal::Mode, models::YaesuCatModel};
+use crate::{hal::Mode, hal_types::ControlId, models::YaesuCatModel};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct YaesuModeSpec {
@@ -30,6 +30,10 @@ pub struct YaesuCatProfile {
     pub baud_rates: &'static [u32],
     /// Model-specific `MD` codes.
     pub modes: &'static [YaesuModeSpec],
+    /// Controls shared by the model's documented CAT surface.
+    pub controls: &'static [ControlId],
+    /// Model-owned maxima for indexed controls.
+    pub control_maxes: &'static [(ControlId, u8)],
     /// Inclusive `PC` power setting range, when implemented.
     pub power_range_watts: Option<(u16, u16)>,
     /// Whether the `ST` split command is implemented by this profile.
@@ -41,6 +45,18 @@ pub struct YaesuCatProfile {
 }
 
 impl YaesuCatProfile {
+    pub fn supports_control(self, id: ControlId) -> bool {
+        self.controls.contains(&id)
+            || (id == ControlId::RfPower && self.power_range_watts.is_some())
+            || (id == ControlId::Split && self.supports_split)
+    }
+
+    pub fn control_max(self, id: ControlId) -> Option<u8> {
+        self.control_maxes
+            .iter()
+            .find_map(|&(control, maximum)| (control == id).then_some(maximum))
+    }
+
     pub fn supports_frequency(self, hz: u64) -> bool {
         self.frequency_ranges
             .iter()
@@ -96,6 +112,31 @@ const HF_RANGE: &[(u64, u64)] = &[(30_000, 75_000_000)];
 const FT991A_RANGE: &[(u64, u64)] = &[(30_000, 470_000_000)];
 const CLASSIC_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400];
 const FT710_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 115_200];
+const COMMON_CONTROLS: &[ControlId] = &[
+    ControlId::AfGain,
+    ControlId::RfGain,
+    ControlId::Squelch,
+    ControlId::Preamp,
+    ControlId::Attenuator,
+    ControlId::NoiseBlanker,
+    ControlId::Notch,
+    ControlId::ManualNotch,
+    ControlId::Filter,
+    ControlId::Agc,
+    ControlId::NoiseReduction,
+    ControlId::NoiseReductionLevel,
+    ControlId::Rit,
+    ControlId::Xit,
+    ControlId::Tuner,
+    ControlId::Vfo,
+];
+const CONTROL_MAXES: &[(ControlId, u8)] = &[
+    (ControlId::Preamp, 2),
+    (ControlId::Attenuator, 3),
+    (ControlId::Filter, 23),
+    (ControlId::Agc, 4),
+    (ControlId::NoiseReductionLevel, 15),
+];
 
 const MODERN_HF_MODES: &[YaesuModeSpec] = &[
     mode('1', Mode::Lsb, true),
@@ -146,6 +187,8 @@ pub const FT710_PROFILE: YaesuCatProfile = YaesuCatProfile {
     frequency_ranges: HF_RANGE,
     baud_rates: FT710_BAUD_RATES,
     modes: MODERN_HF_MODES,
+    controls: COMMON_CONTROLS,
+    control_maxes: CONTROL_MAXES,
     power_range_watts: Some((5, 100)),
     supports_split: true,
     supports_repeater_settings: true,
@@ -158,6 +201,8 @@ pub const FTDX10_PROFILE: YaesuCatProfile = YaesuCatProfile {
     frequency_ranges: HF_RANGE,
     baud_rates: CLASSIC_BAUD_RATES,
     modes: MODERN_HF_MODES,
+    controls: COMMON_CONTROLS,
+    control_maxes: CONTROL_MAXES,
     power_range_watts: Some((5, 100)),
     supports_split: true,
     supports_repeater_settings: true,
@@ -170,6 +215,8 @@ pub const FTDX101D_PROFILE: YaesuCatProfile = YaesuCatProfile {
     frequency_ranges: HF_RANGE,
     baud_rates: CLASSIC_BAUD_RATES,
     modes: MODERN_HF_MODES,
+    controls: COMMON_CONTROLS,
+    control_maxes: CONTROL_MAXES,
     power_range_watts: Some((5, 100)),
     supports_split: true,
     supports_repeater_settings: true,
@@ -182,6 +229,8 @@ pub const FTDX101MP_PROFILE: YaesuCatProfile = YaesuCatProfile {
     frequency_ranges: HF_RANGE,
     baud_rates: CLASSIC_BAUD_RATES,
     modes: MODERN_HF_MODES,
+    controls: COMMON_CONTROLS,
+    control_maxes: CONTROL_MAXES,
     power_range_watts: Some((5, 200)),
     supports_split: true,
     supports_repeater_settings: true,
@@ -194,6 +243,8 @@ pub const FT991A_PROFILE: YaesuCatProfile = YaesuCatProfile {
     frequency_ranges: FT991A_RANGE,
     baud_rates: CLASSIC_BAUD_RATES,
     modes: FT991A_MODES,
+    controls: COMMON_CONTROLS,
+    control_maxes: CONTROL_MAXES,
     power_range_watts: Some((5, 100)),
     supports_split: false,
     supports_repeater_settings: true,

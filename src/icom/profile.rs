@@ -195,6 +195,10 @@ pub struct IcomCivProfile {
     pub attenuator_values: &'static [u8],
     /// Highest valid preamp level for this model.
     pub preamp_max_level: u8,
+    /// Highest valid AGC preset for this model.
+    pub agc_max: u8,
+    /// Highest valid noise-reduction level for this model.
+    pub noise_reduction_level_max: u8,
     /// Whether the model exposes documented I/Q output. This is protocol/model
     /// metadata only; it does not claim that Rigwright has an openable stream.
     pub supports_iq_output: bool,
@@ -268,6 +272,10 @@ mod tests {
             assert_eq!(profile.model, model);
             assert!(!profile.baud_rates.is_empty());
             assert!(profile.baud_rates.contains(&profile.preferred_baud_rate));
+            assert!(profile.noise_reduction_level_max > 0);
+            if profile.supports_control(ControlId::Agc) {
+                assert!(profile.agc_max > 0);
+            }
             assert!(!profile.controls.is_empty());
         }
     }

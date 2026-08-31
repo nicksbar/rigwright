@@ -208,28 +208,7 @@ impl RadioModelProfile {
                 let Some(model) = YaesuCatModel::from_model_name(self.model) else {
                     return false;
                 };
-                let profile = crate::yaesu::profile::profile_for_model(model);
-                (id == ControlId::RfPower && profile.power_range_watts.is_some())
-                    || (id == ControlId::Split && profile.supports_split)
-                    || matches!(
-                        id,
-                        ControlId::AfGain
-                            | ControlId::RfGain
-                            | ControlId::Squelch
-                            | ControlId::Preamp
-                            | ControlId::Attenuator
-                            | ControlId::NoiseBlanker
-                            | ControlId::Notch
-                            | ControlId::ManualNotch
-                            | ControlId::Filter
-                            | ControlId::Agc
-                            | ControlId::NoiseReduction
-                            | ControlId::NoiseReductionLevel
-                            | ControlId::Rit
-                            | ControlId::Xit
-                            | ControlId::Tuner
-                            | ControlId::Vfo
-                    )
+                crate::yaesu::profile::profile_for_model(model).supports_control(id)
             }
             Protocol::YaesuLegacyCat => id == ControlId::Split,
             Protocol::KenwoodCat => {
@@ -279,26 +258,14 @@ impl RadioModelProfile {
                 let profile = crate::icom::profile::profile_for_model(model);
                 match id {
                     ControlId::Preamp => Some(profile.preamp_max_level),
-                    // CI-V preset controls currently share the documented
-                    // ranges used by the model profiles.
-                    ControlId::Agc => match model {
-                        IcomCivModel::Ic7200 => Some(2),
-                        _ => Some(3),
-                    },
-                    ControlId::NoiseReductionLevel => Some(15),
+                    ControlId::Agc => Some(profile.agc_max),
+                    ControlId::NoiseReductionLevel => Some(profile.noise_reduction_level_max),
                     _ => None,
                 }
             }
             Protocol::YaesuCat => {
-                YaesuCatModel::from_model_name(self.model)?;
-                match id {
-                    ControlId::Preamp => Some(2),
-                    ControlId::Attenuator => Some(3),
-                    ControlId::Filter => Some(23),
-                    ControlId::Agc => Some(4),
-                    ControlId::NoiseReductionLevel => Some(15),
-                    _ => None,
-                }
+                let model = YaesuCatModel::from_model_name(self.model)?;
+                crate::yaesu::profile::profile_for_model(model).control_max(id)
             }
             Protocol::KenwoodCat => {
                 let profile = KenwoodCatModel::from_model_name(self.model)

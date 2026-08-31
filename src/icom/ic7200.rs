@@ -81,6 +81,8 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     external_preamp: None,
     attenuator_values: &[0, 20],
     preamp_max_level: 1,
+    agc_max: 2,
+    noise_reduction_level_max: 15,
     supports_iq_output: false,
     meters: METERS,
     control_capabilities: ControlCapabilities {

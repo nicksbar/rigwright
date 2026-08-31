@@ -1034,29 +1034,8 @@ impl Radio for YaesuCatRadio {
     }
 
     fn supports_control(&self, id: ControlId) -> bool {
-        self.profile().is_some_and(|profile| {
-            (id == ControlId::RfPower && profile.power_range_watts.is_some())
-                || (id == ControlId::Split && profile.supports_split)
-                || matches!(
-                    id,
-                    ControlId::AfGain
-                        | ControlId::RfGain
-                        | ControlId::Squelch
-                        | ControlId::Preamp
-                        | ControlId::Attenuator
-                        | ControlId::NoiseBlanker
-                        | ControlId::NoiseReduction
-                        | ControlId::NoiseReductionLevel
-                        | ControlId::Notch
-                        | ControlId::ManualNotch
-                        | ControlId::Filter
-                        | ControlId::Agc
-                        | ControlId::Rit
-                        | ControlId::Xit
-                        | ControlId::Tuner
-                        | ControlId::Vfo
-                )
-        })
+        self.profile()
+            .is_some_and(|profile| profile.supports_control(id))
     }
 
     fn supports_control_read(&self, id: ControlId) -> bool {
