@@ -39,6 +39,12 @@ reported through the CodeQL check and GitHub code-scanning alerts.
 - Native Icom CI-V over serial, developed and exercised with the IC-7300.
 - Low-latency Icom CI-V response demultiplexing, bounded interleaved-frame
   retention, USB echo filtering, and transport health metrics.
+- All native ASCII vendor transports own a persistent serialized session,
+  bounded response/event demultiplexing, adaptive bounded recovery timing,
+  explicit serial-line policy, and transport health metrics. Classic binary
+  Yaesu exposes its fixed line policy and transaction metrics. Vendor
+  identification and option probes are opt-in because probing can change radio
+  state or interrupt a live CAT link.
 - Additive `RadioAndroid` entry point for Icom CI-V, modern Yaesu CAT, classic
   Yaesu CAT, and Kenwood CAT over an externally supplied byte transport.
 - Serial-port discovery, CI-V framing and parsing, spectrum-scope data, and raw

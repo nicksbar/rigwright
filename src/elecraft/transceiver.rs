@@ -129,6 +129,15 @@ impl ElecraftRadio {
         self.event_router.clone()
     }
 
+    pub fn transport_metrics(&self) -> super::transport::ElecraftTransportMetrics {
+        self.transport.metrics()
+    }
+
+    pub fn with_serial_policy(mut self, policy: super::transport::ElecraftSerialPolicy) -> Self {
+        self.transport = self.transport.with_serial_policy(policy);
+        self
+    }
+
     /// Query the Elecraft compatibility identifier. A model-specific `K` or
     /// `OM` probe should be added by callers when they need option-aware
     /// identification; this method deliberately returns the raw CAT reply.

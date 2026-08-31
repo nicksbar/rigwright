@@ -69,6 +69,15 @@ controls or meters until a concrete model profile is selected.
 | Link-health metrics | H; counters and cumulative response time exposed by `IcomCiVRadio::transport_metrics()` |
 | Adaptive timeout and opt-in baud/address probing | H; adaptive deadlines are bounded and probing only tries caller-supplied candidates |
 
+### Remaining vendor transport hardening
+
+| Vendor | Low-latency reads | Bounded retained frames | Link metrics | Remaining |
+|---|---:|---:|---:|---|
+| Modern Yaesu CAT | H | H | H via `YaesuTransportMetrics` | Model verification is opt-in via `verify_model`; FTDX10 RTS probing remains advisory |
+| Kenwood PC control | H | H | H via `KenwoodTransportMetrics` | Model verification is opt-in via `verify_model` |
+| Classic Yaesu CAT | H for fixed binary transaction metrics | — | H via `LegacyYaesuTransportMetrics` | Fixed 8N2/no-flow policy is exposed; binary probing is intentionally not automatic |
+| Elecraft CAT | H | H | H via `ElecraftTransportMetrics` | `identify`/`probe_options` remain explicit and model-scoped |
+
 ## Elecraft first implementation slice
 
 | Model profiles | Support level | Profile module | Manual evidence |

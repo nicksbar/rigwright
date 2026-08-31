@@ -20,6 +20,7 @@ pub mod yaesu;
 
 pub use android::RadioAndroid;
 pub use elecraft::profile::ElecraftModel;
+pub use elecraft::transport::{ElecraftSerialPolicy, ElecraftTransportMetrics};
 pub use elecraft::ElecraftRadio;
 pub use events::{RadioEvent, RadioEventRouter, RadioEventSubscription, SubscriptionId};
 pub use hal::{NullRadio, Radio, RadioCapabilities, RadioStatus};
@@ -33,6 +34,7 @@ pub use icom::civ_radio::{
     SerialPortDescriptor,
 };
 pub use iq::{decode_interleaved_iq, IqSampleBlock, IqSampleFormat};
+pub use kenwood::cat_radio::{KenwoodSerialPolicy, KenwoodTransportMetrics};
 pub use kenwood::KenwoodCatRadio;
 pub use models::{IcomCivModel, KenwoodCatModel, YaesuCatModel, YaesuLegacyModel};
 pub use protocol::yaesu_legacy_cat::{
@@ -44,4 +46,6 @@ pub use session::{
     SessionEventRouter, SessionEventSubscription, SessionOperation, SessionStatus, SessionTicket,
 };
 pub use transport::RadioTransport;
+pub use yaesu::cat_radio::{YaesuSerialPolicy, YaesuTransportMetrics};
+pub use yaesu::legacy_radio::{LegacyYaesuSerialPolicy, LegacyYaesuTransportMetrics};
 pub use yaesu::{LegacyYaesuRadio, YaesuCatRadio};
