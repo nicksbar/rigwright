@@ -65,6 +65,7 @@ controls or meters until a concrete model profile is selected.
 | RF gain | `ControlId::RfGain` | H/P via profile-scaled `RG` |
 | Squelch | `ControlId::Squelch` | H/P via profile-scaled `SQ` |
 | Preamp / attenuator | `ControlId::{Preamp,Attenuator}` | H/P via profile-owned `PA`/`RA` ranges |
+| Antenna selection | `ControlId::Antenna` | H/P via profile-owned `AN` connector limits for K2/KX2/KX3/K3/K3S/K4 |
 | Noise blanker | `ControlId::NoiseBlanker` | H/P via `NB` enable state |
 | AGC | `ControlId::Agc` | H/P via `GT` fast/slow mapping |
 | Filter bandwidth | `ControlId::Filter` | H/P via model-owned `BW`/`FW` bandwidth mapping |

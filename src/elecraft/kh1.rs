@@ -41,6 +41,7 @@ pub const PROFILE: ElecraftProfile = ElecraftProfile {
     supports_split: false,
     supports_rit_xit: false,
     power_max_watts: None,
+    antenna_max: None,
     preamp_max: None,
     attenuator_max: None,
     supports_noise_blanker: false,

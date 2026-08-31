@@ -81,6 +81,7 @@ tester before the model can be promoted beyond `Framework`.
 | AGC | AGC command family | Implemented through profile-owned `GT` mapping | Exercise mode-specific AGC choices and readback |
 | Noise blanker/reduction | NB/NR command families | NB enable is implemented broadly; K4 level-bearing `NB$`/`NR$` controls are implemented | Confirm level ranges, interaction with modes, and persistence |
 | Preamp/attenuator | Preamp/attenuation command families | Implemented with distinct profile controls and ranges | Verify RF-path state and mutually exclusive combinations |
+| Antenna selection | `AN` | Implemented with profile-owned connector limits | Verify each connector/ATU path and readback |
 | Internal tuner | Tuner enable/status/start commands | K4 mode/status/start implemented with explicit command path; other models remain gated | Confirm tuning start, completion, failure, and TX interlock behavior |
 | Memory/channel operations | Memory select/read/write command families | KX2/KX3/K3/K3S selection implemented via `MC`; lossless records remain open | Verify empty slots, names, mode, frequency, and write/read round trips |
 | Repeater/tone | Tone, offset, and repeater command families | K4 shift/offset implemented; tone fields remain explicitly unsupported | Verify tone modes, CTCSS/DCS, offsets, and VHF/UHF model behavior |

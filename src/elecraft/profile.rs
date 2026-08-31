@@ -64,6 +64,7 @@ pub struct ElecraftProfile {
     pub supports_split: bool,
     pub supports_rit_xit: bool,
     pub power_max_watts: Option<u16>,
+    pub antenna_max: Option<u8>,
     pub preamp_max: Option<u8>,
     pub attenuator_max: Option<u8>,
     pub supports_noise_blanker: bool,
@@ -123,6 +124,7 @@ impl ElecraftProfile {
             ControlId::RfGain => self.rf_gain_max.is_some(),
             ControlId::Preamp => self.preamp_max.is_some(),
             ControlId::Attenuator => self.attenuator_max.is_some(),
+            ControlId::Antenna => self.antenna_max.is_some(),
             ControlId::NoiseBlanker => self.supports_noise_blanker,
             ControlId::NoiseReduction | ControlId::NoiseReductionLevel => {
                 self.noise_reduction_level_max.is_some()

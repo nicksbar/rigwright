@@ -629,6 +629,7 @@ impl Radio for ElecraftRadio {
             ControlId::RfGain => "RG",
             ControlId::Squelch => "SQ",
             ControlId::RfPower => "PC",
+            ControlId::Antenna => "AN",
             ControlId::Vfo => "FR",
             ControlId::Split => return Ok(Some(ControlValue::Bool(self.is_split()?))),
             ControlId::Rit | ControlId::Xit => "IF",
@@ -646,6 +647,17 @@ impl Radio for ElecraftRadio {
             let value = Self::parse_numeric(&self.query(command)?, command)?;
             anyhow::ensure!(value <= 1, "invalid Elecraft receive VFO");
             return Ok(Some(ControlValue::Vfo(value as u8)));
+        }
+        if id == ControlId::Antenna {
+            let value = Self::parse_numeric(&self.query(command)?, command)?;
+            let maximum = profile
+                .antenna_max
+                .context("Elecraft antenna is not profiled")?;
+            anyhow::ensure!(
+                (1..=u16::from(maximum)).contains(&value),
+                "invalid Elecraft antenna selector"
+            );
+            return Ok(Some(ControlValue::U8(value as u8)));
         }
         if id == ControlId::TuningStep {
             let response = self.query_with_response_prefix("VT$X", "VT$")?;
@@ -715,6 +727,16 @@ impl Radio for ElecraftRadio {
         match (id, value) {
             (ControlId::RfPower, ControlValue::U8(value)) => {
                 self.set("PC", &Self::encode_power(profile, value)?)
+            }
+            (ControlId::Antenna, ControlValue::U8(value)) => {
+                let maximum = profile
+                    .antenna_max
+                    .context("Elecraft antenna is not profiled")?;
+                anyhow::ensure!(
+                    (1..=maximum).contains(&value),
+                    "invalid Elecraft antenna selector"
+                );
+                self.set("AN", &value.to_string())
             }
             (ControlId::Vfo, ControlValue::Vfo(value)) if value <= 1 => {
                 anyhow::ensure!(
@@ -1326,6 +1348,46 @@ mod tests {
         block_on(radio.set_control(ControlId::NoiseBlanker, ControlValue::Bool(false))).unwrap();
         block_on(radio.set_control(ControlId::Agc, ControlValue::U8(0))).unwrap();
         assert_eq!(&*output.lock().unwrap(), b"PA;RA;NB;GT;PA2;RA01;NB0;GT002;");
+    }
+
+    #[test]
+    fn antenna_selection_uses_profile_owned_an_limits() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K3),
+            9_600,
+            MemoryTransport {
+                input: b"AN2;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            block_on(radio.get_control(ControlId::Antenna)).unwrap(),
+            Some(ControlValue::U8(2))
+        );
+        block_on(radio.set_control(ControlId::Antenna, ControlValue::U8(1))).unwrap();
+        assert_eq!(&*output.lock().unwrap(), b"AN;AN1;");
+    }
+
+    #[test]
+    fn k4_antenna_selection_accepts_documented_atu_connector() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K4),
+            9_600,
+            MemoryTransport {
+                input: b"AN3;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            block_on(radio.get_control(ControlId::Antenna)).unwrap(),
+            Some(ControlValue::U8(3))
+        );
+        block_on(radio.set_control(ControlId::Antenna, ControlValue::U8(2))).unwrap();
+        assert_eq!(&*output.lock().unwrap(), b"AN;AN2;");
     }
 
     #[test]
