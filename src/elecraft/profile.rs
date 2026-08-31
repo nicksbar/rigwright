@@ -67,6 +67,8 @@ pub struct ElecraftProfile {
     pub preamp_max: Option<u8>,
     pub attenuator_max: Option<u8>,
     pub supports_noise_blanker: bool,
+    pub noise_blanker_level_max: Option<u8>,
+    pub noise_reduction_level_max: Option<u8>,
     pub supports_agc: bool,
     pub supports_tuner: bool,
     pub supports_repeater: bool,
@@ -122,6 +124,9 @@ impl ElecraftProfile {
             ControlId::Preamp => self.preamp_max.is_some(),
             ControlId::Attenuator => self.attenuator_max.is_some(),
             ControlId::NoiseBlanker => self.supports_noise_blanker,
+            ControlId::NoiseReduction | ControlId::NoiseReductionLevel => {
+                self.noise_reduction_level_max.is_some()
+            }
             ControlId::Agc => self.supports_agc,
             ControlId::Filter => self.filter_max_hz.is_some(),
             ControlId::Tuner => self.supports_tuner,

@@ -76,7 +76,7 @@ controls or meters until a concrete model profile is selected.
 
 Elecraft profile differences currently cover K2 versus K3-family mode tables,
 model-specific baud lists, conservative HF frequency ranges, and normalized
-S-meter limits. The model-specific declarations live in the six modules listed
+S-meter limits. The model-specific declarations live in the seven modules listed
 above; shared profile validation remains in `src/elecraft/profile.rs`.
 Auto-Info event routing is now available through the shared event router. K4
 Ethernet/streaming, precise VFO-B semantics, and the wider K3-family control
@@ -102,7 +102,7 @@ enough to design against; it is not proof of correct code or physical behavior.
 | Tuning step | K4 implemented; K2/K3-family step writes open | HAL shape and model-specific value tests | Every supported step on a physical dial/navigation workflow |
 | Filters/bandwidth | Implemented as normalized bandwidth; framework-level | Named/value profile tables and readback fixtures | Accepted values and mode-dependent behavior |
 | AGC | Implemented in driver; framework-level | Model-specific control encoding and capability tests | AGC choices and readback |
-| Noise blanker/reduction | NB enable implemented; levels/NR open | Separate enable/level controls and range tests | Level behavior and mode interaction |
+| Noise blanker/reduction | NB enable implemented; K4 `NB$`/`NR$` levels implemented; non-K4 NR remains open | Separate enable/level controls and range tests | Level behavior and mode interaction |
 | Preamp/attenuator | Implemented in driver; framework-level | Distinct profile controls and mutual-exclusion tests | RF-path state and combinations |
 | Internal tuner | K4 mode/start implemented; other models open | Tuner state model, explicit-start path, and failure tests | Tune start/completion/failure and TX interlock |
 | Memory/channel operations | Manual; not implemented | Lossless `MemoryChannel` mapping or explicit unsupported fields | Empty/read/write/name/mode/frequency round trips |

@@ -200,6 +200,22 @@ impl ElecraftRadio {
             .context("Elecraft meter value is outside its documented range")
     }
 
+    fn parse_level_enabled(response: &[u8], prefix: &str, maximum: u8) -> Result<(u8, bool)> {
+        let text = std::str::from_utf8(response).context("Elecraft level response is not ASCII")?;
+        let payload = text
+            .strip_prefix(prefix)
+            .and_then(|value| value.strip_suffix(';'))
+            .context("unexpected Elecraft level response")?;
+        anyhow::ensure!(payload.len() == 3, "invalid Elecraft level response");
+        let level = payload[..2].parse::<u8>()?;
+        anyhow::ensure!(level <= maximum, "Elecraft level exceeds profile maximum");
+        anyhow::ensure!(
+            matches!(&payload[2..], "0" | "1"),
+            "invalid Elecraft level state"
+        );
+        Ok((level, &payload[2..] == "1"))
+    }
+
     fn decode_control(profile: ElecraftProfile, id: ControlId, response: &[u8]) -> Result<u8> {
         let text =
             std::str::from_utf8(response).context("Elecraft control response is not ASCII")?;
@@ -469,6 +485,7 @@ impl Radio for ElecraftRadio {
             ControlId::Agc => "GT",
             ControlId::Filter => profile.filter_command,
             ControlId::Tuner => "AT",
+            ControlId::NoiseReduction | ControlId::NoiseReductionLevel => "NR$",
             ControlId::TuningStep => "VT$X",
             _ => return Ok(None),
         };
@@ -500,7 +517,7 @@ impl Radio for ElecraftRadio {
                 xit
             })));
         }
-        if id == ControlId::NoiseBlanker {
+        if id == ControlId::NoiseBlanker && profile.noise_blanker_level_max.is_none() {
             let value = Self::parse_numeric(&self.query(command)?, command)?;
             return Ok(Some(ControlValue::Bool(value != 0)));
         }
@@ -511,6 +528,25 @@ impl Radio for ElecraftRadio {
         if id == ControlId::Tuner {
             let value = Self::parse_numeric(&self.query(command)?, command)?;
             return Ok(Some(ControlValue::Bool(value == 2)));
+        }
+        if matches!(
+            id,
+            ControlId::NoiseReduction | ControlId::NoiseReductionLevel
+        ) {
+            let maximum = profile
+                .noise_reduction_level_max
+                .context("Elecraft noise reduction is not profiled")?;
+            let (level, enabled) =
+                Self::parse_level_enabled(&self.query(command)?, "NR$", maximum)?;
+            return Ok(Some(if id == ControlId::NoiseReduction {
+                ControlValue::Bool(enabled)
+            } else {
+                ControlValue::U8(((u16::from(level) * 255) / u16::from(maximum)) as u8)
+            }));
+        }
+        if let (ControlId::NoiseBlanker, Some(maximum)) = (id, profile.noise_blanker_level_max) {
+            let (_level, enabled) = Self::parse_level_enabled(&self.query("NB$")?, "NB$", maximum)?;
+            return Ok(Some(ControlValue::Bool(enabled)));
         }
         Ok(Some(ControlValue::U8(Self::decode_control(
             profile,
@@ -542,7 +578,7 @@ impl Radio for ElecraftRadio {
                 self.set("RT", if enabled { "1" } else { "0" })
             }
             (ControlId::NoiseBlanker, ControlValue::Bool(enabled))
-                if profile.supports_noise_blanker =>
+                if profile.supports_noise_blanker && profile.noise_blanker_level_max.is_none() =>
             {
                 self.set("NB", if enabled { "1" } else { "0" })
             }
@@ -556,6 +592,28 @@ impl Radio for ElecraftRadio {
                 ),
             (ControlId::Tuner, ControlValue::Bool(enabled)) if profile.supports_tuner => {
                 self.set("AT", if enabled { "2" } else { "1" })
+            }
+            (ControlId::NoiseReduction, ControlValue::Bool(enabled))
+                if profile.noise_reduction_level_max.is_some() =>
+            {
+                let maximum = profile.noise_reduction_level_max.unwrap();
+                let (level, _) = Self::parse_level_enabled(&self.query("NR$")?, "NR$", maximum)?;
+                self.set("NR$", &format!("{level:02}{}", if enabled { 1 } else { 0 }))
+            }
+            (ControlId::NoiseReductionLevel, ControlValue::U8(value))
+                if profile.noise_reduction_level_max.is_some() =>
+            {
+                let maximum = profile.noise_reduction_level_max.unwrap();
+                let (_, enabled) = Self::parse_level_enabled(&self.query("NR$")?, "NR$", maximum)?;
+                let level = (u16::from(value) * u16::from(maximum) / 255) as u8;
+                self.set("NR$", &format!("{level:02}{}", if enabled { 1 } else { 0 }))
+            }
+            (ControlId::NoiseBlanker, ControlValue::Bool(enabled))
+                if profile.noise_blanker_level_max.is_some() =>
+            {
+                let maximum = profile.noise_blanker_level_max.unwrap();
+                let (level, _) = Self::parse_level_enabled(&self.query("NB$")?, "NB$", maximum)?;
+                self.set("NB$", &format!("{level:02}{}", if enabled { 1 } else { 0 }))
             }
             (ControlId::TuningStep, ControlValue::U8(value))
                 if profile.supports_tuning_step && value <= 5 =>
@@ -957,6 +1015,38 @@ mod tests {
         block_on(radio.set_control(ControlId::NoiseBlanker, ControlValue::Bool(false))).unwrap();
         block_on(radio.set_control(ControlId::Agc, ControlValue::U8(0))).unwrap();
         assert_eq!(&*output.lock().unwrap(), b"PA;RA;NB;GT;PA2;RA01;NB0;GT002;");
+    }
+
+    #[test]
+    fn k4_native_noise_controls_preserve_levels_and_normalize_reduction() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K4),
+            9_600,
+            MemoryTransport {
+                input: b"NR$031;NR$031;NB$121;NB$121;NR$031;NB$121;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            block_on(radio.get_control(ControlId::NoiseReduction)).unwrap(),
+            Some(ControlValue::Bool(true))
+        );
+        assert_eq!(
+            block_on(radio.get_control(ControlId::NoiseReductionLevel)).unwrap(),
+            Some(ControlValue::U8(76))
+        );
+        assert_eq!(
+            block_on(radio.get_control(ControlId::NoiseBlanker)).unwrap(),
+            Some(ControlValue::Bool(true))
+        );
+        block_on(radio.set_control(ControlId::NoiseReduction, ControlValue::Bool(false))).unwrap();
+        block_on(radio.set_control(ControlId::NoiseBlanker, ControlValue::Bool(false))).unwrap();
+        assert_eq!(
+            &*output.lock().unwrap(),
+            b"NR$;NR$;NB$;NR$;NR$030;NB$;NB$120;"
+        );
     }
 
     #[test]

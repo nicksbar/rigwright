@@ -25,6 +25,8 @@
   command while rejecting unsupported tone fields.
 - Add the K4 mode-qualified `VT$` tuning-step control and response matching;
   legacy-family step writes remain explicitly profile-gated.
+- Add K4-native level-bearing noise blanker and noise reduction controls via
+  `NB$`/`NR$`, preserving configured levels when toggling either feature.
 - Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
   outside this initial radio slice.
 

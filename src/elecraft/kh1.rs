@@ -44,6 +44,8 @@ pub const PROFILE: ElecraftProfile = ElecraftProfile {
     preamp_max: None,
     attenuator_max: None,
     supports_noise_blanker: false,
+    noise_blanker_level_max: None,
+    noise_reduction_level_max: None,
     supports_agc: false,
     supports_tuner: false,
     supports_repeater: false,
