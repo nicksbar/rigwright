@@ -121,6 +121,9 @@ state where the radio accepts the documented operation. It never keys the
 transmitter or writes memories; tuner start and scope streaming are reported as
 operator-impacting and skipped.
 
+Use `--restore-rit-off` only when recovering the known test state after an
+interrupted RIT exercise.
+
 When the model is known, prefer a profile-backed constructor so Rigwright can
 validate documented ranges, modes, controls, and scope geometry:
 

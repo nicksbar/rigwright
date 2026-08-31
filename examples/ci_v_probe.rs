@@ -92,10 +92,14 @@ fn main() -> Result<()> {
         .unwrap_or_else(|| "115200".to_string())
         .parse()
         .context("BAUD must be an integer")?;
-    let exercise = args.next().as_deref() == Some("--exercise");
+    let flags: Vec<_> = args.collect();
+    let exercise = flags.iter().any(|flag| flag == "--exercise");
+    let restore_rit_off = flags.iter().any(|flag| flag == "--restore-rit-off");
     anyhow::ensure!(
-        args.next().is_none(),
-        "usage: ci_v_probe [PORT] [BAUD] [--exercise]"
+        flags
+            .iter()
+            .all(|flag| flag == "--exercise" || flag == "--restore-rit-off"),
+        "usage: ci_v_probe [PORT] [BAUD] [--exercise] [--restore-rit-off]"
     );
     let radio = IcomCiVRadio::new_for_model_default_address(
         rigwright::models::IcomCivModel::Ic7300,
@@ -107,6 +111,11 @@ fn main() -> Result<()> {
     let mode = block_on(radio.get_mode())?;
     let ptt = block_on(radio.get_ptt())?;
     println!("IC-7300 {port} @ {baud}: {frequency} Hz, {mode:?}, PTT={ptt}");
+    if restore_rit_off {
+        block_on(radio.set_control(ControlId::Rit, ControlValue::Bool(false)))?;
+        println!("RIT restored OFF");
+        return Ok(());
+    }
     let mut failures = 0;
     println!("tuner status: {:?}", block_on(radio.get_tuner_status())?);
     if exercise {
@@ -166,16 +175,29 @@ fn main() -> Result<()> {
             None
         }
     };
-    let rit = match radio.get_rit_offset_hz() {
-        Ok(value) => {
-            println!("RIT offset: {value} Hz");
-            Some(value)
+    let mut rit_was_enabled = false;
+    let mut rit = None;
+    if mode == rigwright::Mode::Data {
+        println!("RIT: unavailable while IC-7300 is in Data mode");
+    } else {
+        rit_was_enabled = match block_on(radio.get_control(ControlId::Rit))? {
+            Some(ControlValue::Bool(value)) => value,
+            other => anyhow::bail!("unexpected RIT enable value: {other:?}"),
+        };
+        if !rit_was_enabled {
+            block_on(radio.set_control(ControlId::Rit, ControlValue::Bool(true)))?;
         }
-        Err(error) => {
-            println!("RIT offset: unavailable in current radio configuration ({error})");
-            None
-        }
-    };
+        rit = match radio.get_rit_offset_hz() {
+            Ok(value) => {
+                println!("RIT offset: {value} Hz");
+                Some(value)
+            }
+            Err(error) => {
+                println!("RIT offset unavailable ({error})");
+                None
+            }
+        };
+    }
     if exercise {
         if let Some(value) = repeater {
             if let Err(error) = radio.set_repeater_settings(value) {
@@ -189,6 +211,11 @@ fn main() -> Result<()> {
                 failures += 1;
             }
         }
+        if mode != rigwright::Mode::Data && !rit_was_enabled {
+            block_on(radio.set_control(ControlId::Rit, ControlValue::Bool(false)))?;
+        }
+    } else if mode != rigwright::Mode::Data && !rit_was_enabled {
+        block_on(radio.set_control(ControlId::Rit, ControlValue::Bool(false)))?;
     }
     println!("memory read/write: skipped (would alter operator memory)");
     println!("PTT/tuner start/scope stream: skipped (operator-impacting)");

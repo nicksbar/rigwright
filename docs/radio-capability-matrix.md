@@ -182,7 +182,7 @@ the final column.
 | `DataMode` | `Bool` | RW/P all four profiles | M, not typed | M, not typed | TS-590SG/TS-890S model behavior exists but not typed as this control | Q mode/status support |
 | `Filter` | model-specific `U8` | RW/P all four profiles | M, not typed | M, not typed | RW/P TS-590SG and TS-890S | Q filter control |
 | `Agc` | model-specific `U8` | RW/P IC-705, IC-7300, and IC-9700; manual-only on IC-7610 | RW/P modern profiles | M, not typed | RW/P TS-890S | Q compact control |
-| `Rit` | Icom `21 01`; model-specific elsewhere | R/W on all profiled Icom models | M | M | RW/P all three profiles | Icom profile implementation |
+| `Rit` | Icom `21 01`; model-specific elsewhere | R/W on all profiled Icom models; IC-7300 live RIT operations are mode-dependent and are rejected by the connected USB-D/Data configuration | M | M | RW/P all three profiles | Icom profile implementation; probe reports the IC-7300 Data-mode restriction explicitly |
 | `Xit` | Icom `21 02` where documented | R/W on IC-7300/IC-7610 profiles | M | M | RW/P all three profiles | Model-specific; not exposed on IC-705/IC-9700 |
 | `Split` | `Bool` | RW/P all four profiles | RW/P profiles with documented split | RW/P all four profiles | RW/P all three profiles | Q profile/control path, limited banner use |
 | `Tuner` | `Bool` enable/status | RW/P all four profiles | M, not typed | M, not typed | RW/P all three profiles | Q enable/disable and sweep safety |
