@@ -99,6 +99,42 @@ pub const GENERIC_YAESU_CLASSIC_MODEL: &str = "classic CAT (generic)";
 pub const GENERIC_KENWOOD_MODEL: &str = "PC control (generic)";
 
 impl RadioModelProfile {
+    /// Serial speeds suitable for the selected model, ordered from the
+    /// conservative choice to the fastest documented choice. These are
+    /// connection options for the client; the radio's own CAT setting still
+    /// has to match unless the transport performs an explicit probe.
+    pub fn supported_baud_rates(self) -> &'static [u32] {
+        const CIV_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
+
+        match self.protocol {
+            Protocol::IcomCiV { .. } => CIV_BAUD_RATES,
+            Protocol::YaesuCat => YaesuCatModel::from_model_name(self.model)
+                .map(crate::yaesu::profile::profile_for_model)
+                .map(|profile| profile.baud_rates)
+                .unwrap_or(&[]),
+            Protocol::YaesuLegacyCat => YaesuLegacyModel::from_model_name(self.model)
+                .map(crate::yaesu::legacy_profile::profile_for_model)
+                .map(|profile| profile.baud_rates)
+                .unwrap_or(&[]),
+            Protocol::KenwoodCat => KenwoodCatModel::from_model_name(self.model)
+                .map(crate::kenwood::profile::profile_for_model)
+                .map(|profile| profile.baud_rates)
+                .unwrap_or(&[]),
+            Protocol::ElecraftCat => {
+                crate::elecraft::profile::ElecraftModel::from_model_name(self.model)
+                    .map(crate::elecraft::profile::profile_for_model)
+                    .map(|profile| profile.baud_rates)
+                    .unwrap_or(&[])
+            }
+        }
+    }
+
+    /// Fastest profile-advertised serial speed, useful for a default UI
+    /// selection or a future transport probe policy.
+    pub fn fastest_supported_baud_rate(self) -> Option<u32> {
+        self.supported_baud_rates().iter().copied().max()
+    }
+
     /// Root-HAL operations implemented by the selected driver profile.
     pub fn driver_capabilities(self) -> crate::RadioCapabilities {
         let can_get_ptt = match self.protocol {
@@ -701,6 +737,16 @@ mod tests {
         assert_eq!(find_model("FT-857D").unwrap().preferred_baud_rate(), 4_800);
         assert_eq!(find_model("TS-2000").unwrap().preferred_baud_rate(), 57_600);
         assert_eq!(Protocol::KenwoodCat.label(), "Kenwood PC control");
+    }
+
+    #[test]
+    fn catalog_exposes_profile_baud_choices_and_fastest_option() {
+        let k3 = *find_model("K3").unwrap();
+        let k4 = *find_model("K4").unwrap();
+        assert_eq!(k3.supported_baud_rates(), &[4_800, 9_600, 19_200, 38_400]);
+        assert_eq!(k3.fastest_supported_baud_rate(), Some(38_400));
+        assert_eq!(k4.fastest_supported_baud_rate(), Some(115_200));
+        assert!(k4.supported_baud_rates().starts_with(&[4_800, 9_600]));
     }
 
     #[test]

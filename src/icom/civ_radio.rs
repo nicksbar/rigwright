@@ -23,6 +23,60 @@ use crate::hal_types::{
 
 const CI_V_FRAME_START: u8 = 0xFE;
 const CI_V_FRAME_END: u8 = 0xFD;
+const MAX_RETAINED_CI_V_FRAMES: usize = 128;
+
+/// Connection-level counters useful for diagnosing real CI-V links.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct IcomTransportMetrics {
+    pub commands_started: u64,
+    pub responses_matched: u64,
+    pub response_timeouts: u64,
+    pub bytes_read: u64,
+    pub frames_received: u64,
+    pub frames_retained: u64,
+    pub frames_dropped: u64,
+    pub echo_frames_ignored: u64,
+    pub unsolicited_events: u64,
+    pub total_response_time: Duration,
+    pub consecutive_timeouts: u32,
+}
+
+/// Host-side serial behavior for a native Icom CI-V connection.
+///
+/// DTR and RTS are left untouched by default because some older interfaces
+/// derive power or PTT behavior from modem-control lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IcomSerialPolicy {
+    pub hardware_flow_control: bool,
+    pub dtr: Option<bool>,
+    pub rts: Option<bool>,
+    pub startup_settle: Duration,
+}
+
+/// Successful result from an explicit CI-V connection probe.
+#[derive(Debug, Clone, Default)]
+pub struct IcomProbeResult {
+    pub baud_rate: u32,
+    pub radio_address: u8,
+    pub status: RadioStatus,
+}
+
+impl Default for IcomSerialPolicy {
+    fn default() -> Self {
+        Self {
+            hardware_flow_control: false,
+            dtr: None,
+            rts: None,
+            startup_settle: Duration::from_millis(50),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct IcomTransportState {
+    retained_frames: VecDeque<Vec<u8>>,
+    metrics: IcomTransportMetrics,
+}
 
 /// Compatibility name for the shared byte transport used by CI-V.
 pub use crate::transport::RadioTransport as CiVTransport;
@@ -284,6 +338,8 @@ pub struct IcomCiVRadio {
     serial_port: Arc<Mutex<Option<Box<dyn RadioTransport>>>>,
     external_transport: Arc<Mutex<Option<Box<dyn RadioTransport>>>>,
     scope_stream_reader: Arc<Mutex<ScopeStreamReader>>,
+    transport_state: Arc<Mutex<IcomTransportState>>,
+    serial_policy: IcomSerialPolicy,
     event_router: RadioEventRouter,
 }
 
@@ -466,6 +522,8 @@ impl IcomCiVRadio {
             serial_port: Arc::new(Mutex::new(None)),
             external_transport: Arc::new(Mutex::new(Some(Box::new(transport)))),
             scope_stream_reader: Arc::new(Mutex::new(ScopeStreamReader::default())),
+            transport_state: Arc::new(Mutex::new(IcomTransportState::default())),
+            serial_policy: IcomSerialPolicy::default(),
             event_router: RadioEventRouter::default(),
         }
     }
@@ -486,12 +544,20 @@ impl IcomCiVRadio {
             serial_port: Arc::new(Mutex::new(None)),
             external_transport: Arc::new(Mutex::new(None)),
             scope_stream_reader: Arc::new(Mutex::new(ScopeStreamReader::default())),
+            transport_state: Arc::new(Mutex::new(IcomTransportState::default())),
+            serial_policy: IcomSerialPolicy::default(),
             event_router: RadioEventRouter::default(),
         }
     }
 
     pub fn with_radio_address(mut self, radio_address: u8) -> Self {
         self.radio_address = radio_address;
+        self
+    }
+
+    /// Set host-side serial signaling behavior before the port is opened.
+    pub fn with_serial_policy(mut self, policy: IcomSerialPolicy) -> Self {
+        self.serial_policy = policy;
         self
     }
 
@@ -508,6 +574,14 @@ impl IcomCiVRadio {
     /// Radio address used in outgoing CI-V frames.
     pub fn radio_address(&self) -> u8 {
         self.radio_address
+    }
+
+    /// Return a point-in-time snapshot of link health counters.
+    pub fn transport_metrics(&self) -> IcomTransportMetrics {
+        self.transport_state
+            .lock()
+            .map(|state| state.metrics)
+            .unwrap_or_default()
     }
 
     fn selected_model(&self) -> Result<crate::models::IcomCivModel> {
@@ -803,6 +877,63 @@ impl IcomCiVRadio {
         self.probe_direct_serial()
     }
 
+    /// Try caller-supplied baud rates and radio addresses using harmless
+    /// frequency/mode reads. This never changes radio settings and is not
+    /// invoked by constructors. It is intended for an explicit connection UI
+    /// action on a dedicated CI-V link.
+    pub fn probe_candidates(
+        &self,
+        baud_rates: &[u32],
+        radio_addresses: &[u8],
+    ) -> Result<IcomProbeResult> {
+        anyhow::ensure!(
+            !baud_rates.is_empty(),
+            "CI-V probe requires a baud candidate"
+        );
+        anyhow::ensure!(
+            !radio_addresses.is_empty(),
+            "CI-V probe requires a radio-address candidate"
+        );
+        anyhow::ensure!(
+            self.external_transport
+                .lock()
+                .map(|transport| transport.is_none())
+                .unwrap_or(false),
+            "CI-V candidate probing requires a native serial port"
+        );
+
+        let mut failures = Vec::new();
+        for &baud_rate in baud_rates {
+            for &radio_address in radio_addresses {
+                let candidate = IcomCiVRadio::new_internal(
+                    self.model,
+                    self.port.clone(),
+                    baud_rate,
+                    self.controller_address,
+                    radio_address,
+                )
+                .with_serial_policy(self.serial_policy);
+                match candidate.probe() {
+                    Ok(status) => {
+                        return Ok(IcomProbeResult {
+                            baud_rate,
+                            radio_address,
+                            status,
+                        })
+                    }
+                    Err(error) => failures.push(format!(
+                        "baud {baud_rate}, address {radio_address:#04x}: {error}"
+                    )),
+                }
+            }
+        }
+
+        Err(anyhow!(
+            "CI-V probe failed for all candidates: {}",
+            failures.join("; ")
+        ))
+    }
+
     pub async fn probe_stream_status(&self) -> Result<RadioStatus> {
         self.probe_stream_status_blocking()
     }
@@ -931,7 +1062,28 @@ impl IcomCiVRadio {
                 .timeout(timeout)
                 .open();
             match open_result {
-                Ok(port) => {
+                Ok(mut port) => {
+                    port.set_flow_control(if self.serial_policy.hardware_flow_control {
+                        serialport::FlowControl::Hardware
+                    } else {
+                        serialport::FlowControl::None
+                    })
+                    .map_err(std::io::Error::other)
+                    .context("failed to configure Icom CI-V flow control")?;
+                    if let Some(enabled) = self.serial_policy.dtr {
+                        port.write_data_terminal_ready(enabled)
+                            .map_err(std::io::Error::other)
+                            .context("failed to configure Icom CI-V DTR")?;
+                    }
+                    if let Some(enabled) = self.serial_policy.rts {
+                        port.write_request_to_send(enabled)
+                            .map_err(std::io::Error::other)
+                            .context("failed to configure Icom CI-V RTS")?;
+                    }
+                    port.clear(serialport::ClearBuffer::Input)
+                        .map_err(std::io::Error::other)
+                        .context("failed to clear initial Icom CI-V input")?;
+                    thread::sleep(self.serial_policy.startup_settle);
                     eprintln!("[rigwright] opened serial port: {candidate}");
                     return Ok(Box::new(SerialPortTransport(port)));
                 }
@@ -978,6 +1130,9 @@ impl IcomCiVRadio {
     where
         F: FnMut(&[u8]) -> bool,
     {
+        if let Some(frame) = self.take_retained_match(echo_frame, &mut matcher) {
+            return Ok(frame);
+        }
         let deadline = Instant::now() + timeout;
         let mut buf = [0u8; 1024];
         let mut pending = Vec::new();
@@ -985,6 +1140,10 @@ impl IcomCiVRadio {
         while Instant::now() < deadline {
             match port.read(&mut buf) {
                 Ok(bytes) if bytes > 0 => {
+                    if let Ok(mut state) = self.transport_state.lock() {
+                        state.metrics.bytes_read =
+                            state.metrics.bytes_read.saturating_add(bytes as u64);
+                    }
                     // CI-V scope frames are unsolicited and can be interleaved
                     // with command replies. Feed every byte through the
                     // persistent scope parser before matching the requested
@@ -1002,11 +1161,19 @@ impl IcomCiVRadio {
                         );
                     pending.extend_from_slice(&buf[..bytes]);
                     for frame in drain_ci_v_frames(&mut pending) {
+                        if let Ok(mut state) = self.transport_state.lock() {
+                            state.metrics.frames_received =
+                                state.metrics.frames_received.saturating_add(1);
+                        }
                         // With CI-V USB Echo Back enabled, the radio/USB
                         // interface returns the exact outbound frame before
                         // the real ACK or data response. It is transport
                         // noise, not a response to match.
                         if echo_frame.is_some_and(|echo| frame == echo) {
+                            if let Ok(mut state) = self.transport_state.lock() {
+                                state.metrics.echo_frames_ignored =
+                                    state.metrics.echo_frames_ignored.saturating_add(1);
+                            }
                             continue;
                         }
                         if !is_radio_to_controller_frame(
@@ -1022,42 +1189,90 @@ impl IcomCiVRadio {
                         if matcher(&frame) {
                             return Ok(frame);
                         }
+                        self.retain_frame(frame);
                     }
                 }
                 Ok(_) => {}
                 Err(err) if err.kind() == ErrorKind::TimedOut => {
                     // keep waiting until timeout
+                    thread::sleep(Duration::from_millis(1));
                 }
                 Err(err) => return Err(err).context("failed to read matched CI-V response"),
             }
-
-            thread::sleep(Duration::from_millis(10));
         }
 
         Ok(Vec::new())
     }
 
+    fn take_retained_match<F>(&self, echo_frame: Option<&[u8]>, matcher: &mut F) -> Option<Vec<u8>>
+    where
+        F: FnMut(&[u8]) -> bool,
+    {
+        let mut state = self.transport_state.lock().ok()?;
+        let index = state
+            .retained_frames
+            .iter()
+            .position(|frame| echo_frame.is_none_or(|echo| frame != echo) && matcher(frame))?;
+        let frame = state.retained_frames.remove(index)?;
+        Some(frame)
+    }
+
+    fn retain_frame(&self, frame: Vec<u8>) {
+        if is_spectrum_data_frame(&frame) {
+            return;
+        }
+        if let Ok(mut state) = self.transport_state.lock() {
+            if state.retained_frames.len() >= MAX_RETAINED_CI_V_FRAMES {
+                state.retained_frames.pop_front();
+                state.metrics.frames_dropped = state.metrics.frames_dropped.saturating_add(1);
+            }
+            state.retained_frames.push_back(frame);
+            state.metrics.frames_retained = state.metrics.frames_retained.saturating_add(1);
+        }
+    }
+
+    fn response_timeout(&self, expect_data_frame: bool) -> Duration {
+        let base: u64 = if expect_data_frame { 1500 } else { 1200 };
+        let consecutive = self
+            .transport_state
+            .lock()
+            .map(|state| state.metrics.consecutive_timeouts)
+            .unwrap_or(0);
+        let multiplier = 1_u32.saturating_add(consecutive.min(2));
+        Duration::from_millis(base * u64::from(multiplier))
+    }
+
     fn transact(&self, payload: &[u8], expect_data_frame: bool) -> Result<Vec<u8>> {
         let frame = self.build_frame_payload(payload);
-        let response = self.with_serial_port(Duration::from_millis(700), |port| {
+        let response_timeout = self.response_timeout(expect_data_frame);
+        let started = Instant::now();
+        if let Ok(mut state) = self.transport_state.lock() {
+            state.metrics.commands_started = state.metrics.commands_started.saturating_add(1);
+        }
+        let response = self.with_serial_port(response_timeout, |port| {
             self.write_frame(port, &frame)?;
 
             if expect_data_frame {
-                self.read_response_matching(
-                    port,
-                    Duration::from_millis(1500),
-                    Some(&frame),
-                    |response| frame_matches_request(response, payload),
-                )
+                self.read_response_matching(port, response_timeout, Some(&frame), |response| {
+                    frame_matches_request(response, payload)
+                })
             } else {
-                self.read_response_matching(
-                    port,
-                    Duration::from_millis(1_200),
-                    Some(&frame),
-                    |response| is_ack_frame(response) || is_nak_frame(response),
-                )
+                self.read_response_matching(port, response_timeout, Some(&frame), |response| {
+                    is_ack_frame(response) || is_nak_frame(response)
+                })
             }
         })?;
+        if let Ok(mut state) = self.transport_state.lock() {
+            if response.is_empty() {
+                state.metrics.response_timeouts = state.metrics.response_timeouts.saturating_add(1);
+                state.metrics.consecutive_timeouts =
+                    state.metrics.consecutive_timeouts.saturating_add(1);
+            } else {
+                state.metrics.responses_matched = state.metrics.responses_matched.saturating_add(1);
+                state.metrics.total_response_time += started.elapsed();
+                state.metrics.consecutive_timeouts = 0;
+            }
+        }
         if expect_data_frame || is_ack_frame(&response) {
             Ok(response)
         } else if is_nak_frame(&response) {
@@ -2610,6 +2825,36 @@ mod tests {
     }
 
     #[test]
+    fn candidate_probe_is_explicit_and_rejects_external_transports() {
+        let radio =
+            IcomCiVRadio::with_transport(None, 0xE0, 0x94, TestTransport::with_reads(Vec::new()).0);
+        let error = radio
+            .probe_candidates(&[115_200], &[0x94])
+            .expect_err("external transports cannot change baud candidates");
+        assert!(error.to_string().contains("native serial port"));
+    }
+
+    #[test]
+    fn adaptive_timeout_expands_after_misses_and_recovers_after_success() {
+        let radio = IcomCiVRadio::new_generic("", 115_200, 0xE0, 0x94);
+        assert_eq!(radio.response_timeout(false), Duration::from_millis(1200));
+        radio
+            .transport_state
+            .lock()
+            .unwrap()
+            .metrics
+            .consecutive_timeouts = 1;
+        assert_eq!(radio.response_timeout(false), Duration::from_millis(2400));
+        radio
+            .transport_state
+            .lock()
+            .unwrap()
+            .metrics
+            .consecutive_timeouts = 0;
+        assert_eq!(radio.response_timeout(false), Duration::from_millis(1200));
+    }
+
+    #[test]
     fn falls_back_to_enumerated_ports_when_config_is_missing() {
         let radio = IcomCiVRadio::new_generic("", 115_200, 0xE0, 0x94);
         assert_eq!(radio.port, "");
@@ -2791,6 +3036,36 @@ mod tests {
         )
         .expect_err("CI-V NAK must not be hidden by echo filtering");
         assert!(error.to_string().contains("radio rejected CI-V command"));
+    }
+
+    #[test]
+    fn retains_unmatched_radio_frames_for_the_next_transaction() {
+        let mode = TestTransport::response(0x94, 0xE0, &[0x04, 0x01]);
+        let frequency = TestTransport::response(0x94, 0xE0, &[0x03, 0x00, 0x40, 0x07, 0x14, 0x00]);
+        let (transport, writes) = TestTransport::with_reads(vec![{
+            let mut combined = mode;
+            combined.extend_from_slice(&frequency);
+            combined
+        }]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_074_000
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_mode()).unwrap(),
+            Mode::Usb
+        );
+        assert_eq!(writes.lock().unwrap().len(), 2);
+        let metrics = radio.transport_metrics();
+        assert_eq!(metrics.frames_retained, 1);
+        assert_eq!(metrics.responses_matched, 2);
     }
 
     #[test]

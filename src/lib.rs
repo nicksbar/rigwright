@@ -14,6 +14,7 @@ pub mod kenwood;
 pub mod models;
 pub mod protocol;
 pub mod rigctld;
+pub mod session;
 pub mod transport;
 pub mod yaesu;
 
@@ -27,8 +28,9 @@ pub use hal_types::{
     Mode, OperatingMode, RepeaterSettings, RepeaterShift, ToneMode, ToneSettings, TunerStatus,
 };
 pub use icom::civ_radio::{
-    enumerate_serial_port_descriptors, enumerate_serial_ports, IcomCiVRadio, IcomReceiver, IcomVfo,
-    ScopeConfiguration, SerialPortDescriptor,
+    enumerate_serial_port_descriptors, enumerate_serial_ports, IcomCiVRadio, IcomProbeResult,
+    IcomReceiver, IcomSerialPolicy, IcomTransportMetrics, IcomVfo, ScopeConfiguration,
+    SerialPortDescriptor,
 };
 pub use iq::{decode_interleaved_iq, IqSampleBlock, IqSampleFormat};
 pub use kenwood::KenwoodCatRadio;
@@ -36,6 +38,10 @@ pub use models::{IcomCivModel, KenwoodCatModel, YaesuCatModel, YaesuLegacyModel}
 pub use protocol::yaesu_legacy_cat::{
     FrequencyModeStatus as YaesuLegacyFrequencyModeStatus, LegacyMode as YaesuLegacyMode,
     RxStatus as YaesuLegacyRxStatus, TxStatus as YaesuLegacyTxStatus,
+};
+pub use session::{
+    RadioSession, RadioSnapshot, RadioState, SessionConfig, SessionError, SessionEvent,
+    SessionEventRouter, SessionEventSubscription, SessionOperation, SessionStatus, SessionTicket,
 };
 pub use transport::RadioTransport;
 pub use yaesu::{LegacyYaesuRadio, YaesuCatRadio};

@@ -18,6 +18,23 @@ implementation, profile, application, and validation claims:
 are not yet safe to expose generically because command selectors, payloads,
 units, or model behavior differ.
 
+## Issue #20 session execution
+
+| Area | Rigwright status | Client contract |
+|---|---|---|
+| Driver-owned worker/state machine | H | `RadioSession` owns execution and lifecycle status |
+| Bounded queue/backpressure | H | `QueueFull` is returned before admission |
+| Duplicate/coalesced commands | H | Pending same-key intent supersedes older waiters |
+| Safety priority | H | PTT writes are scheduled ahead of ordinary state work |
+| Desired/observed/pending state | H | Every ticket resolves to a `RadioSnapshot` |
+| Polling and driver events | H | Worker refreshes and consumes vendor event routers |
+| Recovery | H | Backend errors produce `Degraded`; later success returns `Ready` |
+| Profile baud choices | H | Model catalog exposes documented choices and fastest selection |
+| Automatic baud probing | M / future transport | Requires transport-level negotiation before CAT traffic |
+
+This is a Rigwright HAL capability and does not imply QSONaut or QSONoid
+integration. No qsonaut-modems or qsonaut-third-party change is required.
+
 ## Root HAL operations
 
 | Operation | HAL surface | Icom CI-V | Modern Yaesu CAT | Classic Yaesu CAT | Kenwood PC control | QSONaut native use |
@@ -39,6 +56,18 @@ The method names are universal; the hardware support is not. Applications must
 check `Radio::capabilities()`, `supports_control()`, and `supports_meter()` as
 appropriate. A generic vendor driver deliberately reports no optional typed
 controls or meters until a concrete model profile is selected.
+
+### Icom CI-V transport hardening
+
+| Transport behavior | Status |
+|---|---|
+| One in-flight CI-V transaction | H; deliberately retained because CI-V frames have no transaction ID |
+| Immediate completion on decoded response | H; host-side inter-frame delay removed |
+| Persistent bounded inbox for unmatched radio frames | H; preserves interleaved replies for later commands |
+| USB echo-back filtering | H; echoed outbound frames are discarded and counted |
+| Scope-frame separation | H; waveform frames remain in the scope assembler and do not fill CAT inbox state |
+| Link-health metrics | H; counters and cumulative response time exposed by `IcomCiVRadio::transport_metrics()` |
+| Adaptive timeout and opt-in baud/address probing | H; adaptive deadlines are bounded and probing only tries caller-supplied candidates |
 
 ## Elecraft first implementation slice
 

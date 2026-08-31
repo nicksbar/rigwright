@@ -25,9 +25,21 @@ The trait is asynchronous, but the native serial implementation currently does
 blocking serial reads behind that boundary. Do not call it while holding a GUI
 mutex or another latency-sensitive application lock.
 
+For client-facing command execution, use [`RadioSession`](session.md). It owns
+the worker, bounded queue, coalescing, desired/observed state, refresh polling,
+event ingestion, and recovery status. Drivers still own protocol and profile
+rules; the session is deliberately vendor-neutral.
+
 ## Backends
 
 - `icom/` contains the shared Icom CI-V implementation and model profiles.
+  Its connection reader uses one in-flight transaction, a persistent bounded
+  frame inbox for interleaved replies, immediate completion on decoded frames,
+  adaptive bounded response deadlines, explicit serial signaling policy, and
+  link-health metrics. CI-V is not pipelined because frames have no transaction
+  identifier; queueing belongs above the transport. Candidate baud/address
+  probing is explicit and read-only; constructors never probe or modify radio
+  settings.
 - `yaesu/cat_radio.rs` is the model-neutral modern Yaesu ASCII CAT transport;
   `yaesu/profile.rs` and model modules contain documented differences.
 - `yaesu/legacy_radio.rs` and `yaesu/legacy_profile.rs` implement classic Yaesu
@@ -60,6 +72,10 @@ metadata, and helpers for the selected driver's behavior:
 
 - `preferred_baud_rate()` derives a safe starting choice from the vendor
   profile. It does not override the baud configured on the physical radio.
+- `supported_baud_rates()` exposes the documented choices in conservative-to-
+  fastest order, and `fastest_supported_baud_rate()` selects the fastest one.
+  A transport probe remains responsible for proving that the radio is actually
+  configured for a candidate speed.
 - `driver_capabilities()` reports the root frequency/mode/PTT/raw operations.
 - `supports_control(ControlId)` reports only typed controls implemented for
   that exact profile.

@@ -32,9 +32,13 @@ reported through the CodeQL check and GitHub code-scanning alerts.
 
 - One async, protocol-neutral `Radio` interface for frequency, mode, PTT,
   typed controls, raw-protocol access, and capability discovery.
+- Driver-owned `RadioSession` execution with bounded, coalescing command
+  admission, desired/observed snapshots, worker refresh, events, and recovery.
 - A normalized `0..=255` HAL scale for radio controls and meter deflection,
   with vendor-specific physical units kept in the driver/profile layer.
 - Native Icom CI-V over serial, developed and exercised with the IC-7300.
+- Low-latency Icom CI-V response demultiplexing, bounded interleaved-frame
+  retention, USB echo filtering, and transport health metrics.
 - Additive `RadioAndroid` entry point for Icom CI-V, modern Yaesu CAT, classic
   Yaesu CAT, and Kenwood CAT over an externally supplied byte transport.
 - Serial-port discovery, CI-V framing and parsing, spectrum-scope data, and raw
@@ -79,6 +83,8 @@ and hardware-validated behavior.
   models, maturity labels, and workspace manual editions.
 - [Driver architecture](docs/architecture.md) — HAL boundaries, transport
   rules, profiles, and validation policy.
+- [Driver-owned sessions](docs/session.md) — issue #20 queue, state, event, and
+  baud-selection behavior.
 
 Only the capability matrix should be updated for ordinary support-status
 changes; the architecture and model-addition guides are design/maintenance
