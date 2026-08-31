@@ -273,10 +273,51 @@ impl RadioModelProfile {
                 let profile = crate::icom::profile::profile_for_model(model);
                 match id {
                     ControlId::Preamp => Some(profile.preamp_max_level),
+                    // CI-V preset controls currently share the documented
+                    // ranges used by the model profiles.
+                    ControlId::Agc => Some(3),
+                    ControlId::NoiseReductionLevel => Some(15),
                     _ => None,
                 }
             }
-            _ => None,
+            Protocol::YaesuCat => {
+                YaesuCatModel::from_model_name(self.model)?;
+                match id {
+                    ControlId::Preamp => Some(2),
+                    ControlId::Attenuator => Some(3),
+                    ControlId::Filter => Some(23),
+                    ControlId::Agc => Some(4),
+                    ControlId::NoiseReductionLevel => Some(15),
+                    _ => None,
+                }
+            }
+            Protocol::KenwoodCat => {
+                let profile = KenwoodCatModel::from_model_name(self.model)
+                    .map(crate::kenwood::profile::profile_for_model)?;
+                if let Some(spec) = profile.control(id) {
+                    spec.max_value
+                } else if id == ControlId::RfPower && profile.power_range_watts.is_some() {
+                    Some(u8::MAX)
+                } else {
+                    None
+                }
+            }
+            Protocol::ElecraftCat => {
+                let profile = crate::elecraft::profile::ElecraftModel::from_model_name(self.model)
+                    .map(crate::elecraft::profile::profile_for_model)?;
+                match id {
+                    ControlId::AfGain => profile.af_gain_max.and_then(|v| u8::try_from(v).ok()),
+                    ControlId::RfGain => profile.rf_gain_max.and_then(|v| u8::try_from(v).ok()),
+                    ControlId::Preamp => profile.preamp_max,
+                    ControlId::Attenuator => profile.attenuator_max,
+                    ControlId::NoiseBlanker => profile.noise_blanker_level_max,
+                    ControlId::NoiseReductionLevel => profile.noise_reduction_level_max,
+                    ControlId::Agc if profile.supports_agc => Some(3),
+                    ControlId::Filter => profile.filter_max_hz.and_then(|v| u8::try_from(v).ok()),
+                    _ => None,
+                }
+            }
+            Protocol::YaesuLegacyCat => None,
         }
     }
 
@@ -887,5 +928,23 @@ mod tests {
                 .driver_capabilities()
                 .can_get_ptt
         );
+    }
+
+    #[test]
+    fn control_bounds_are_exposed_by_the_selected_vendor_profile() {
+        let ic7300 = *find_model("IC-7300").unwrap();
+        let ftdx10 = *find_model("FTDX10").unwrap();
+        let ts890s = *find_model("TS-890S").unwrap();
+        let k4 = *find_model("K4").unwrap();
+
+        assert_eq!(ic7300.control_max(crate::ControlId::Preamp), Some(1));
+        assert_eq!(ic7300.control_max(crate::ControlId::Agc), Some(3));
+        assert_eq!(ftdx10.control_max(crate::ControlId::Agc), Some(4));
+        assert_eq!(
+            ftdx10.control_max(crate::ControlId::NoiseReductionLevel),
+            Some(15)
+        );
+        assert_eq!(ts890s.control_max(crate::ControlId::Agc), Some(3));
+        assert_eq!(k4.control_max(crate::ControlId::Agc), Some(3));
     }
 }

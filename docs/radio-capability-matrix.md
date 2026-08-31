@@ -151,6 +151,12 @@ correct code or physical behavior.
 | TX status and additional meters | Power/ALC/SWR implemented where the protocol permits; K4 actual TX state via `TQX`, K3/K3S `TM` source selection, K4 `SM$`/`PO` queries, and K4 `TM` ALC/compression/power/SWR event reports implemented; voltage/current/temperature remain unavailable in the transceiver HAL | Typed status/events, normalized meter fixtures, read-only semantics | RX/TX/tune captures for power/SWR/ALC/etc. |
 | Identification and capability probing (`ID`/`OM`/status) | `ID` and decoded model-specific `OM` probes implemented for K3/K3S/KX2/KX3/K4; KH1 has no reviewed `OM` schema | Bounded probe, unknown-model, timeout, malformed-frame, and family-parser tests | Known model, firmware, and installed-option identification |
 
+Control bounds and discrete choices are part of the profile-owned surface in
+the rows above. Consumers such as QSONaut must obtain them through
+`RadioModelProfile::control_max` and `supported_control_values`; application
+code may choose presentation, labels, and safety policy but must not recreate
+vendor ranges.
+
 The tester gate is deliberate: all rows may reach `Implemented` with manual
 review and deterministic fixtures, but no Elecraft model should move from
 `Framework` to `Hardware validated` until a tester exercises the relevant CAT
