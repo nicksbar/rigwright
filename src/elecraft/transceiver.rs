@@ -314,6 +314,10 @@ impl ElecraftRadio {
             .context("Elecraft meter value is outside its documented range")
     }
 
+    fn parse_k4_signal(response: &[u8]) -> Result<u8> {
+        Self::parse_meter_value(response, "SM$", 42)
+    }
+
     fn parse_level_enabled(response: &[u8], prefix: &str, maximum: u8) -> Result<(u8, bool)> {
         let text = std::str::from_utf8(response).context("Elecraft level response is not ASCII")?;
         let payload = text
@@ -979,6 +983,9 @@ impl Radio for ElecraftRadio {
     async fn get_meter(&self, id: MeterId) -> Result<Option<u8>> {
         let value = match id {
             MeterId::Signal => {
+                if self.model == Some(ElecraftModel::K4) {
+                    return Ok(Some(Self::parse_k4_signal(&self.query("SM")?)?));
+                }
                 let response = self.query("SM")?;
                 Self::parse_meter_value(
                     &response,
@@ -990,6 +997,9 @@ impl Radio for ElecraftRadio {
                     },
                 )?
             }
+            MeterId::Power if self.model == Some(ElecraftModel::K4) => {
+                Self::parse_meter_value(&self.query("PO")?, "PO", 1100)?
+            }
             MeterId::Power => Self::parse_meter_value(&self.query("BG")?, "BG", 12)?,
             MeterId::Alc => {
                 anyhow::ensure!(
@@ -997,6 +1007,9 @@ impl Radio for ElecraftRadio {
                     "Elecraft ALC meter is only profiled for K3/K3S"
                 );
                 Self::parse_meter_value(&self.query("BG")?, "BG", 7)?
+            }
+            MeterId::Swr if self.model == Some(ElecraftModel::K4) => {
+                return Ok(None);
             }
             MeterId::Swr => Self::parse_meter_value(&self.query("SW")?, "SW", 999)?,
             _ => return Ok(None),
@@ -1006,7 +1019,9 @@ impl Radio for ElecraftRadio {
 
     fn supports_meter(&self, id: MeterId) -> bool {
         match id {
-            MeterId::Signal | MeterId::Power | MeterId::Swr => self.model.is_some(),
+            MeterId::Signal => self.model.is_some(),
+            MeterId::Power => self.model.is_some(),
+            MeterId::Swr => self.model.is_some_and(|model| model != ElecraftModel::K4),
             MeterId::Alc => matches!(self.model, Some(ElecraftModel::K3 | ElecraftModel::K3s)),
             _ => false,
         }
@@ -1507,6 +1522,30 @@ mod tests {
         );
         assert_eq!(block_on(radio.get_meter(MeterId::Alc)).unwrap(), Some(255));
         assert_eq!(block_on(radio.get_meter(MeterId::Swr)).unwrap(), Some(31));
+    }
+
+    #[test]
+    fn k4_meter_queries_use_sm_dollar_and_po_without_claiming_swr_polling() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K4),
+            9_600,
+            MemoryTransport {
+                input: b"SM$21;PO0550;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            block_on(radio.get_meter(MeterId::Signal)).unwrap(),
+            Some(128)
+        );
+        assert_eq!(
+            block_on(radio.get_meter(MeterId::Power)).unwrap(),
+            Some(128)
+        );
+        assert!(!radio.supports_meter(MeterId::Swr));
+        assert_eq!(&*output.lock().unwrap(), b"SM;PO;");
     }
 
     #[test]
