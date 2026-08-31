@@ -423,6 +423,7 @@ impl Radio for ElecraftRadio {
             ControlId::NoiseBlanker => "NB",
             ControlId::Agc => "GT",
             ControlId::Filter => profile.filter_command,
+            ControlId::Tuner => "AT",
             _ => return Ok(None),
         };
         if matches!(id, ControlId::Vfo) {
@@ -445,6 +446,10 @@ impl Radio for ElecraftRadio {
         if id == ControlId::Agc {
             let value = Self::parse_numeric(&self.query(command)?, command)?;
             return Ok(Some(ControlValue::U8(if value <= 2 { 0 } else { 255 })));
+        }
+        if id == ControlId::Tuner {
+            let value = Self::parse_numeric(&self.query(command)?, command)?;
+            return Ok(Some(ControlValue::Bool(value == 2)));
         }
         Ok(Some(ControlValue::U8(Self::decode_control(
             profile,
@@ -488,6 +493,9 @@ impl Radio for ElecraftRadio {
                     profile.filter_command,
                     &Self::encode_control(profile, ControlId::Filter, value)?,
                 ),
+            (ControlId::Tuner, ControlValue::Bool(enabled)) if profile.supports_tuner => {
+                self.set("AT", if enabled { "2" } else { "1" })
+            }
             (id @ (ControlId::Preamp | ControlId::Attenuator), ControlValue::U8(value)) => self
                 .set(
                     if id == ControlId::Preamp { "PA" } else { "RA" },
@@ -534,6 +542,28 @@ impl Radio for ElecraftRadio {
 
     async fn set_xit_offset_hz(&self, offset_hz: i32) -> Result<()> {
         self.set_rit_offset_hz(offset_hz).await
+    }
+
+    async fn start_tuner(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.profile().is_some_and(|profile| profile.supports_tuner),
+            "Elecraft tuner control is not profiled"
+        );
+        self.set("TU", "3")
+    }
+
+    async fn get_tuner_status(&self) -> Result<Option<crate::TunerStatus>> {
+        let Some(profile) = self.profile() else {
+            return Ok(None);
+        };
+        if !profile.supports_tuner {
+            return Ok(None);
+        }
+        let mode = Self::parse_numeric(&self.query("AT")?, "AT")?;
+        Ok(Some(crate::TunerStatus {
+            enabled: mode == 2,
+            tuning: false,
+        }))
     }
 
     async fn get_meter(&self, id: MeterId) -> Result<Option<u8>> {
@@ -837,5 +867,33 @@ mod tests {
         );
         block_on(radio.set_control(ControlId::Filter, ControlValue::U8(255))).unwrap();
         assert_eq!(&*output.lock().unwrap(), b"BW;BW9999;");
+    }
+
+    #[test]
+    fn k4_tuner_control_uses_at_mode_and_tu3_start() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K4),
+            9_600,
+            MemoryTransport {
+                input: b"AT2;AT2;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            block_on(radio.get_control(ControlId::Tuner)).unwrap(),
+            Some(ControlValue::Bool(true))
+        );
+        assert_eq!(
+            block_on(radio.get_tuner_status()).unwrap(),
+            Some(crate::TunerStatus {
+                enabled: true,
+                tuning: false,
+            })
+        );
+        block_on(radio.set_control(ControlId::Tuner, ControlValue::Bool(false))).unwrap();
+        block_on(radio.start_tuner()).unwrap();
+        assert_eq!(&*output.lock().unwrap(), b"AT;AT;AT1;TU3;");
     }
 }

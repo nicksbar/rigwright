@@ -13,6 +13,7 @@ pub const PROFILE: ElecraftProfile = ElecraftProfile {
     attenuator_max: Some(30),
     supports_noise_blanker: true,
     supports_agc: true,
+    supports_tuner: true,
     filter_max_hz: Some(9_999),
     filter_command: "BW",
     af_gain_max: Some(60),

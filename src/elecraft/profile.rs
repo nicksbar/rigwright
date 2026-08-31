@@ -57,6 +57,7 @@ pub struct ElecraftProfile {
     pub attenuator_max: Option<u8>,
     pub supports_noise_blanker: bool,
     pub supports_agc: bool,
+    pub supports_tuner: bool,
     pub filter_max_hz: Option<u16>,
     pub filter_command: &'static str,
     pub af_gain_max: Option<u16>,
@@ -110,6 +111,7 @@ impl ElecraftProfile {
             ControlId::NoiseBlanker => self.supports_noise_blanker,
             ControlId::Agc => self.supports_agc,
             ControlId::Filter => self.filter_max_hz.is_some(),
+            ControlId::Tuner => self.supports_tuner,
             ControlId::Squelch
             | ControlId::RfPower
             | ControlId::Vfo

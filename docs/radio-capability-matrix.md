@@ -67,6 +67,7 @@ controls or meters until a concrete model profile is selected.
 | Noise blanker | `ControlId::NoiseBlanker` | H/P via `NB` enable state |
 | AGC | `ControlId::Agc` | H/P via `GT` fast/slow mapping |
 | Filter bandwidth | `ControlId::Filter` | H/P via model-owned `BW`/`FW` bandwidth mapping |
+| Internal tuner mode/start | `ControlId::Tuner`, `start_tuner` | H/P for K4 via `AT`/`TU3`; other models remain profile-gated |
 | Raw protocol | `protocol_write_read` | H/P |
 | TX meters | `MeterId::{Power,Alc,Swr}` | H/P via `BG`/`SW` where documented |
 
@@ -98,7 +99,7 @@ enough to design against; it is not proof of correct code or physical behavior.
 | AGC | Implemented in driver; framework-level | Model-specific control encoding and capability tests | AGC choices and readback |
 | Noise blanker/reduction | NB enable implemented; levels/NR open | Separate enable/level controls and range tests | Level behavior and mode interaction |
 | Preamp/attenuator | Implemented in driver; framework-level | Distinct profile controls and mutual-exclusion tests | RF-path state and combinations |
-| Internal tuner | Manual; not implemented | Tuner state model, explicit-start path, and failure tests | Tune start/completion/failure and TX interlock |
+| Internal tuner | K4 mode/start implemented; other models open | Tuner state model, explicit-start path, and failure tests | Tune start/completion/failure and TX interlock |
 | Memory/channel operations | Manual; not implemented | Lossless `MemoryChannel` mapping or explicit unsupported fields | Empty/read/write/name/mode/frequency round trips |
 | Repeater/tone | Manual; not implemented | Profile-gated `RepeaterSettings` and unsupported-field tests | Tone, offset, and model-specific repeater behavior |
 | TX status and additional meters | Power/ALC/SWR implemented; further status remains | Typed status/events, normalized meter fixtures, read-only semantics | RX/TX/tune captures for power/SWR/ALC/etc. |
