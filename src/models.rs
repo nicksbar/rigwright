@@ -194,7 +194,10 @@ impl RadioModelProfile {
                 let profile = crate::kenwood::profile::profile_for_model(model);
                 profile.supports_control(id)
             }
-            Protocol::ElecraftCat => id == ControlId::AfGain,
+            Protocol::ElecraftCat => matches!(
+                id,
+                ControlId::AfGain | ControlId::RfGain | ControlId::Squelch
+            ),
         }
     }
 }

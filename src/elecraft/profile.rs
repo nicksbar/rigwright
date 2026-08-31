@@ -52,6 +52,11 @@ pub struct ElecraftProfile {
     pub frequency_ranges: &'static [(u64, u64)],
     pub modes: &'static [ElecraftModeSpec],
     pub supports_vfo_b: bool,
+    pub af_gain_max: Option<u16>,
+    pub rf_gain_max: Option<u16>,
+    pub squelch_max: u16,
+    /// K4 reports RF gain as attenuation (`RG-00` through `RG-60`).
+    pub rf_gain_is_attenuation: bool,
 }
 
 impl ElecraftProfile {
@@ -165,6 +170,10 @@ pub const K2_PROFILE: ElecraftProfile = ElecraftProfile {
     frequency_ranges: HF_RANGES,
     modes: K2_MODES,
     supports_vfo_b: true,
+    af_gain_max: None,
+    rf_gain_max: None,
+    squelch_max: 250,
+    rf_gain_is_attenuation: false,
 };
 pub const KX2_PROFILE: ElecraftProfile = ElecraftProfile {
     model: ElecraftModel::Kx2,
@@ -172,6 +181,10 @@ pub const KX2_PROFILE: ElecraftProfile = ElecraftProfile {
     frequency_ranges: HF_RANGES,
     modes: K3_MODES,
     supports_vfo_b: true,
+    af_gain_max: Some(255),
+    rf_gain_max: Some(250),
+    squelch_max: 29,
+    rf_gain_is_attenuation: false,
 };
 pub const KX3_PROFILE: ElecraftProfile = ElecraftProfile {
     model: ElecraftModel::Kx3,
@@ -179,6 +192,10 @@ pub const KX3_PROFILE: ElecraftProfile = ElecraftProfile {
     frequency_ranges: HF_RANGES,
     modes: K3_MODES,
     supports_vfo_b: true,
+    af_gain_max: Some(255),
+    rf_gain_max: Some(250),
+    squelch_max: 29,
+    rf_gain_is_attenuation: false,
 };
 pub const K3_PROFILE: ElecraftProfile = ElecraftProfile {
     model: ElecraftModel::K3,
@@ -186,6 +203,10 @@ pub const K3_PROFILE: ElecraftProfile = ElecraftProfile {
     frequency_ranges: HF_RANGES,
     modes: K3_MODES,
     supports_vfo_b: true,
+    af_gain_max: Some(255),
+    rf_gain_max: Some(250),
+    squelch_max: 29,
+    rf_gain_is_attenuation: false,
 };
 pub const K3S_PROFILE: ElecraftProfile = ElecraftProfile {
     model: ElecraftModel::K3s,
@@ -193,6 +214,10 @@ pub const K3S_PROFILE: ElecraftProfile = ElecraftProfile {
     frequency_ranges: HF_RANGES,
     modes: K3_MODES,
     supports_vfo_b: true,
+    af_gain_max: Some(255),
+    rf_gain_max: Some(250),
+    squelch_max: 29,
+    rf_gain_is_attenuation: false,
 };
 pub const K4_PROFILE: ElecraftProfile = ElecraftProfile {
     model: ElecraftModel::K4,
@@ -200,6 +225,10 @@ pub const K4_PROFILE: ElecraftProfile = ElecraftProfile {
     frequency_ranges: K4_RANGES,
     modes: K3_MODES,
     supports_vfo_b: true,
+    af_gain_max: Some(60),
+    rf_gain_max: Some(60),
+    squelch_max: 40,
+    rf_gain_is_attenuation: true,
 };
 
 pub const fn profile_for_model(model: ElecraftModel) -> ElecraftProfile {

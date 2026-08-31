@@ -144,6 +144,58 @@ impl ElecraftRadio {
             .context("unexpected Elecraft mode response")?;
         profile.decode_mode(code)
     }
+
+    fn decode_control(profile: ElecraftProfile, id: ControlId, response: &[u8]) -> Result<u8> {
+        let text =
+            std::str::from_utf8(response).context("Elecraft control response is not ASCII")?;
+        let raw = match id {
+            ControlId::AfGain => text.strip_prefix("AG"),
+            ControlId::RfGain => text.strip_prefix("RG"),
+            ControlId::Squelch => text.strip_prefix("SQ"),
+            _ => None,
+        }
+        .context("unexpected Elecraft receiver-control response")?
+        .trim_end_matches(';');
+        let native = raw.strip_prefix('-').unwrap_or(raw).parse::<u16>()?;
+        let maximum = match id {
+            ControlId::AfGain => profile.af_gain_max,
+            ControlId::RfGain => profile.rf_gain_max,
+            ControlId::Squelch => Some(profile.squelch_max),
+            _ => None,
+        }
+        .context("Elecraft control is not profiled")?;
+        if native > maximum {
+            bail!("Elecraft control value exceeds profile maximum");
+        }
+        Ok(
+            if id == ControlId::RfGain && profile.rf_gain_is_attenuation {
+                (((maximum - native) * 255) / maximum) as u8
+            } else {
+                ((native * 255) / maximum) as u8
+            },
+        )
+    }
+
+    fn encode_control(profile: ElecraftProfile, id: ControlId, value: u8) -> Result<String> {
+        let maximum = match id {
+            ControlId::AfGain => profile.af_gain_max,
+            ControlId::RfGain => profile.rf_gain_max,
+            ControlId::Squelch => Some(profile.squelch_max),
+            _ => None,
+        }
+        .context("Elecraft control is not profiled")?;
+        let native = if id == ControlId::RfGain && profile.rf_gain_is_attenuation {
+            maximum - ((u16::from(value) * maximum) / 255)
+        } else {
+            (u16::from(value) * maximum) / 255
+        };
+        Ok(match id {
+            ControlId::AfGain | ControlId::Squelch => format!("{native:03}"),
+            ControlId::RfGain if profile.rf_gain_is_attenuation => format!("-{native:02}"),
+            ControlId::RfGain => format!("{native:03}"),
+            _ => unreachable!(),
+        })
+    }
 }
 
 fn publish_event(router: &RadioEventRouter, model: Option<ElecraftModel>, frame: &[u8]) {
@@ -177,13 +229,26 @@ fn publish_event(router: &RadioEventRouter, model: Option<ElecraftModel>, frame:
                 payload: frame.to_vec(),
             }),
         }
-    } else if let Some(value) = payload
-        .strip_prefix("AG")
-        .and_then(|value| value.parse::<u8>().ok())
+    } else if let Some(id) = [
+        (ControlId::AfGain, "AG"),
+        (ControlId::RfGain, "RG"),
+        (ControlId::Squelch, "SQ"),
+    ]
+    .into_iter()
+    .find(|(_, prefix)| payload.starts_with(prefix))
+    .map(|(id, _)| id)
     {
-        router.publish(RadioEvent::ControlChanged {
-            id: ControlId::AfGain,
-            value: ControlValue::U8(value),
+        if let Some(profile) = model.map(profile_for_model) {
+            if let Ok(value) = ElecraftRadio::decode_control(profile, id, frame) {
+                router.publish(RadioEvent::ControlChanged {
+                    id,
+                    value: ControlValue::U8(value),
+                });
+                return;
+            }
+        }
+        router.publish(RadioEvent::Raw {
+            payload: frame.to_vec(),
         });
     } else if let Some(value) = payload
         .strip_prefix("SM")
@@ -264,24 +329,39 @@ impl Radio for ElecraftRadio {
     }
 
     async fn get_control(&self, id: ControlId) -> Result<Option<ControlValue>> {
-        if id == ControlId::AfGain {
-            let value = std::str::from_utf8(&self.query("AG")?)
-                .context("Elecraft AF gain response is not ASCII")?
-                .trim_end_matches(';')
-                .strip_prefix("AG")
-                .context("unexpected Elecraft AF gain response")?
-                .parse::<u16>()
-                .context("invalid Elecraft AF gain")?;
-            return Ok(Some(ControlValue::U8(
-                u8::try_from(value).context("Elecraft AF gain out of range")?,
-            )));
-        }
-        Ok(None)
+        let Some(profile) = self.profile() else {
+            return Ok(None);
+        };
+        let command = match id {
+            ControlId::AfGain => "AG",
+            ControlId::RfGain => "RG",
+            ControlId::Squelch => "SQ",
+            _ => return Ok(None),
+        };
+        Ok(Some(ControlValue::U8(Self::decode_control(
+            profile,
+            id,
+            &self.query(command)?,
+        )?)))
     }
 
     async fn set_control(&self, id: ControlId, value: ControlValue) -> Result<()> {
+        let profile = self
+            .profile()
+            .context("Elecraft controls require a selected model")?;
         match (id, value) {
-            (ControlId::AfGain, ControlValue::U8(value)) => self.set("AG", &format!("{value:03}")),
+            (
+                id @ (ControlId::AfGain | ControlId::RfGain | ControlId::Squelch),
+                ControlValue::U8(value),
+            ) => self.set(
+                match id {
+                    ControlId::AfGain => "AG",
+                    ControlId::RfGain => "RG",
+                    ControlId::Squelch => "SQ",
+                    _ => unreachable!(),
+                },
+                &Self::encode_control(profile, id, value)?,
+            ),
             _ => bail!("Elecraft control {id:?} is not implemented"),
         }
     }
@@ -315,7 +395,15 @@ impl Radio for ElecraftRadio {
         id == MeterId::Signal
     }
     fn supports_control(&self, id: ControlId) -> bool {
-        id == ControlId::AfGain
+        matches!(
+            id,
+            ControlId::AfGain | ControlId::RfGain | ControlId::Squelch
+        ) && self.profile().is_some_and(|profile| match id {
+            ControlId::AfGain => profile.af_gain_max.is_some(),
+            ControlId::RfGain => profile.rf_gain_max.is_some(),
+            ControlId::Squelch => true,
+            _ => false,
+        })
     }
     fn capabilities(&self) -> RadioCapabilities {
         RadioCapabilities {
@@ -434,5 +522,35 @@ mod tests {
             subscription.drain(),
             vec![RadioEvent::ModeChanged { mode: Mode::Usb }]
         );
+    }
+
+    #[test]
+    fn receiver_controls_use_model_native_ranges() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K4),
+            9_600,
+            MemoryTransport {
+                input: b"AG030;RG-30;SQ020;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            block_on(radio.get_control(ControlId::AfGain)).unwrap(),
+            Some(ControlValue::U8(127))
+        );
+        assert_eq!(
+            block_on(radio.get_control(ControlId::RfGain)).unwrap(),
+            Some(ControlValue::U8(127))
+        );
+        assert_eq!(
+            block_on(radio.get_control(ControlId::Squelch)).unwrap(),
+            Some(ControlValue::U8(127))
+        );
+        block_on(radio.set_control(ControlId::RfGain, ControlValue::U8(255))).unwrap();
+        assert!(String::from_utf8(output.lock().unwrap().clone())
+            .unwrap()
+            .ends_with("RG-00;"));
     }
 }

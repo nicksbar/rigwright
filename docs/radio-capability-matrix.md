@@ -53,6 +53,8 @@ controls or meters until a concrete model profile is selected.
 | PTT write/read | `set_ptt`, `get_ptt` | H/P via `TX`/`RX` and `TQ` |
 | Signal meter | `MeterId::Signal` | H/P via `SM` |
 | AF gain | `ControlId::AfGain` | H/P via `AG` |
+| RF gain | `ControlId::RfGain` | H/P via profile-scaled `RG` |
+| Squelch | `ControlId::Squelch` | H/P via profile-scaled `SQ` |
 | Raw protocol | `protocol_write_read` | H/P |
 
 Elecraft profile differences currently cover K2 versus K3-family mode tables,

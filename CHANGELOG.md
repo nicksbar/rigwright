@@ -8,6 +8,8 @@
   K3S, and K4 core operations.
 - Route Elecraft Auto-Info frequency, mode, PTT, AF-gain, signal-meter, and raw
   frames through the shared Rigwright event router.
+- Add profile-scaled Elecraft RF-gain and squelch controls through the common
+  normalized HAL value range.
 - Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
   outside this initial radio slice.
 
