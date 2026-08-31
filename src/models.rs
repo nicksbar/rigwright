@@ -240,6 +240,41 @@ impl RadioModelProfile {
             }
         }
     }
+
+    /// Model-owned discrete values for a typed numeric control.
+    pub fn supported_control_values(self, id: crate::ControlId) -> Option<&'static [u8]> {
+        use crate::ControlId;
+
+        match self.protocol {
+            Protocol::IcomCiV { .. } => {
+                let model = IcomCivModel::from_model_name(self.model)?;
+                let profile = crate::icom::profile::profile_for_model(model);
+                match id {
+                    ControlId::Attenuator => Some(profile.attenuator_values),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Maximum value for a model-owned numeric control, when the profile uses
+    /// a contiguous range rather than a discrete value table.
+    pub fn control_max(self, id: crate::ControlId) -> Option<u8> {
+        use crate::ControlId;
+
+        match self.protocol {
+            Protocol::IcomCiV { .. } => {
+                let model = IcomCivModel::from_model_name(self.model)?;
+                let profile = crate::icom::profile::profile_for_model(model);
+                match id {
+                    ControlId::Preamp => Some(profile.preamp_max_level),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
