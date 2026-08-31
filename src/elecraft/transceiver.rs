@@ -178,6 +178,21 @@ impl ElecraftRadio {
         Ok((offset, bytes[17] == b'1', bytes[18] == b'1'))
     }
 
+    fn parse_meter_value(response: &[u8], prefix: &str, maximum: u16) -> Result<u8> {
+        let text = std::str::from_utf8(response).context("Elecraft meter response is not ASCII")?;
+        let raw = text
+            .strip_prefix(prefix)
+            .and_then(|value| value.strip_suffix(';'))
+            .context("unexpected Elecraft meter response")?;
+        let digits = raw
+            .char_indices()
+            .find(|(_, character)| !character.is_ascii_digit())
+            .map_or(raw, |(index, _)| &raw[..index]);
+        let value = digits.parse::<u16>()?;
+        crate::normalize_meter_level(value, maximum)
+            .context("Elecraft meter value is outside its documented range")
+    }
+
     fn decode_control(profile: ElecraftProfile, id: ControlId, response: &[u8]) -> Result<u8> {
         let text =
             std::str::from_utf8(response).context("Elecraft control response is not ASCII")?;
@@ -188,6 +203,7 @@ impl ElecraftRadio {
             ControlId::RfPower => text.strip_prefix("PC"),
             ControlId::Preamp => text.strip_prefix("PA"),
             ControlId::Attenuator => text.strip_prefix("RA"),
+            ControlId::Filter => text.strip_prefix("BW").or_else(|| text.strip_prefix("FW")),
             _ => None,
         }
         .context("unexpected Elecraft receiver-control response")?
@@ -200,6 +216,7 @@ impl ElecraftRadio {
             ControlId::RfPower => profile.power_max_watts,
             ControlId::Preamp => profile.preamp_max.map(u16::from),
             ControlId::Attenuator => profile.attenuator_max.map(u16::from),
+            ControlId::Filter => profile.filter_max_hz,
             _ => None,
         }
         .context("Elecraft control is not profiled")?;
@@ -207,11 +224,11 @@ impl ElecraftRadio {
             bail!("Elecraft control value exceeds profile maximum");
         }
         Ok(if id == ControlId::RfPower {
-            ((native * 255) / maximum) as u8
+            ((u32::from(native) * 255) / u32::from(maximum)) as u8
         } else if id == ControlId::RfGain && profile.rf_gain_is_attenuation {
-            (((maximum - native) * 255) / maximum) as u8
+            ((u32::from(maximum - native) * 255) / u32::from(maximum)) as u8
         } else {
-            ((native * 255) / maximum) as u8
+            ((u32::from(native) * 255) / u32::from(maximum)) as u8
         })
     }
 
@@ -223,18 +240,20 @@ impl ElecraftRadio {
             ControlId::RfPower => profile.power_max_watts,
             ControlId::Preamp => profile.preamp_max.map(u16::from),
             ControlId::Attenuator => profile.attenuator_max.map(u16::from),
+            ControlId::Filter => profile.filter_max_hz,
             _ => None,
         }
         .context("Elecraft control is not profiled")?;
         let native = if id == ControlId::RfGain && profile.rf_gain_is_attenuation {
-            maximum - ((u16::from(value) * maximum) / 255)
+            maximum - (((u32::from(value) * u32::from(maximum)) / 255) as u16)
         } else {
-            (u16::from(value) * maximum) / 255
+            ((u32::from(value) * u32::from(maximum)) / 255) as u16
         };
         Ok(match id {
             ControlId::RfPower => format!("{native:03}"),
             ControlId::Preamp => format!("{native}"),
             ControlId::Attenuator => format!("{native:02}"),
+            ControlId::Filter => format!("{native:04}"),
             ControlId::AfGain | ControlId::Squelch => format!("{native:03}"),
             ControlId::RfGain if profile.rf_gain_is_attenuation => format!("-{native:02}"),
             ControlId::RfGain => format!("{native:03}"),
@@ -403,6 +422,7 @@ impl Radio for ElecraftRadio {
             ControlId::Attenuator => "RA",
             ControlId::NoiseBlanker => "NB",
             ControlId::Agc => "GT",
+            ControlId::Filter => profile.filter_command,
             _ => return Ok(None),
         };
         if matches!(id, ControlId::Vfo) {
@@ -463,6 +483,11 @@ impl Radio for ElecraftRadio {
             (ControlId::Agc, ControlValue::U8(value)) if profile.supports_agc => {
                 self.set("GT", if value < 128 { "002" } else { "004" })
             }
+            (ControlId::Filter, ControlValue::U8(value)) if profile.filter_max_hz.is_some() => self
+                .set(
+                    profile.filter_command,
+                    &Self::encode_control(profile, ControlId::Filter, value)?,
+                ),
             (id @ (ControlId::Preamp | ControlId::Attenuator), ControlValue::U8(value)) => self
                 .set(
                     if id == ControlId::Preamp { "PA" } else { "RA" },
@@ -512,32 +537,39 @@ impl Radio for ElecraftRadio {
     }
 
     async fn get_meter(&self, id: MeterId) -> Result<Option<u8>> {
-        if id != MeterId::Signal {
-            return Ok(None);
-        }
-        let response = self.query("SM")?;
-        let value = std::str::from_utf8(&response)
-            .context("Elecraft S-meter response is not ASCII")?
-            .trim_end_matches(';')
-            .strip_prefix("SM")
-            .context("unexpected Elecraft S-meter response")?
-            .parse::<u16>()
-            .context("invalid Elecraft S-meter")?;
-        Ok(Some(
-            crate::normalize_meter_level(
-                value,
-                if matches!(self.model, Some(ElecraftModel::K2)) {
-                    15
-                } else {
-                    30
-                },
-            )
-            .context("Elecraft S-meter out of range")?,
-        ))
+        let value = match id {
+            MeterId::Signal => {
+                let response = self.query("SM")?;
+                Self::parse_meter_value(
+                    &response,
+                    "SM",
+                    if matches!(self.model, Some(ElecraftModel::K2)) {
+                        15
+                    } else {
+                        30
+                    },
+                )?
+            }
+            MeterId::Power => Self::parse_meter_value(&self.query("BG")?, "BG", 12)?,
+            MeterId::Alc => {
+                anyhow::ensure!(
+                    matches!(self.model, Some(ElecraftModel::K3 | ElecraftModel::K3s)),
+                    "Elecraft ALC meter is only profiled for K3/K3S"
+                );
+                Self::parse_meter_value(&self.query("BG")?, "BG", 7)?
+            }
+            MeterId::Swr => Self::parse_meter_value(&self.query("SW")?, "SW", 999)?,
+            _ => return Ok(None),
+        };
+        Ok(Some(value))
     }
 
     fn supports_meter(&self, id: MeterId) -> bool {
-        id == MeterId::Signal
+        match id {
+            MeterId::Signal | MeterId::Power | MeterId::Swr => self.model.is_some(),
+            MeterId::Alc => matches!(self.model, Some(ElecraftModel::K3 | ElecraftModel::K3s)),
+            _ => false,
+        }
     }
     fn supports_control(&self, id: ControlId) -> bool {
         self.profile()
@@ -766,5 +798,44 @@ mod tests {
         block_on(radio.set_control(ControlId::NoiseBlanker, ControlValue::Bool(false))).unwrap();
         block_on(radio.set_control(ControlId::Agc, ControlValue::U8(0))).unwrap();
         assert_eq!(&*output.lock().unwrap(), b"PA;RA;NB;GT;PA2;RA01;NB0;GT002;");
+    }
+
+    #[test]
+    fn direct_cat_tx_meters_decode_documented_bargraph_and_swr_frames() {
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K3),
+            9_600,
+            MemoryTransport {
+                input: b"BG12T;BG07T;SW123;".to_vec(),
+                output: Arc::new(Mutex::new(Vec::new())),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            block_on(radio.get_meter(MeterId::Power)).unwrap(),
+            Some(255)
+        );
+        assert_eq!(block_on(radio.get_meter(MeterId::Alc)).unwrap(), Some(255));
+        assert_eq!(block_on(radio.get_meter(MeterId::Swr)).unwrap(), Some(31));
+    }
+
+    #[test]
+    fn direct_cat_filter_uses_model_owned_command_and_bandwidth_range() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K3),
+            9_600,
+            MemoryTransport {
+                input: b"BW0250;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            block_on(radio.get_control(ControlId::Filter)).unwrap(),
+            Some(ControlValue::U8(6))
+        );
+        block_on(radio.set_control(ControlId::Filter, ControlValue::U8(255))).unwrap();
+        assert_eq!(&*output.lock().unwrap(), b"BW;BW9999;");
     }
 }
