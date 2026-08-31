@@ -194,8 +194,6 @@ impl RadioModelProfile {
     /// Whether the selected model's implemented driver exposes a typed HAL
     /// control. This describes Rigwright behavior, not every manual feature.
     pub fn supports_control(self, id: crate::ControlId) -> bool {
-        use crate::ControlId;
-
         match self.protocol {
             Protocol::IcomCiV { .. } => {
                 let Some(model) = IcomCivModel::from_model_name(self.model) else {
@@ -210,7 +208,10 @@ impl RadioModelProfile {
                 };
                 crate::yaesu::profile::profile_for_model(model).supports_control(id)
             }
-            Protocol::YaesuLegacyCat => id == ControlId::Split,
+            Protocol::YaesuLegacyCat => YaesuLegacyModel::from_model_name(self.model)
+                .map(crate::yaesu::legacy_profile::profile_for_model)
+                .map(|profile| profile.supports_control(id))
+                .unwrap_or(id == crate::ControlId::Split),
             Protocol::KenwoodCat => {
                 let Some(model) = KenwoodCatModel::from_model_name(self.model) else {
                     return false;

@@ -404,15 +404,21 @@ impl Radio for LegacyYaesuRadio {
     }
 
     fn supports_control(&self, id: ControlId) -> bool {
-        matches!(id, ControlId::Split | ControlId::Rit)
+        self.profile()
+            .map(|profile| profile.supports_control(id))
+            .unwrap_or(matches!(id, ControlId::Split | ControlId::Rit))
     }
 
     fn supports_control_read(&self, id: ControlId) -> bool {
-        id == ControlId::Split
+        self.profile()
+            .map(|profile| profile.supports_control_read(id))
+            .unwrap_or(id == ControlId::Split)
     }
 
     fn supports_control_write(&self, id: ControlId) -> bool {
-        matches!(id, ControlId::Split | ControlId::Rit)
+        self.profile()
+            .map(|profile| profile.supports_control_write(id))
+            .unwrap_or(matches!(id, ControlId::Split | ControlId::Rit))
     }
 
     async fn set_rit_offset_hz(&self, offset_hz: i32) -> Result<()> {
