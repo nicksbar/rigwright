@@ -566,6 +566,63 @@ impl Radio for ElecraftRadio {
         }))
     }
 
+    async fn get_repeater_settings(&self) -> Result<crate::RepeaterSettings> {
+        anyhow::ensure!(
+            self.profile()
+                .is_some_and(|profile| profile.supports_repeater),
+            "Elecraft repeater control is not profiled"
+        );
+        let response = self.query("RP")?;
+        let text =
+            std::str::from_utf8(&response).context("Elecraft repeater response is not ASCII")?;
+        let payload = text
+            .strip_prefix("RP")
+            .and_then(|value| value.strip_suffix(';'))
+            .context("unexpected Elecraft repeater response")?;
+        anyhow::ensure!(payload.len() == 6, "invalid Elecraft repeater response");
+        let shift = match &payload[..1] {
+            "S" => crate::RepeaterShift::Simplex,
+            "+" => crate::RepeaterShift::Plus,
+            "-" => crate::RepeaterShift::Minus,
+            _ => bail!("invalid Elecraft repeater shift"),
+        };
+        let offset_hz = payload[1..].parse::<u32>()? * 1_000;
+        Ok(crate::RepeaterSettings {
+            shift,
+            offset_hz: Some(offset_hz),
+            tone: crate::ToneSettings::default(),
+        })
+    }
+
+    async fn set_repeater_settings(&self, settings: crate::RepeaterSettings) -> Result<()> {
+        anyhow::ensure!(
+            self.profile()
+                .is_some_and(|profile| profile.supports_repeater),
+            "Elecraft repeater control is not profiled"
+        );
+        anyhow::ensure!(
+            settings.tone == crate::ToneSettings::default(),
+            "Elecraft K4 CAT does not expose tone fields through RP"
+        );
+        let offset_hz = settings.offset_hz.unwrap_or_default();
+        anyhow::ensure!(
+            offset_hz.is_multiple_of(1_000),
+            "Elecraft RP offset must use whole kHz"
+        );
+        anyhow::ensure!(offset_hz <= 99_999_000, "Elecraft RP offset is too large");
+        let shift = match settings.shift {
+            crate::RepeaterShift::Simplex => 'S',
+            crate::RepeaterShift::Plus => '+',
+            crate::RepeaterShift::Minus => '-',
+        };
+        self.set("RP", &format!("{shift}{:05}", offset_hz / 1_000))
+    }
+
+    fn supports_repeater_settings(&self) -> bool {
+        self.profile()
+            .is_some_and(|profile| profile.supports_repeater)
+    }
+
     async fn get_meter(&self, id: MeterId) -> Result<Option<u8>> {
         let value = match id {
             MeterId::Signal => {
@@ -895,5 +952,24 @@ mod tests {
         block_on(radio.set_control(ControlId::Tuner, ControlValue::Bool(false))).unwrap();
         block_on(radio.start_tuner()).unwrap();
         assert_eq!(&*output.lock().unwrap(), b"AT;AT;AT1;TU3;");
+    }
+
+    #[test]
+    fn k4_repeater_control_preserves_documented_shift_and_khz_offset() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K4),
+            9_600,
+            MemoryTransport {
+                input: b"RP+00600;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        let settings = block_on(radio.get_repeater_settings()).unwrap();
+        assert_eq!(settings.shift, crate::RepeaterShift::Plus);
+        assert_eq!(settings.offset_hz, Some(600_000));
+        block_on(radio.set_repeater_settings(settings)).unwrap();
+        assert_eq!(&*output.lock().unwrap(), b"RP;RP+00600;");
     }
 }

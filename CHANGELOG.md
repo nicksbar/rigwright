@@ -21,6 +21,8 @@
 - Implement model-owned filter bandwidth and power/ALC/SWR meter decoding via
   the documented `BW`/`FW`, `BG`, and `SW` command families.
 - Implement K4 internal-tuner mode/status and explicit `TU3` start handling.
+- Implement K4 repeater shift/offset read/write through the documented `RP`
+  command while rejecting unsupported tone fields.
 - Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
   outside this initial radio slice.
 

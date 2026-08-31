@@ -41,6 +41,7 @@ pub const PROFILE: ElecraftProfile = ElecraftProfile {
     supports_noise_blanker: true,
     supports_agc: true,
     supports_tuner: false,
+    supports_repeater: false,
     filter_max_hz: Some(2_500),
     filter_command: "FW",
     af_gain_max: None,

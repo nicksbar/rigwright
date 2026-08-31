@@ -58,6 +58,7 @@ pub struct ElecraftProfile {
     pub supports_noise_blanker: bool,
     pub supports_agc: bool,
     pub supports_tuner: bool,
+    pub supports_repeater: bool,
     pub filter_max_hz: Option<u16>,
     pub filter_command: &'static str,
     pub af_gain_max: Option<u16>,
