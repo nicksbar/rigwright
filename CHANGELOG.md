@@ -37,6 +37,9 @@
   command, including K4's third ATU connector.
 - Add K4 auto/manual notch controls through `NA$` and `NM$`, including
   normalized manual-notch position handling.
+- Correct K4 meter routing to use `SM$` signal and `PO` output-power queries;
+  K4 polled SWR is no longer advertised where the manual provides `TM`
+  unsolicited metering instead.
 - Add explicit independent Elecraft VFO-A/VFO-B frequency read/write methods
   using `FA`/`FB`, while keeping receive/transmit selection semantics separate.
 - Add K3/K3S transmit meter-source selection through documented `TM0`/`TM1`
