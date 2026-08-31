@@ -5,16 +5,18 @@ pub enum Manufacturer {
     Icom,
     Yaesu,
     Kenwood,
+    Elecraft,
 }
 
 impl Manufacturer {
-    pub const ALL: [Self; 3] = [Self::Icom, Self::Yaesu, Self::Kenwood];
+    pub const ALL: [Self; 4] = [Self::Icom, Self::Yaesu, Self::Kenwood, Self::Elecraft];
 
     pub const fn label(self) -> &'static str {
         match self {
             Self::Icom => "Icom",
             Self::Yaesu => "Yaesu",
             Self::Kenwood => "Kenwood",
+            Self::Elecraft => "Elecraft",
         }
     }
 }
@@ -25,6 +27,7 @@ pub enum Protocol {
     YaesuCat,
     YaesuLegacyCat,
     KenwoodCat,
+    ElecraftCat,
 }
 
 impl Protocol {
@@ -34,6 +37,7 @@ impl Protocol {
             Self::YaesuCat => "Yaesu CAT",
             Self::YaesuLegacyCat => "Classic Yaesu CAT",
             Self::KenwoodCat => "Kenwood PC control",
+            Self::ElecraftCat => "Elecraft CAT",
         }
     }
 }
@@ -133,6 +137,12 @@ impl RadioModelProfile {
                 .map(crate::kenwood::profile::profile_for_model)
                 .and_then(|profile| profile.baud_rates.last().copied())
                 .unwrap_or(9_600),
+            Protocol::ElecraftCat => {
+                crate::elecraft::profile::ElecraftModel::from_model_name(self.model)
+                    .map(crate::elecraft::profile::profile_for_model)
+                    .and_then(|profile| profile.baud_rates.first().copied())
+                    .unwrap_or(9_600)
+            }
         }
     }
 
@@ -184,6 +194,7 @@ impl RadioModelProfile {
                 let profile = crate::kenwood::profile::profile_for_model(model);
                 profile.supports_control(id)
             }
+            Protocol::ElecraftCat => id == ControlId::AfGain,
         }
     }
 }
@@ -502,6 +513,48 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         support: SupportLevel::Framework,
         capabilities: ALL_MODE_BASE,
     },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Elecraft,
+        model: "K2",
+        protocol: Protocol::ElecraftCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Elecraft,
+        model: "KX2",
+        protocol: Protocol::ElecraftCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Elecraft,
+        model: "KX3",
+        protocol: Protocol::ElecraftCat,
+        support: SupportLevel::Framework,
+        capabilities: ALL_MODE_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Elecraft,
+        model: "K3",
+        protocol: Protocol::ElecraftCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Elecraft,
+        model: "K3S",
+        protocol: Protocol::ElecraftCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Elecraft,
+        model: "K4",
+        protocol: Protocol::ElecraftCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
 ];
 
 pub fn find_model(model: &str) -> Option<&'static RadioModelProfile> {
@@ -628,7 +681,7 @@ mod tests {
     fn public_labels_and_defaults_come_from_catalog_metadata() {
         assert_eq!(
             Manufacturer::ALL.map(Manufacturer::label),
-            ["Icom", "Yaesu", "Kenwood"]
+            ["Icom", "Yaesu", "Kenwood", "Elecraft"]
         );
         assert_eq!(find_model("FTDX10").unwrap().preferred_baud_rate(), 38_400);
         assert_eq!(find_model("FT-857D").unwrap().preferred_baud_rate(), 4_800);

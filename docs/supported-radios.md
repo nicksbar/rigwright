@@ -19,9 +19,8 @@ working end-to-end driver for that radio.
 
 ## Elecraft component audit
 
-Elecraft is intentionally not listed as a supported radio until the
-transceiver backend and station-component boundary are implemented. The local
-references currently available under `_manuals/elecraft` are:
+Elecraft transceiver profiles are now implemented at framework maturity. The
+local references currently available under `_manuals/elecraft` are:
 
 | Surface | Reference | Initial boundary |
 |---|---|---|
@@ -32,6 +31,10 @@ references currently available under `_manuals/elecraft` are:
 | P3/PX3 | `P3_Pgmrs_Ref_Rev_A7.pdf`; `PX3_Pgmrs_Ref_A6.pdf` | Separate spectrum components |
 | KAT500 | `KAT500 Automatic Antenna Tuner Serial Command Reference.pdf` | Separate tuner component |
 | KPA500/KXPA100 | `KPA500 Programmers Ref.pdf`; `KXPA100 Amplifier Command Reference.pdf` | Separate amplifier components |
+
+The current Rigwright transceiver slice covers K2, KX2, KX3, K3, K3S, and K4
+core frequency, mode, PTT, AF-gain, signal-meter, and raw-command operations.
+All remain framework-level until tested against physical equipment.
 
 These documents establish command syntax and documented capabilities only.
 They do not constitute physical-radio or accessory validation. The proposed

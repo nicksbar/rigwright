@@ -1,11 +1,13 @@
 # Changelog
 
-## 0.1.17 — Elecraft component architecture groundwork
+## 0.1.17 — Elecraft transceiver foundation
 
 - Document the Elecraft boundary between K2/KX/K3/K4/KH1 transceivers and
   separate P3/PX3, KAT, and KPA/KXPA station components.
-- Establish the profile-driven implementation plan for shared semicolon CAT,
-  K4 streaming/Ethernet, and limited KH1 command semantics.
+- Add a profile-driven semicolon CAT transceiver backend for K2, KX2, KX3, K3,
+  K3S, and K4 core operations.
+- Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
+  outside this initial radio slice.
 
 ## 0.1.16 — model-correct meter capabilities
 

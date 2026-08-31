@@ -14,6 +14,7 @@ use crate::hal::{
 };
 use crate::{
     dxlab::DxLabCommanderRadio,
+    elecraft::ElecraftRadio,
     icom::civ_radio::IcomCiVRadio,
     kenwood::KenwoodCatRadio,
     models::{
@@ -255,6 +256,7 @@ pub enum ConfiguredRadio {
     LegacyYaesu(LegacyYaesuRadio),
     Rigctld(RigctldRadio),
     Null(NullRadio),
+    Elecraft(ElecraftRadio),
 }
 
 impl ConfiguredRadio {
@@ -279,6 +281,13 @@ impl ConfiguredRadio {
     pub fn as_kenwood(&self) -> Option<&KenwoodCatRadio> {
         match self {
             Self::Kenwood(radio) => Some(radio),
+            _ => None,
+        }
+    }
+
+    pub fn as_elecraft(&self) -> Option<&ElecraftRadio> {
+        match self {
+            Self::Elecraft(radio) => Some(radio),
             _ => None,
         }
     }
@@ -318,6 +327,7 @@ impl Radio for ConfiguredRadio {
             Self::LegacyYaesu(r) => r.get_frequency_hz().await,
             Self::Rigctld(r) => r.get_frequency_hz().await,
             Self::Null(r) => r.get_frequency_hz().await,
+            Self::Elecraft(r) => r.get_frequency_hz().await,
         }
     }
     async fn set_frequency_hz(&self, hz: u64) -> Result<()> {
@@ -330,6 +340,7 @@ impl Radio for ConfiguredRadio {
             Self::LegacyYaesu(r) => r.set_frequency_hz(hz).await,
             Self::Rigctld(r) => r.set_frequency_hz(hz).await,
             Self::Null(r) => r.set_frequency_hz(hz).await,
+            Self::Elecraft(r) => r.set_frequency_hz(hz).await,
         }
     }
     async fn get_mode(&self) -> Result<Mode> {
@@ -342,6 +353,7 @@ impl Radio for ConfiguredRadio {
             Self::LegacyYaesu(r) => r.get_mode().await,
             Self::Rigctld(r) => r.get_mode().await,
             Self::Null(r) => r.get_mode().await,
+            Self::Elecraft(r) => r.get_mode().await,
         }
     }
     async fn set_mode(&self, mode: Mode) -> Result<()> {
@@ -354,6 +366,7 @@ impl Radio for ConfiguredRadio {
             Self::LegacyYaesu(r) => r.set_mode(mode).await,
             Self::Rigctld(r) => r.set_mode(mode).await,
             Self::Null(r) => r.set_mode(mode).await,
+            Self::Elecraft(r) => r.set_mode(mode).await,
         }
     }
     async fn set_ptt(&self, enabled: bool) -> Result<()> {
@@ -366,6 +379,7 @@ impl Radio for ConfiguredRadio {
             Self::LegacyYaesu(r) => r.set_ptt(enabled).await,
             Self::Rigctld(r) => r.set_ptt(enabled).await,
             Self::Null(r) => r.set_ptt(enabled).await,
+            Self::Elecraft(r) => r.set_ptt(enabled).await,
         }
     }
     async fn get_ptt(&self) -> Result<bool> {
@@ -378,6 +392,7 @@ impl Radio for ConfiguredRadio {
             Self::LegacyYaesu(r) => r.get_ptt().await,
             Self::Rigctld(r) => r.get_ptt().await,
             Self::Null(r) => r.get_ptt().await,
+            Self::Elecraft(r) => r.get_ptt().await,
         }
     }
     async fn get_power(&self) -> Result<bool> {
@@ -390,6 +405,7 @@ impl Radio for ConfiguredRadio {
             Self::LegacyYaesu(r) => r.get_power().await,
             Self::Rigctld(r) => r.get_power().await,
             Self::Null(r) => r.get_power().await,
+            Self::Elecraft(r) => r.get_power().await,
         }
     }
     async fn set_power(&self, enabled: bool) -> Result<()> {
@@ -402,6 +418,7 @@ impl Radio for ConfiguredRadio {
             Self::LegacyYaesu(r) => r.set_power(enabled).await,
             Self::Rigctld(r) => r.set_power(enabled).await,
             Self::Null(r) => r.set_power(enabled).await,
+            Self::Elecraft(r) => r.set_power(enabled).await,
         }
     }
     async fn protocol_write_read(&self, request: &[u8]) -> Result<Vec<u8>> {
@@ -419,6 +436,7 @@ impl Radio for ConfiguredRadio {
             Self::Yaesu(r) => r.get_control(id).await,
             Self::Kenwood(r) => r.get_control(id).await,
             Self::LegacyYaesu(r) => r.get_control(id).await,
+            Self::Elecraft(r) => r.get_control(id).await,
             _ => Ok(None),
         }
     }
@@ -428,6 +446,7 @@ impl Radio for ConfiguredRadio {
             Self::Yaesu(r) => r.set_control(id, value).await,
             Self::Kenwood(r) => r.set_control(id, value).await,
             Self::LegacyYaesu(r) => r.set_control(id, value).await,
+            Self::Elecraft(r) => r.set_control(id, value).await,
             _ => bail!("control {id:?} is not available for this driver"),
         }
     }
@@ -520,6 +539,7 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.get_meter(id).await,
             Self::Yaesu(r) => r.get_meter(id).await,
             Self::Kenwood(r) => Radio::get_meter(r, id).await,
+            Self::Elecraft(r) => r.get_meter(id).await,
             _ => Ok(None),
         }
     }
@@ -528,6 +548,7 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.supports_meter(id),
             Self::Yaesu(r) => r.supports_meter(id),
             Self::Kenwood(r) => r.supports_meter(id),
+            Self::Elecraft(r) => r.supports_meter(id),
             _ => false,
         }
     }
@@ -555,6 +576,7 @@ impl Radio for ConfiguredRadio {
             Self::Yaesu(r) => r.supports_control(id),
             Self::Kenwood(r) => r.supports_control(id),
             Self::LegacyYaesu(r) => r.supports_control(id),
+            Self::Elecraft(r) => r.supports_control(id),
             _ => false,
         }
     }
@@ -564,6 +586,7 @@ impl Radio for ConfiguredRadio {
             Self::Yaesu(r) => r.supports_control_read(id),
             Self::Kenwood(r) => r.supports_control_read(id),
             Self::LegacyYaesu(r) => r.supports_control_read(id),
+            Self::Elecraft(r) => r.supports_control_read(id),
             _ => false,
         }
     }
@@ -573,6 +596,7 @@ impl Radio for ConfiguredRadio {
             Self::Yaesu(r) => r.supports_control_write(id),
             Self::Kenwood(r) => r.supports_control_write(id),
             Self::LegacyYaesu(r) => r.supports_control_write(id),
+            Self::Elecraft(r) => r.supports_control_write(id),
             _ => false,
         }
     }
@@ -602,6 +626,7 @@ impl Radio for ConfiguredRadio {
             Self::LegacyYaesu(r) => r.capabilities(),
             Self::Rigctld(r) => r.capabilities(),
             Self::Null(r) => r.capabilities(),
+            Self::Elecraft(r) => r.capabilities(),
         }
     }
 }
@@ -686,6 +711,11 @@ pub fn open_model_with_radio_address(
             })?;
             ConfiguredRadio::LegacyYaesu(LegacyYaesuRadio::new_for_model(model, port, baud_rate)?)
         }
+        Protocol::ElecraftCat => {
+            let model = crate::elecraft::profile::ElecraftModel::from_model_name(profile.model)
+                .with_context(|| format!("unsupported Elecraft model: {}", profile.model))?;
+            ConfiguredRadio::Elecraft(ElecraftRadio::new_for_model(model, port, baud_rate)?)
+        }
     })
 }
 
@@ -706,6 +736,10 @@ mod tests {
         assert!(matches!(
             open_model("TS-590SG", "/dev/null", 115_200, 0xE0).unwrap(),
             ConfiguredRadio::Kenwood(_)
+        ));
+        assert!(matches!(
+            open_model("K4", "/dev/null", 38_400, 0xE0).unwrap(),
+            ConfiguredRadio::Elecraft(_)
         ));
     }
     #[test]

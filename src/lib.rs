@@ -4,6 +4,7 @@ pub mod android;
 pub mod controls;
 pub mod drivers;
 pub mod dxlab;
+pub mod elecraft;
 pub mod events;
 pub mod hal;
 pub mod hal_types;
@@ -17,6 +18,8 @@ pub mod transport;
 pub mod yaesu;
 
 pub use android::RadioAndroid;
+pub use elecraft::profile::ElecraftModel;
+pub use elecraft::ElecraftRadio;
 pub use events::{RadioEvent, RadioEventRouter, RadioEventSubscription, SubscriptionId};
 pub use hal::{NullRadio, Radio, RadioCapabilities, RadioStatus};
 pub use hal_types::{
