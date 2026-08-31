@@ -56,7 +56,7 @@ controls or meters until a concrete model profile is selected.
 |---|---|---:|
 | Frequency read/write | `get/set_frequency_hz` | H/P for K2/KX2/KX3/K3/K3S/K4; KH1 write-only |
 | Operating mode read/write | `get/set_mode` | H/P for K2/KX2/KX3/K3/K3S/K4; KH1 write-only |
-| PTT write/read | `set_ptt`, `get_ptt` | H/P via `TX`/`RX` and `TQ` |
+| PTT write/read | `set_ptt`, `get_ptt`, `get_actual_tx_state` | H/P via `TX`/`RX` and `TQ`; K4 actual-RF state also via `TQX` |
 | RF power | `ControlId::RfPower` | H/P via profile-scaled `PC` |
 | VFO selection / split | `ControlId::{Vfo,Split}`, `get/set_vfo_frequency_hz` | H/P via `FR`/`FT` and independent `FA`/`FB`; K3/K3S receive-selection semantics remain distinct |
 | RIT/XIT enable and offset | `ControlId::{Rit,Xit}`, offset methods | H/P via `RT`/`XT`/`RO`/`IF` |
@@ -108,7 +108,7 @@ correct code or physical behavior.
 | Internal tuner | K4 mode/start implemented; other models open | Tuner state model, explicit-start path, and failure tests | Tune start/completion/failure and TX interlock |
 | Memory/channel operations | KX2/KX3/K3/K3S selection implemented via `MC`; record read/write remains open | Lossless `MemoryChannel` mapping or explicit unsupported fields | Empty/read/write/name/mode/frequency round trips |
 | Repeater/tone | K4 shift/offset implemented; tone and other models open | Profile-gated `RepeaterSettings` and unsupported-field tests | Tone, offset, and model-specific repeater behavior |
-| TX status and additional meters | Power/ALC/SWR implemented; K3/K3S `TM` source selection and K4 `TM` ALC/compression/power/SWR event reports implemented; further status remains | Typed status/events, normalized meter fixtures, read-only semantics | RX/TX/tune captures for power/SWR/ALC/etc. |
+| TX status and additional meters | Power/ALC/SWR implemented; K4 actual TX state via `TQX`, K3/K3S `TM` source selection, and K4 `TM` ALC/compression/power/SWR event reports implemented; further status remains | Typed status/events, normalized meter fixtures, read-only semantics | RX/TX/tune captures for power/SWR/ALC/etc. |
 | Identification and capability probing (`ID`/`OM`/status) | `ID` and raw/decoded model-specific `OM` probes implemented for K3/K3S/KX2/KX3; K4/KH1 schemas remain explicit gaps | Bounded probe, unknown-model, timeout, malformed-frame, and family-parser tests | Known model, firmware, and installed-option identification |
 
 The tester gate is deliberate: all rows may reach `Implemented` with manual

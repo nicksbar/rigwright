@@ -174,6 +174,30 @@ impl ElecraftRadio {
         self.set("TM", if alc { "1" } else { "0" })
     }
 
+    /// Query actual K4 RF transmit state, excluding the documented S-meter
+    /// holdoff interval. Other Elecraft models use their ordinary `TQ` query.
+    pub fn get_actual_tx_state(&self) -> Result<bool> {
+        let command = if self.model == Some(ElecraftModel::K4) {
+            "TQX"
+        } else {
+            "TQ"
+        };
+        let response = if command == "TQX" {
+            self.query_with_response_prefix(command, "TQ")?
+        } else {
+            self.query(command)?
+        };
+        let text = std::str::from_utf8(&response).context("Elecraft TQ response is not ASCII")?;
+        match text
+            .strip_prefix("TQ")
+            .and_then(|value| value.strip_suffix(';'))
+        {
+            Some("0") => Ok(false),
+            Some("1") => Ok(true),
+            _ => bail!("unexpected Elecraft TQ response: {text}"),
+        }
+    }
+
     /// Read the independent frequency register for VFO A (`0`) or VFO B
     /// (`1`). This is separate from selecting the active receive VFO.
     pub fn get_vfo_frequency_hz(&self, vfo: u8) -> Result<u64> {
@@ -1182,6 +1206,22 @@ mod tests {
         radio.set_tx_meter_mode(true).unwrap();
         radio.set_tx_meter_mode(false).unwrap();
         assert_eq!(&*output.lock().unwrap(), b"TM1;TM0;");
+    }
+
+    #[test]
+    fn k4_actual_tx_state_uses_tqx_outside_the_s_meter_holdoff() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K4),
+            9_600,
+            MemoryTransport {
+                input: b"TQ1;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        assert!(radio.get_actual_tx_state().unwrap());
+        assert_eq!(&*output.lock().unwrap(), b"TQX;");
     }
 
     #[test]

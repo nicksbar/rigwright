@@ -43,6 +43,8 @@
   including K3-family step-table indices and K2/K4 current-step behavior.
 - Decode documented K3/K3S/KX2/KX3 `OM` option responses while retaining the
   raw family-specific flag string and explicit K4/KH1 schema boundary.
+- Expose K4's actual-RF transmit query through `TQX`, distinct from logical
+  `TQ` state during the documented S-meter holdoff interval.
 - Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
   outside this initial radio slice.
 
