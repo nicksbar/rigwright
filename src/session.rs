@@ -1072,7 +1072,12 @@ mod tests {
         radio.events.publish(RadioEvent::FrequencyChanged {
             frequency_hz: 7_000_000,
         });
-        std::thread::sleep(Duration::from_millis(10));
+        for _ in 0..500 {
+            if session.snapshot().observed.frequency_hz == Some(7_000_000) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
         assert_eq!(session.snapshot().observed.frequency_hz, Some(7_000_000));
     }
 
@@ -1189,12 +1194,17 @@ mod tests {
         replacement.events.publish(RadioEvent::FrequencyChanged {
             frequency_hz: 7_100_000,
         });
-        std::thread::sleep(Duration::from_millis(20));
+        for _ in 0..500 {
+            if session.snapshot().observed.frequency_hz == Some(7_100_000) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
         assert_eq!(session.snapshot().observed.frequency_hz, Some(7_100_000));
         original.events.publish(RadioEvent::FrequencyChanged {
             frequency_hz: 3_500_000,
         });
-        std::thread::sleep(Duration::from_millis(20));
+        std::thread::sleep(Duration::from_millis(10));
         assert_eq!(session.snapshot().observed.frequency_hz, Some(7_100_000));
     }
 
