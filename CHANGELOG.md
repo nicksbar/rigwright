@@ -29,6 +29,8 @@
   `NB$`/`NR$`, preserving configured levels when toggling either feature.
 - Add a bounded raw `OM` option probe alongside `ID`, retaining family-specific
   option interpretation for later model capability negotiation.
+- Add KX2/KX3/K3/K3S memory-channel selection through the documented three-digit
+  `MC` command while keeping undocumented record persistence unsupported.
 - Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
   outside this initial radio slice.
 

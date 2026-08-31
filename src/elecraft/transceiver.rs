@@ -681,6 +681,23 @@ impl Radio for ElecraftRadio {
         self.set_rit_offset_hz(offset_hz).await
     }
 
+    async fn select_memory_channel(&self, channel: u16) -> Result<()> {
+        anyhow::ensure!(
+            matches!(
+                self.model,
+                Some(
+                    ElecraftModel::Kx2
+                        | ElecraftModel::Kx3
+                        | ElecraftModel::K3
+                        | ElecraftModel::K3s
+                )
+            ),
+            "Elecraft memory selection is only profiled for KX2/KX3/K3/K3S"
+        );
+        anyhow::ensure!(channel <= 999, "Elecraft memory channel must be 0..=999");
+        self.set("MC", &format!("{channel:03}"))
+    }
+
     async fn start_tuner(&self) -> Result<()> {
         anyhow::ensure!(
             self.profile().is_some_and(|profile| profile.supports_tuner),
@@ -1005,6 +1022,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(radio.probe_options().unwrap(), b"OM APXSDFfLVR--;".to_vec());
+    }
+
+    #[test]
+    fn k3_family_memory_selection_uses_three_digit_mc_frames() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K3s),
+            9_600,
+            MemoryTransport {
+                input: b"".to_vec(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        block_on(radio.select_memory_channel(7)).unwrap();
+        assert_eq!(&*output.lock().unwrap(), b"MC007;");
     }
 
     #[test]

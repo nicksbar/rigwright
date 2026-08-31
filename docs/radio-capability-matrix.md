@@ -71,6 +71,7 @@ controls or meters until a concrete model profile is selected.
 | Tuning step | `ControlId::TuningStep` | H/P for K4 via mode-qualified `VT$`; K2/K3-family step writes remain open |
 | Internal tuner mode/start | `ControlId::Tuner`, `start_tuner` | H/P for K4 via `AT`/`TU3`; other models remain profile-gated |
 | Repeater shift/offset | `RepeaterSettings` | H/P for K4 via `RP`; tone fields remain unsupported |
+| Memory/channel selection | `select_memory_channel` | H/P for KX2/KX3/K3/K3S via `MC`; full record read/write remains open |
 | Raw protocol | `protocol_write_read` | H/P |
 | TX meters | `MeterId::{Power,Alc,Swr}` | H/P via `BG`/`SW` where documented |
 
@@ -105,7 +106,7 @@ correct code or physical behavior.
 | Noise blanker/reduction | NB enable implemented; K4 `NB$`/`NR$` levels implemented; non-K4 NR remains open | Separate enable/level controls and range tests | Level behavior and mode interaction |
 | Preamp/attenuator | Implemented in driver; framework-level | Distinct profile controls and mutual-exclusion tests | RF-path state and combinations |
 | Internal tuner | K4 mode/start implemented; other models open | Tuner state model, explicit-start path, and failure tests | Tune start/completion/failure and TX interlock |
-| Memory/channel operations | Manual; not implemented | Lossless `MemoryChannel` mapping or explicit unsupported fields | Empty/read/write/name/mode/frequency round trips |
+| Memory/channel operations | KX2/KX3/K3/K3S selection implemented via `MC`; record read/write remains open | Lossless `MemoryChannel` mapping or explicit unsupported fields | Empty/read/write/name/mode/frequency round trips |
 | Repeater/tone | K4 shift/offset implemented; tone and other models open | Profile-gated `RepeaterSettings` and unsupported-field tests | Tone, offset, and model-specific repeater behavior |
 | TX status and additional meters | Power/ALC/SWR implemented; further status remains | Typed status/events, normalized meter fixtures, read-only semantics | RX/TX/tune captures for power/SWR/ALC/etc. |
 | Identification and capability probing (`ID`/`OM`/status) | `ID` and raw model-specific `OM` probes implemented; option interpretation remains profile-specific | Bounded probe, unknown-model, timeout, malformed-frame, and family-parser tests | Known model, firmware, and installed-option identification |
