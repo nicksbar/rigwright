@@ -53,6 +53,10 @@ pub struct ElecraftProfile {
     pub supports_split: bool,
     pub supports_rit_xit: bool,
     pub power_max_watts: Option<u16>,
+    pub preamp_max: Option<u8>,
+    pub attenuator_max: Option<u8>,
+    pub supports_noise_blanker: bool,
+    pub supports_agc: bool,
     pub af_gain_max: Option<u16>,
     pub rf_gain_max: Option<u16>,
     pub squelch_max: u16,
@@ -99,6 +103,10 @@ impl ElecraftProfile {
         match id {
             ControlId::AfGain => self.af_gain_max.is_some(),
             ControlId::RfGain => self.rf_gain_max.is_some(),
+            ControlId::Preamp => self.preamp_max.is_some(),
+            ControlId::Attenuator => self.attenuator_max.is_some(),
+            ControlId::NoiseBlanker => self.supports_noise_blanker,
+            ControlId::Agc => self.supports_agc,
             ControlId::Squelch
             | ControlId::RfPower
             | ControlId::Vfo

@@ -16,6 +16,8 @@
   and physical-tester gate in the Elecraft matrix and contributor guidance.
 - Implement the first direct-CAT control slice: identification query, RF power,
   VFO/split routing, and RIT/XIT enable and offsets.
+- Implement profile-owned preamp, attenuator, noise-blanker, and AGC controls
+  using the documented `PA`, `RA`, `NB`, and `GT` command families.
 - Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
   outside this initial radio slice.
 

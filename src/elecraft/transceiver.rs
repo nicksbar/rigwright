@@ -186,6 +186,8 @@ impl ElecraftRadio {
             ControlId::RfGain => text.strip_prefix("RG"),
             ControlId::Squelch => text.strip_prefix("SQ"),
             ControlId::RfPower => text.strip_prefix("PC"),
+            ControlId::Preamp => text.strip_prefix("PA"),
+            ControlId::Attenuator => text.strip_prefix("RA"),
             _ => None,
         }
         .context("unexpected Elecraft receiver-control response")?
@@ -196,6 +198,8 @@ impl ElecraftRadio {
             ControlId::RfGain => profile.rf_gain_max,
             ControlId::Squelch => Some(profile.squelch_max),
             ControlId::RfPower => profile.power_max_watts,
+            ControlId::Preamp => profile.preamp_max.map(u16::from),
+            ControlId::Attenuator => profile.attenuator_max.map(u16::from),
             _ => None,
         }
         .context("Elecraft control is not profiled")?;
@@ -217,6 +221,8 @@ impl ElecraftRadio {
             ControlId::RfGain => profile.rf_gain_max,
             ControlId::Squelch => Some(profile.squelch_max),
             ControlId::RfPower => profile.power_max_watts,
+            ControlId::Preamp => profile.preamp_max.map(u16::from),
+            ControlId::Attenuator => profile.attenuator_max.map(u16::from),
             _ => None,
         }
         .context("Elecraft control is not profiled")?;
@@ -227,6 +233,8 @@ impl ElecraftRadio {
         };
         Ok(match id {
             ControlId::RfPower => format!("{native:03}"),
+            ControlId::Preamp => format!("{native}"),
+            ControlId::Attenuator => format!("{native:02}"),
             ControlId::AfGain | ControlId::Squelch => format!("{native:03}"),
             ControlId::RfGain if profile.rf_gain_is_attenuation => format!("-{native:02}"),
             ControlId::RfGain => format!("{native:03}"),
@@ -391,6 +399,10 @@ impl Radio for ElecraftRadio {
             ControlId::Vfo => "FR",
             ControlId::Split => return Ok(Some(ControlValue::Bool(self.is_split()?))),
             ControlId::Rit | ControlId::Xit => "IF",
+            ControlId::Preamp => "PA",
+            ControlId::Attenuator => "RA",
+            ControlId::NoiseBlanker => "NB",
+            ControlId::Agc => "GT",
             _ => return Ok(None),
         };
         if matches!(id, ControlId::Vfo) {
@@ -405,6 +417,14 @@ impl Radio for ElecraftRadio {
             } else {
                 xit
             })));
+        }
+        if id == ControlId::NoiseBlanker {
+            let value = Self::parse_numeric(&self.query(command)?, command)?;
+            return Ok(Some(ControlValue::Bool(value != 0)));
+        }
+        if id == ControlId::Agc {
+            let value = Self::parse_numeric(&self.query(command)?, command)?;
+            return Ok(Some(ControlValue::U8(if value <= 2 { 0 } else { 255 })));
         }
         Ok(Some(ControlValue::U8(Self::decode_control(
             profile,
@@ -435,6 +455,19 @@ impl Radio for ElecraftRadio {
             (ControlId::Rit, ControlValue::Bool(enabled)) if profile.supports_rit_xit => {
                 self.set("RT", if enabled { "1" } else { "0" })
             }
+            (ControlId::NoiseBlanker, ControlValue::Bool(enabled))
+                if profile.supports_noise_blanker =>
+            {
+                self.set("NB", if enabled { "1" } else { "0" })
+            }
+            (ControlId::Agc, ControlValue::U8(value)) if profile.supports_agc => {
+                self.set("GT", if value < 128 { "002" } else { "004" })
+            }
+            (id @ (ControlId::Preamp | ControlId::Attenuator), ControlValue::U8(value)) => self
+                .set(
+                    if id == ControlId::Preamp { "PA" } else { "RA" },
+                    &Self::encode_control(profile, id, value)?,
+                ),
             (ControlId::Xit, ControlValue::Bool(enabled)) if profile.supports_rit_xit => {
                 self.set("XT", if enabled { "1" } else { "0" })
             }
@@ -698,5 +731,40 @@ mod tests {
             &*output.lock().unwrap(),
             b"ID;PC;FR;FR;FT;IF;IF;PC110;FR0;FT1;RT1;XT0;RO-0999;"
         );
+    }
+
+    #[test]
+    fn direct_cat_receiver_controls_use_profile_ranges() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K3),
+            9_600,
+            MemoryTransport {
+                input: b"PA2;RA01;NB1;GT004;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            block_on(radio.get_control(ControlId::Preamp)).unwrap(),
+            Some(ControlValue::U8(255))
+        );
+        assert_eq!(
+            block_on(radio.get_control(ControlId::Attenuator)).unwrap(),
+            Some(ControlValue::U8(255))
+        );
+        assert_eq!(
+            block_on(radio.get_control(ControlId::NoiseBlanker)).unwrap(),
+            Some(ControlValue::Bool(true))
+        );
+        assert_eq!(
+            block_on(radio.get_control(ControlId::Agc)).unwrap(),
+            Some(ControlValue::U8(255))
+        );
+        block_on(radio.set_control(ControlId::Preamp, ControlValue::U8(255))).unwrap();
+        block_on(radio.set_control(ControlId::Attenuator, ControlValue::U8(255))).unwrap();
+        block_on(radio.set_control(ControlId::NoiseBlanker, ControlValue::Bool(false))).unwrap();
+        block_on(radio.set_control(ControlId::Agc, ControlValue::U8(0))).unwrap();
+        assert_eq!(&*output.lock().unwrap(), b"PA;RA;NB;GT;PA2;RA01;NB0;GT002;");
     }
 }

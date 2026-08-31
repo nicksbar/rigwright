@@ -63,6 +63,9 @@ controls or meters until a concrete model profile is selected.
 | AF gain | `ControlId::AfGain` | H/P via `AG` |
 | RF gain | `ControlId::RfGain` | H/P via profile-scaled `RG` |
 | Squelch | `ControlId::Squelch` | H/P via profile-scaled `SQ` |
+| Preamp / attenuator | `ControlId::{Preamp,Attenuator}` | H/P via profile-owned `PA`/`RA` ranges |
+| Noise blanker | `ControlId::NoiseBlanker` | H/P via `NB` enable state |
+| AGC | `ControlId::Agc` | H/P via `GT` fast/slow mapping |
 | Raw protocol | `protocol_write_read` | H/P |
 
 Elecraft profile differences currently cover K2 versus K3-family mode tables,
@@ -70,7 +73,7 @@ model-specific baud lists, conservative HF frequency ranges, and normalized
 S-meter limits. The model-specific declarations live in the six modules listed
 above; shared profile validation remains in `src/elecraft/profile.rs`.
 Auto-Info event routing is now available through the shared event router. K4
-Ethernet/streaming, VFO-B selection, RF power, and the wider K3-family control
+Ethernet/streaming, precise VFO-B semantics, and the wider K3-family control
 surface remain open.
 KH1 and P3/PX3/KAT/KPA/KXPA equipment are separate future profiles or station
 components and are not included in this row.
@@ -90,9 +93,9 @@ enough to design against; it is not proof of correct code or physical behavior.
 | RIT/XIT | Implemented in driver; framework-level | Signed offset/enable contract and boundary tests | Sign, range, zero, and independent operation |
 | Tuning step | Manual; not implemented | HAL shape and model-specific value tests | Every supported step on a physical dial/navigation workflow |
 | Filters/bandwidth | Manual; not implemented | Named/value profile tables and readback fixtures | Accepted values and mode-dependent behavior |
-| AGC | Manual; not implemented | Model-specific control encoding and capability tests | AGC choices and readback |
-| Noise blanker/reduction | Manual; not implemented | Separate enable/level controls and range tests | Level behavior and mode interaction |
-| Preamp/attenuator | Manual; not implemented | Distinct profile controls and mutual-exclusion tests | RF-path state and combinations |
+| AGC | Implemented in driver; framework-level | Model-specific control encoding and capability tests | AGC choices and readback |
+| Noise blanker/reduction | NB enable implemented; levels/NR open | Separate enable/level controls and range tests | Level behavior and mode interaction |
+| Preamp/attenuator | Implemented in driver; framework-level | Distinct profile controls and mutual-exclusion tests | RF-path state and combinations |
 | Internal tuner | Manual; not implemented | Tuner state model, explicit-start path, and failure tests | Tune start/completion/failure and TX interlock |
 | Memory/channel operations | Manual; not implemented | Lossless `MemoryChannel` mapping or explicit unsupported fields | Empty/read/write/name/mode/frequency round trips |
 | Repeater/tone | Manual; not implemented | Profile-gated `RepeaterSettings` and unsupported-field tests | Tone, offset, and model-specific repeater behavior |
