@@ -21,8 +21,18 @@ Clients submit intent and await a `SessionTicket`. The session provides:
 - snapshot events and explicit `Opening`, `Probing`, `Synchronizing`,
   `Ready`, `Recovering`, `Degraded`, `Closing`, and `Stopped` status values;
 - raw protocol operations that preserve queue order and are never coalesced;
+- `SessionEvent::OperationAccepted` makes queue admission observable;
+- `SessionEvent::OperationCompleted` records applied, superseded, stale, and
+  failed work, while admission errors are reported as rejected outcomes;
 - `SessionDiagnostics` counters for admission, completion, failure,
   coalescing, recovery, and generation changes.
+
+A successful ticket resolves to the reconciled snapshot; stale, superseded, or
+backend-failed work resolves with a typed `SessionError`. `reconnect()` swaps
+the backend and its unsolicited-event source, increments the generation, and
+invalidates queued work from the previous connection before new work runs.
+Queued work has a bounded wait deadline and reports `TimedOut` before it reaches
+the radio; vendor transport I/O deadlines remain owned by the driver.
 
 The session does not replace vendor drivers. Protocol framing, model ranges,
 control encoding, serial ownership, and profile-specific baud lists remain in
