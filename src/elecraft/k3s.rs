@@ -13,7 +13,7 @@ pub const PROFILE: ElecraftProfile = ElecraftProfile {
     baud_rates: BAUD_RATES,
     frequency_ranges: HF_RANGES,
     modes: super::kx3::MODES,
-    supports_vfo_b: false,
+    supports_vfo_b: true,
     supports_split: true,
     supports_rit_xit: true,
     power_max_watts: Some(110),

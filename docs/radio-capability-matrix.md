@@ -58,7 +58,7 @@ controls or meters until a concrete model profile is selected.
 | Operating mode read/write | `get/set_mode` | H/P for K2/KX2/KX3/K3/K3S/K4; KH1 write-only |
 | PTT write/read | `set_ptt`, `get_ptt` | H/P via `TX`/`RX` and `TQ` |
 | RF power | `ControlId::RfPower` | H/P via profile-scaled `PC` |
-| VFO selection / split | `ControlId::Vfo`, `ControlId::Split` | H/P via `FR`/`FT`; K3/K3S VFO-B selection remains profile-limited |
+| VFO selection / split | `ControlId::{Vfo,Split}`, `get/set_vfo_frequency_hz` | H/P via `FR`/`FT` and independent `FA`/`FB`; K3/K3S receive-selection semantics remain distinct |
 | RIT/XIT enable and offset | `ControlId::{Rit,Xit}`, offset methods | H/P via `RT`/`XT`/`RO`/`IF` |
 | Signal meter | `MeterId::Signal` | H/P via `SM` |
 | AF gain | `ControlId::AfGain` | H/P via `AG` |
@@ -97,7 +97,7 @@ correct code or physical behavior.
 | Direct CAT surface | Current Rigwright status | Required implementation evidence | Physical tester evidence |
 |---|---|---|---|
 | RF power (`PC`) | Implemented in driver; framework-level | Profile-native limits, normalized `RfPower`, read/write fixtures, TX-safety tests | Readback and safe min/max power on each model |
-| VFO-A/B and selected-VFO routing (`FA`/`FB` plus selection) | Implemented in driver; K3/K3S profile-limited | Explicit VFO state and command-routing tests | Both VFOs, switching, and unsolicited updates |
+| VFO-A/B and selected-VFO routing (`FA`/`FB` plus selection) | Independent `FA`/`FB` operations and `FR`/`FT` selection implemented; K3/K3S receive-selection semantics remain distinct | Explicit VFO state and command-routing tests | Both VFOs, switching, and unsolicited updates |
 | Split | Implemented in driver; framework-level | Profile-gated `ControlId::Split` and selected-VFO tests | RX/TX VFO behavior and split transitions |
 | RIT/XIT | Implemented in driver; framework-level | Signed offset/enable contract and boundary tests | Sign, range, zero, and independent operation |
 | Tuning step | K4 implemented; K2/K3-family step writes open | HAL shape and model-specific value tests | Every supported step on a physical dial/navigation workflow |

@@ -153,15 +153,53 @@ impl ElecraftRadio {
         self.set("TM", if enabled { "1" } else { "0" })
     }
 
+    /// Read the independent frequency register for VFO A (`0`) or VFO B
+    /// (`1`). This is separate from selecting the active receive VFO.
+    pub fn get_vfo_frequency_hz(&self, vfo: u8) -> Result<u64> {
+        let profile = self
+            .profile()
+            .context("Elecraft VFO frequency requires a selected model")?;
+        anyhow::ensure!(vfo <= 1, "Elecraft VFO must be A (0) or B (1)");
+        anyhow::ensure!(
+            vfo == 0 || profile.supports_vfo_b,
+            "Elecraft VFO B is not profiled"
+        );
+        let command = if vfo == 0 { "FA" } else { "FB" };
+        Self::parse_frequency(profile, command, &self.query(command)?)
+    }
+
+    /// Set the independent frequency register for VFO A (`0`) or VFO B
+    /// (`1`). This does not change the selected receive or transmit VFO.
+    pub fn set_vfo_frequency_hz(&self, vfo: u8, frequency_hz: u64) -> Result<()> {
+        let profile = self
+            .profile()
+            .context("Elecraft VFO frequency requires a selected model")?;
+        anyhow::ensure!(vfo <= 1, "Elecraft VFO must be A (0) or B (1)");
+        anyhow::ensure!(
+            vfo == 0 || profile.supports_vfo_b,
+            "Elecraft VFO B is not profiled"
+        );
+        anyhow::ensure!(
+            profile.supports_frequency(frequency_hz),
+            "Elecraft frequency is outside the profiled range"
+        );
+        let value = frequency_hz / profile.frequency_scale_hz;
+        let command = if vfo == 0 { "FA" } else { "FB" };
+        self.set(
+            command,
+            &format!("{value:0width$}", width = profile.frequency_width),
+        )
+    }
+
     fn selected_frequency(&self) -> &'static str {
         "FA"
     }
 
-    fn parse_frequency(profile: ElecraftProfile, response: &[u8]) -> Result<u64> {
+    fn parse_frequency(profile: ElecraftProfile, prefix: &str, response: &[u8]) -> Result<u64> {
         let text =
             std::str::from_utf8(response).context("Elecraft frequency response is not ASCII")?;
         let value: u64 = text
-            .strip_prefix("FA")
+            .strip_prefix(prefix)
             .and_then(|v| v.strip_suffix(';'))
             .context("unexpected Elecraft frequency response")?
             .parse()
@@ -430,7 +468,8 @@ impl Radio for ElecraftRadio {
             profile.can_get_frequency,
             "Elecraft frequency readback is not supported"
         );
-        Self::parse_frequency(profile, &self.query(self.selected_frequency())?)
+        let command = self.selected_frequency();
+        Self::parse_frequency(profile, command, &self.query(command)?)
     }
 
     async fn set_frequency_hz(&self, frequency_hz: u64) -> Result<()> {
@@ -1005,8 +1044,8 @@ mod tests {
             Some(ElecraftModel::K3),
             9_600,
             MemoryTransport {
-                input:
-                    b"ID017;PC055;FR0;FR0;FT1;IF00014060000 +012310100;IF00014060000 +012310100;"
+            input:
+                    b"ID017;PC055;FR0;FR0;FT1;IF00014060000 +012310100;IF00014060000 +012310100;FB00014060000;"
                         .to_vec(),
                 output: Arc::clone(&output),
             },
@@ -1027,6 +1066,8 @@ mod tests {
         );
         assert_eq!(block_on(radio.get_rit_offset_hz()).unwrap(), 123);
         assert_eq!(block_on(radio.get_xit_offset_hz()).unwrap(), 123);
+        assert_eq!(radio.get_vfo_frequency_hz(1).unwrap(), 14_060_000);
+        radio.set_vfo_frequency_hz(1, 14_061_000).unwrap();
         block_on(radio.set_control(ControlId::RfPower, ControlValue::U8(255))).unwrap();
         block_on(radio.set_control(ControlId::Vfo, ControlValue::Vfo(0))).unwrap();
         block_on(radio.set_control(ControlId::Split, ControlValue::Bool(true))).unwrap();
@@ -1035,7 +1076,7 @@ mod tests {
         block_on(radio.set_rit_offset_hz(-999)).unwrap();
         assert_eq!(
             &*output.lock().unwrap(),
-            b"ID;PC;FR;FR;FT;IF;IF;PC110;FR0;FT1;RT1;XT0;RO-0999;"
+            b"ID;PC;FR;FR;FT;IF;IF;FB;FB00014061000;PC110;FR0;FT1;RT1;XT0;RO-0999;"
         );
     }
 
