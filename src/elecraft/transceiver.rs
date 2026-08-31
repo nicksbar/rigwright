@@ -121,6 +121,13 @@ impl ElecraftRadio {
         self.event_router.clone()
     }
 
+    /// Query the Elecraft compatibility identifier. A model-specific `K` or
+    /// `OM` probe should be added by callers when they need option-aware
+    /// identification; this method deliberately returns the raw CAT reply.
+    pub fn identify(&self) -> Result<Vec<u8>> {
+        self.query("ID")
+    }
+
     fn selected_frequency(&self) -> &'static str {
         "FA"
     }
@@ -145,6 +152,32 @@ impl ElecraftRadio {
         profile.decode_mode(code)
     }
 
+    fn parse_numeric(response: &[u8], prefix: &str) -> Result<u16> {
+        let text = std::str::from_utf8(response).context("Elecraft response is not ASCII")?;
+        text.strip_prefix(prefix)
+            .and_then(|value| value.strip_suffix(';'))
+            .context("unexpected Elecraft numeric response")?
+            .parse()
+            .context("invalid Elecraft numeric response")
+    }
+
+    fn parse_if_state(response: &[u8]) -> Result<(i32, bool, bool)> {
+        let text = std::str::from_utf8(response).context("Elecraft IF response is not ASCII")?;
+        let payload = text
+            .strip_prefix("IF")
+            .and_then(|value| value.strip_suffix(';'))
+            .context("unexpected Elecraft IF response")?;
+        let bytes = payload.as_bytes();
+        anyhow::ensure!(bytes.len() >= 19, "short Elecraft IF response");
+        let sign = match bytes[12] {
+            b'+' | b' ' => 1,
+            b'-' => -1,
+            _ => bail!("invalid Elecraft RIT/XIT sign"),
+        };
+        let offset = std::str::from_utf8(&bytes[13..17])?.parse::<i32>()? * sign;
+        Ok((offset, bytes[17] == b'1', bytes[18] == b'1'))
+    }
+
     fn decode_control(profile: ElecraftProfile, id: ControlId, response: &[u8]) -> Result<u8> {
         let text =
             std::str::from_utf8(response).context("Elecraft control response is not ASCII")?;
@@ -152,6 +185,7 @@ impl ElecraftRadio {
             ControlId::AfGain => text.strip_prefix("AG"),
             ControlId::RfGain => text.strip_prefix("RG"),
             ControlId::Squelch => text.strip_prefix("SQ"),
+            ControlId::RfPower => text.strip_prefix("PC"),
             _ => None,
         }
         .context("unexpected Elecraft receiver-control response")?
@@ -161,19 +195,20 @@ impl ElecraftRadio {
             ControlId::AfGain => profile.af_gain_max,
             ControlId::RfGain => profile.rf_gain_max,
             ControlId::Squelch => Some(profile.squelch_max),
+            ControlId::RfPower => profile.power_max_watts,
             _ => None,
         }
         .context("Elecraft control is not profiled")?;
         if native > maximum {
             bail!("Elecraft control value exceeds profile maximum");
         }
-        Ok(
-            if id == ControlId::RfGain && profile.rf_gain_is_attenuation {
-                (((maximum - native) * 255) / maximum) as u8
-            } else {
-                ((native * 255) / maximum) as u8
-            },
-        )
+        Ok(if id == ControlId::RfPower {
+            ((native * 255) / maximum) as u8
+        } else if id == ControlId::RfGain && profile.rf_gain_is_attenuation {
+            (((maximum - native) * 255) / maximum) as u8
+        } else {
+            ((native * 255) / maximum) as u8
+        })
     }
 
     fn encode_control(profile: ElecraftProfile, id: ControlId, value: u8) -> Result<String> {
@@ -181,6 +216,7 @@ impl ElecraftRadio {
             ControlId::AfGain => profile.af_gain_max,
             ControlId::RfGain => profile.rf_gain_max,
             ControlId::Squelch => Some(profile.squelch_max),
+            ControlId::RfPower => profile.power_max_watts,
             _ => None,
         }
         .context("Elecraft control is not profiled")?;
@@ -190,11 +226,25 @@ impl ElecraftRadio {
             (u16::from(value) * maximum) / 255
         };
         Ok(match id {
+            ControlId::RfPower => format!("{native:03}"),
             ControlId::AfGain | ControlId::Squelch => format!("{native:03}"),
             ControlId::RfGain if profile.rf_gain_is_attenuation => format!("-{native:02}"),
             ControlId::RfGain => format!("{native:03}"),
             _ => unreachable!(),
         })
+    }
+
+    fn encode_power(profile: ElecraftProfile, value: u8) -> Result<String> {
+        let maximum = profile
+            .power_max_watts
+            .context("Elecraft RF power is not profiled")?;
+        Ok(format!("{:03}", (u16::from(value) * maximum) / 255))
+    }
+
+    fn is_split(&self) -> Result<bool> {
+        let rx = Self::parse_numeric(&self.query("FR")?, "FR")?;
+        let tx = Self::parse_numeric(&self.query("FT")?, "FT")?;
+        Ok(rx != tx)
     }
 }
 
@@ -233,6 +283,7 @@ fn publish_event(router: &RadioEventRouter, model: Option<ElecraftModel>, frame:
         (ControlId::AfGain, "AG"),
         (ControlId::RfGain, "RG"),
         (ControlId::Squelch, "SQ"),
+        (ControlId::RfPower, "PC"),
     ]
     .into_iter()
     .find(|(_, prefix)| payload.starts_with(prefix))
@@ -336,8 +387,25 @@ impl Radio for ElecraftRadio {
             ControlId::AfGain => "AG",
             ControlId::RfGain => "RG",
             ControlId::Squelch => "SQ",
+            ControlId::RfPower => "PC",
+            ControlId::Vfo => "FR",
+            ControlId::Split => return Ok(Some(ControlValue::Bool(self.is_split()?))),
+            ControlId::Rit | ControlId::Xit => "IF",
             _ => return Ok(None),
         };
+        if matches!(id, ControlId::Vfo) {
+            let value = Self::parse_numeric(&self.query(command)?, command)?;
+            anyhow::ensure!(value <= 1, "invalid Elecraft receive VFO");
+            return Ok(Some(ControlValue::Vfo(value as u8)));
+        }
+        if matches!(id, ControlId::Rit | ControlId::Xit) {
+            let (_, rit, xit) = Self::parse_if_state(&self.query(command)?)?;
+            return Ok(Some(ControlValue::Bool(if id == ControlId::Rit {
+                rit
+            } else {
+                xit
+            })));
+        }
         Ok(Some(ControlValue::U8(Self::decode_control(
             profile,
             id,
@@ -350,6 +418,26 @@ impl Radio for ElecraftRadio {
             .profile()
             .context("Elecraft controls require a selected model")?;
         match (id, value) {
+            (ControlId::RfPower, ControlValue::U8(value)) => {
+                self.set("PC", &Self::encode_power(profile, value)?)
+            }
+            (ControlId::Vfo, ControlValue::Vfo(value)) if value <= 1 => {
+                anyhow::ensure!(
+                    profile.supports_vfo_b || value == 0,
+                    "Elecraft VFO B is not supported"
+                );
+                self.set("FR", &value.to_string())
+            }
+            (ControlId::Split, ControlValue::Bool(enabled)) if profile.supports_split => self.set(
+                if enabled { "FT" } else { "FR" },
+                if enabled { "1" } else { "0" },
+            ),
+            (ControlId::Rit, ControlValue::Bool(enabled)) if profile.supports_rit_xit => {
+                self.set("RT", if enabled { "1" } else { "0" })
+            }
+            (ControlId::Xit, ControlValue::Bool(enabled)) if profile.supports_rit_xit => {
+                self.set("XT", if enabled { "1" } else { "0" })
+            }
             (
                 id @ (ControlId::AfGain | ControlId::RfGain | ControlId::Squelch),
                 ControlValue::U8(value),
@@ -364,6 +452,30 @@ impl Radio for ElecraftRadio {
             ),
             _ => bail!("Elecraft control {id:?} is not implemented"),
         }
+    }
+
+    async fn get_rit_offset_hz(&self) -> Result<i32> {
+        Ok(Self::parse_if_state(&self.query("IF")?)?.0)
+    }
+
+    async fn set_rit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        anyhow::ensure!(
+            (-9_999..=9_999).contains(&offset_hz),
+            "Elecraft RIT/XIT offset must be -9999..=9999 Hz"
+        );
+        let magnitude = offset_hz.unsigned_abs();
+        self.set(
+            "RO",
+            &format!("{}{magnitude:04}", if offset_hz < 0 { '-' } else { '+' }),
+        )
+    }
+
+    async fn get_xit_offset_hz(&self) -> Result<i32> {
+        self.get_rit_offset_hz().await
+    }
+
+    async fn set_xit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        self.set_rit_offset_hz(offset_hz).await
     }
 
     async fn get_meter(&self, id: MeterId) -> Result<Option<u8>> {
@@ -395,15 +507,8 @@ impl Radio for ElecraftRadio {
         id == MeterId::Signal
     }
     fn supports_control(&self, id: ControlId) -> bool {
-        matches!(
-            id,
-            ControlId::AfGain | ControlId::RfGain | ControlId::Squelch
-        ) && self.profile().is_some_and(|profile| match id {
-            ControlId::AfGain => profile.af_gain_max.is_some(),
-            ControlId::RfGain => profile.rf_gain_max.is_some(),
-            ControlId::Squelch => true,
-            _ => false,
-        })
+        self.profile()
+            .is_some_and(|profile| profile.supports_control(id))
     }
     fn capabilities(&self) -> RadioCapabilities {
         RadioCapabilities {
@@ -552,5 +657,46 @@ mod tests {
         assert!(String::from_utf8(output.lock().unwrap().clone())
             .unwrap()
             .ends_with("RG-00;"));
+    }
+
+    #[test]
+    fn direct_cat_vfo_split_rit_xit_power_and_identification_are_profiled() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K3),
+            9_600,
+            MemoryTransport {
+                input:
+                    b"ID017;PC055;FR0;FR0;FT1;IF00014060000 +012310100;IF00014060000 +012310100;"
+                        .to_vec(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        assert_eq!(radio.identify().unwrap(), b"ID017;".to_vec());
+        assert_eq!(
+            block_on(radio.get_control(ControlId::RfPower)).unwrap(),
+            Some(ControlValue::U8(127))
+        );
+        assert_eq!(
+            block_on(radio.get_control(ControlId::Vfo)).unwrap(),
+            Some(ControlValue::Vfo(0))
+        );
+        assert_eq!(
+            block_on(radio.get_control(ControlId::Split)).unwrap(),
+            Some(ControlValue::Bool(true))
+        );
+        assert_eq!(block_on(radio.get_rit_offset_hz()).unwrap(), 123);
+        assert_eq!(block_on(radio.get_xit_offset_hz()).unwrap(), 123);
+        block_on(radio.set_control(ControlId::RfPower, ControlValue::U8(255))).unwrap();
+        block_on(radio.set_control(ControlId::Vfo, ControlValue::Vfo(0))).unwrap();
+        block_on(radio.set_control(ControlId::Split, ControlValue::Bool(true))).unwrap();
+        block_on(radio.set_control(ControlId::Rit, ControlValue::Bool(true))).unwrap();
+        block_on(radio.set_control(ControlId::Xit, ControlValue::Bool(false))).unwrap();
+        block_on(radio.set_rit_offset_hz(-999)).unwrap();
+        assert_eq!(
+            &*output.lock().unwrap(),
+            b"ID;PC;FR;FR;FT;IF;IF;PC110;FR0;FT1;RT1;XT0;RO-0999;"
+        );
     }
 }

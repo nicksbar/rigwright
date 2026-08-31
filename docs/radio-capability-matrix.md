@@ -56,6 +56,9 @@ controls or meters until a concrete model profile is selected.
 | Frequency read/write | `get/set_frequency_hz` | H/P |
 | Operating mode read/write | `get/set_mode` | H/P for selected profiles |
 | PTT write/read | `set_ptt`, `get_ptt` | H/P via `TX`/`RX` and `TQ` |
+| RF power | `ControlId::RfPower` | H/P via profile-scaled `PC` |
+| VFO selection / split | `ControlId::Vfo`, `ControlId::Split` | H/P via `FR`/`FT`; K3/K3S VFO-B selection remains profile-limited |
+| RIT/XIT enable and offset | `ControlId::{Rit,Xit}`, offset methods | H/P via `RT`/`XT`/`RO`/`IF` |
 | Signal meter | `MeterId::Signal` | H/P via `SM` |
 | AF gain | `ControlId::AfGain` | H/P via `AG` |
 | RF gain | `ControlId::RfGain` | H/P via profile-scaled `RG` |
@@ -81,10 +84,10 @@ enough to design against; it is not proof of correct code or physical behavior.
 
 | Direct CAT surface | Current Rigwright status | Required implementation evidence | Physical tester evidence |
 |---|---|---|---|
-| RF power (`PC`) | Manual; not implemented | Profile-native limits, normalized `RfPower`, read/write fixtures, TX-safety tests | Readback and safe min/max power on each model |
-| VFO-A/B and selected-VFO routing (`FA`/`FB` plus selection) | Manual; not implemented | Explicit VFO state and command-routing tests | Both VFOs, switching, and unsolicited updates |
-| Split | Manual; not implemented | Profile-gated `ControlId::Split` and selected-VFO tests | RX/TX VFO behavior and split transitions |
-| RIT/XIT | Manual; not implemented | Signed offset/enable contract and boundary tests | Sign, range, zero, and independent operation |
+| RF power (`PC`) | Implemented in driver; framework-level | Profile-native limits, normalized `RfPower`, read/write fixtures, TX-safety tests | Readback and safe min/max power on each model |
+| VFO-A/B and selected-VFO routing (`FA`/`FB` plus selection) | Implemented in driver; K3/K3S profile-limited | Explicit VFO state and command-routing tests | Both VFOs, switching, and unsolicited updates |
+| Split | Implemented in driver; framework-level | Profile-gated `ControlId::Split` and selected-VFO tests | RX/TX VFO behavior and split transitions |
+| RIT/XIT | Implemented in driver; framework-level | Signed offset/enable contract and boundary tests | Sign, range, zero, and independent operation |
 | Tuning step | Manual; not implemented | HAL shape and model-specific value tests | Every supported step on a physical dial/navigation workflow |
 | Filters/bandwidth | Manual; not implemented | Named/value profile tables and readback fixtures | Accepted values and mode-dependent behavior |
 | AGC | Manual; not implemented | Model-specific control encoding and capability tests | AGC choices and readback |
@@ -94,7 +97,7 @@ enough to design against; it is not proof of correct code or physical behavior.
 | Memory/channel operations | Manual; not implemented | Lossless `MemoryChannel` mapping or explicit unsupported fields | Empty/read/write/name/mode/frequency round trips |
 | Repeater/tone | Manual; not implemented | Profile-gated `RepeaterSettings` and unsupported-field tests | Tone, offset, and model-specific repeater behavior |
 | TX status and additional meters | Manual; not implemented | Typed status/events, normalized meter fixtures, read-only semantics | RX/TX/tune captures for power/SWR/ALC/etc. |
-| Identification and capability probing (`ID`/status) | Manual; not implemented | Bounded probe, unknown-model, timeout, and malformed-frame tests | Known model and firmware identification |
+| Identification and capability probing (`ID`/status) | `ID` query implemented; probing remains | Bounded probe, unknown-model, timeout, and malformed-frame tests | Known model and firmware identification |
 
 The tester gate is deliberate: all rows may reach `Implemented` with manual
 review and deterministic fixtures, but no Elecraft model should move from

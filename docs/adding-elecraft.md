@@ -57,8 +57,8 @@ profile-owned.
 
 The first slice is the shared K3-family transceiver path for KX2/KX3, K3/K3S,
 and K4 over the existing `RadioTransport`. Its current contract coverage is
-`FA`, `MD`, `TX`/`RX`, `TQ`, `SM`, and `AI`; `PC` is a documented next control,
-not an implemented one. K4 Ethernet and streaming should follow as a separate
+`ID`, `FA`/`FB`, `FR`/`FT`, `MD`, `TX`/`RX`, `TQ`, `RO`, `RT`, `XT`, `PC`, `SM`,
+and `AI`. K4 Ethernet and streaming should follow as a separate
 capability-tested transport layer.
 
 ## Direct CAT control roadmap

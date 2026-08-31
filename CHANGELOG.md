@@ -14,6 +14,8 @@
   modules, leaving shared contracts and driver behavior separate.
 - Record the direct-CAT backlog, command-family audit, implementation evidence,
   and physical-tester gate in the Elecraft matrix and contributor guidance.
+- Implement the first direct-CAT control slice: identification query, RF power,
+  VFO/split routing, and RIT/XIT enable and offsets.
 - Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
   outside this initial radio slice.
 

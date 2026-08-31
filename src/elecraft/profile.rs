@@ -1,6 +1,6 @@
 //! Shared Elecraft profile contracts and model lookup.
 
-use crate::hal::Mode;
+use crate::{hal::Mode, hal_types::ControlId};
 use anyhow::{bail, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +50,9 @@ pub struct ElecraftProfile {
     pub frequency_ranges: &'static [(u64, u64)],
     pub modes: &'static [ElecraftModeSpec],
     pub supports_vfo_b: bool,
+    pub supports_split: bool,
+    pub supports_rit_xit: bool,
+    pub power_max_watts: Option<u16>,
     pub af_gain_max: Option<u16>,
     pub rf_gain_max: Option<u16>,
     pub squelch_max: u16,
@@ -90,6 +93,26 @@ impl ElecraftProfile {
             );
         }
         Ok(())
+    }
+
+    pub const fn supports_control(self, id: ControlId) -> bool {
+        match id {
+            ControlId::AfGain => self.af_gain_max.is_some(),
+            ControlId::RfGain => self.rf_gain_max.is_some(),
+            ControlId::Squelch
+            | ControlId::RfPower
+            | ControlId::Vfo
+            | ControlId::Split
+            | ControlId::Rit
+            | ControlId::Xit => match id {
+                ControlId::RfPower => self.power_max_watts.is_some(),
+                ControlId::Vfo => self.supports_vfo_b,
+                ControlId::Split => self.supports_split,
+                ControlId::Rit | ControlId::Xit => self.supports_rit_xit,
+                _ => true,
+            },
+            _ => false,
+        }
     }
 }
 
