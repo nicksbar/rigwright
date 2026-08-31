@@ -351,11 +351,14 @@ mod tests {
         assert!(!radio.supports_control(ControlId::RfPower));
         assert!(!radio.supports_control_read(ControlId::RfPower));
         assert!(!radio.supports_control_write(ControlId::RfPower));
+        assert!(radio.supported_controls().is_empty());
+        assert!(radio.supported_meters().is_empty());
         assert!(futures::executor::block_on(radio.start_tuner()).is_err());
         assert!(futures::executor::block_on(radio.get_tuner_status())
             .unwrap()
             .is_none());
         assert!(!radio.capabilities().can_get_frequency);
+        let _ = NullRadio::default();
     }
 
     #[test]

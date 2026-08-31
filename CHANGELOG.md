@@ -31,6 +31,13 @@
   option interpretation for later model capability negotiation.
 - Add KX2/KX3/K3/K3S memory-channel selection through the documented three-digit
   `MC` command while keeping undocumented record persistence unsupported.
+- Add official-but-untested Icom IC-718 CI-V profile support from the 2024
+  Advanced Manual, including address `5E`, HF/50 MHz controls, memory, and
+  S-meter metadata.
+- Move vendor-specific control inventories, bounds, and capability decisions
+  into driver profiles while preserving generic protocol fallbacks.
+- Refresh release coverage reporting from 242 tests: 81.49% overall, 85.65%
+  Icom, 96.34% HAL, and 84.07% Elecraft; all enforced local gates pass.
 - Decode K4 unsolicited `TM` TX-meter frames into typed ALC, power, and SWR
   events and expose the documented `TM1`/`TM0` reporting toggle.
 - Add profile-gated Elecraft antenna selection through the documented `AN`
