@@ -1254,13 +1254,11 @@ impl Radio for KenwoodCatRadio {
 
     fn supports_control(&self, id: ControlId) -> bool {
         self.profile().is_some_and(|profile| {
-            ((matches!(
-                id,
-                ControlId::AfGain | ControlId::RfGain | ControlId::Squelch
-            )) || (id == ControlId::RfPower && profile.power_range_watts.is_some()))
-                || profile.control(id).is_some()
-                || id == ControlId::Vfo
-                || id == ControlId::Split
+            profile.supports_control(id)
+                || matches!(
+                    id,
+                    ControlId::AfGain | ControlId::RfGain | ControlId::Squelch
+                )
         })
     }
 

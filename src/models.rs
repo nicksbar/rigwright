@@ -288,7 +288,7 @@ impl RadioModelProfile {
                     ControlId::Attenuator => profile.attenuator_max,
                     ControlId::NoiseBlanker => profile.noise_blanker_level_max,
                     ControlId::NoiseReductionLevel => profile.noise_reduction_level_max,
-                    ControlId::Agc if profile.supports_agc => Some(3),
+                    ControlId::Agc => profile.agc_max,
                     ControlId::Filter => profile.filter_max_hz.and_then(|v| u8::try_from(v).ok()),
                     _ => None,
                 }

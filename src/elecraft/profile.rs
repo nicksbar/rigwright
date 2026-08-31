@@ -73,6 +73,8 @@ pub struct ElecraftProfile {
     pub noise_blanker_level_max: Option<u8>,
     pub noise_reduction_level_max: Option<u8>,
     pub supports_agc: bool,
+    /// Highest documented AGC selector, when AGC is available.
+    pub agc_max: Option<u8>,
     pub supports_tuner: bool,
     pub supports_repeater: bool,
     pub supports_tuning_step: bool,
