@@ -110,10 +110,10 @@ impl RadioModelProfile {
         const KENWOOD_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
 
         match self.protocol {
-            Protocol::IcomCiV { .. } => match IcomCivModel::from_model_name(self.model) {
-                Some(IcomCivModel::Ic7200) => &[300, 1_200, 4_800, 9_600, 19_200],
-                _ => CIV_BAUD_RATES,
-            },
+            Protocol::IcomCiV { .. } => IcomCivModel::from_model_name(self.model)
+                .map(crate::icom::profile::profile_for_model)
+                .map(|profile| profile.baud_rates)
+                .unwrap_or(CIV_BAUD_RATES),
             Protocol::YaesuCat => YaesuCatModel::from_model_name(self.model)
                 .map(crate::yaesu::profile::profile_for_model)
                 .map(|profile| profile.baud_rates)
@@ -166,8 +166,10 @@ impl RadioModelProfile {
     /// Operators must still match the value configured on the radio.
     pub fn preferred_baud_rate(self) -> u32 {
         match self.protocol {
-            Protocol::IcomCiV { .. } if self.model == "IC-7200" => 19_200,
-            Protocol::IcomCiV { .. } => 115_200,
+            Protocol::IcomCiV { .. } => IcomCivModel::from_model_name(self.model)
+                .map(crate::icom::profile::profile_for_model)
+                .map(|profile| profile.preferred_baud_rate)
+                .unwrap_or(115_200),
             Protocol::YaesuCat => YaesuCatModel::from_model_name(self.model)
                 .map(crate::yaesu::profile::profile_for_model)
                 .and_then(|profile| profile.baud_rates.last().copied())

@@ -93,6 +93,8 @@ const METERS: &[MeterId] = &[
 
 pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     model: crate::models::IcomCivModel::Ic7610,
+    baud_rates: super::profile::DEFAULT_BAUD_RATES,
+    preferred_baud_rate: 115_200,
     default_address: 0x98,
     frequency_ranges: FREQUENCY_RANGES,
     controls: CONTROLS,

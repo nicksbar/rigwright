@@ -173,6 +173,10 @@ pub enum MemoryLayout {
 pub struct IcomCivProfile {
     /// Model represented by this profile.
     pub model: crate::models::IcomCivModel,
+    /// CI-V rates documented by the model's manual.
+    pub baud_rates: &'static [u32],
+    /// Preferred starting rate when Auto is not available.
+    pub preferred_baud_rate: u32,
     /// Factory-default CI-V address. Applications may override it.
     pub default_address: u8,
     /// Conservative CAT-tunable frequency ranges from the model manual.
@@ -203,6 +207,10 @@ pub struct IcomCivProfile {
     pub supports_repeater_settings: bool,
     pub supports_memory_channels: bool,
 }
+
+/// Conservative CI-V defaults used by current Icom profiles unless a model
+/// documents a narrower serial menu.
+pub const DEFAULT_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
 
 impl IcomCivProfile {
     pub fn supports_frequency(self, hz: u64) -> bool {
@@ -258,6 +266,8 @@ mod tests {
         ] {
             let profile = profile_for_model(model);
             assert_eq!(profile.model, model);
+            assert!(!profile.baud_rates.is_empty());
+            assert!(profile.baud_rates.contains(&profile.preferred_baud_rate));
             assert!(!profile.controls.is_empty());
         }
     }

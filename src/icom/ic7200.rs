@@ -43,6 +43,7 @@ const FREQUENCY_RANGES: &[(u64, u64)] = &[
     (28_000_000, 29_999_999),
     (50_000_000, 54_000_000),
 ];
+const BAUD_RATES: &[u32] = &[300, 1_200, 4_800, 9_600, 19_200];
 
 const CONTROLS: &[ControlSpec] = &[
     // 14 06: NR level, 0..255.
@@ -69,6 +70,8 @@ const METERS: &[MeterId] = &[MeterId::Signal, MeterId::Power, MeterId::Swr, Mete
 
 pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     model: crate::models::IcomCivModel::Ic7200,
+    baud_rates: BAUD_RATES,
+    preferred_baud_rate: 19_200,
     default_address: 0x76,
     frequency_ranges: FREQUENCY_RANGES,
     controls: CONTROLS,
