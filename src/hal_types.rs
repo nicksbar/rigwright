@@ -103,6 +103,39 @@ pub enum ControlId {
     Antenna,
 }
 
+impl ControlId {
+    /// Complete inventory used by consumers that need to discover a driver's
+    /// typed control surface. Drivers still decide which entries they support.
+    pub const ALL: &'static [Self] = &[
+        Self::AfGain,
+        Self::RfGain,
+        Self::Squelch,
+        Self::RfPower,
+        Self::Preamp,
+        Self::Attenuator,
+        Self::NoiseBlanker,
+        Self::NoiseReduction,
+        Self::NoiseReductionLevel,
+        Self::IpPlus,
+        Self::Notch,
+        Self::ManualNotch,
+        Self::ManualNotchPosition,
+        Self::DataMode,
+        Self::Filter,
+        Self::TuningStep,
+        Self::Agc,
+        Self::Rit,
+        Self::Xit,
+        Self::Split,
+        Self::Tuner,
+        Self::RawCiV,
+        Self::Vfo,
+        Self::MainSub,
+        Self::ExternalPreamp,
+        Self::Antenna,
+    ];
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MeterId {
     /// Receive signal-strength meter, normalized to 0..=255.
@@ -121,6 +154,21 @@ pub enum MeterId {
     Voltage,
     /// PA temperature meter, normalized to 0..=255.
     Temperature,
+}
+
+impl MeterId {
+    /// Complete inventory used by consumers that need to discover a driver's
+    /// normalized meter surface.
+    pub const ALL: &'static [Self] = &[
+        Self::Signal,
+        Self::Power,
+        Self::Swr,
+        Self::Alc,
+        Self::Compression,
+        Self::Current,
+        Self::Voltage,
+        Self::Temperature,
+    ];
 }
 
 /// Normalize a vendor meter-dot value to the HAL's common 0..=255 scale.
