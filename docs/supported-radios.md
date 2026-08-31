@@ -34,12 +34,13 @@ local references currently available under `_manuals/elecraft` are:
 
 The current Rigwright transceiver slice covers K2, KX2, KX3, K3, K3S, and K4
 core frequency, mode, PTT, RF power, independent VFO frequency, split context,
-RIT/XIT, receiver controls, filters, meters, tuner/repeater paths where
-documented, VFO movement, memory selection, and raw-command operations. The
-remaining direct-CAT backlog is tracked in the capability matrix: lossless
-memory records, tone fields where documented, deeper model-option negotiation,
-and additional status surfaces. All models remain framework-level until tested
-against physical equipment.
+RIT/XIT, receiver controls, filters, meters, antenna and K4 notch controls,
+tuner/repeater paths where documented, VFO movement, memory selection,
+identification probing, and raw-command operations. The capability matrix records
+the remaining protocol/HAL boundaries: lossless memory records, typed tone
+payloads, accessory-owned tuner surfaces, and meters not exposed by the
+transceiver protocols. All models remain framework-level until tested against
+physical equipment.
 KH1 is separately profiled for fixed-baud, write-only frequency/mode control;
 its display-mediated status and FT8/CW keying commands are not ordinary
 `Radio` operations.

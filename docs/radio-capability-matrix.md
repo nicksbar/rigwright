@@ -82,8 +82,8 @@ model-specific baud lists, conservative HF frequency ranges, and normalized
 S-meter limits. The model-specific declarations live in the seven modules listed
 above; shared profile validation remains in `src/elecraft/profile.rs`.
 Auto-Info event routing is now available through the shared event router. K4
-Ethernet/streaming, precise VFO-B semantics, and the wider K3-family control
-surface remain open. KH1 is intentionally limited to fixed-baud, write-only
+Ethernet/streaming and precise VFO-B semantic differences remain outside this
+direct transceiver scope. KH1 is intentionally limited to fixed-baud, write-only
 frequency/mode control; its display-mediated status and `FO`/`HK` FT8/CW
 operations require a separate capability surface.
 KH1 and P3/PX3/KAT/KPA/KXPA equipment are separate future profiles or station
@@ -105,13 +105,13 @@ correct code or physical behavior.
 | Tuning step | K4 step selector plus K2/K4 current-step and K3-family indexed VFO movement implemented; no generic legacy step-size readback | HAL shape and model-specific value tests | Every supported step on a physical dial/navigation workflow |
 | Filters/bandwidth | Implemented as normalized bandwidth; framework-level | Named/value profile tables and readback fixtures | Accepted values and mode-dependent behavior |
 | AGC | Implemented in driver; framework-level | Model-specific control encoding and capability tests | AGC choices and readback |
-| Noise blanker/reduction | NB enable implemented; K4 `NB$`/`NR$` levels implemented; non-K4 NR remains open | Separate enable/level controls and range tests | Level behavior and mode interaction |
+| Noise blanker/reduction | NB enable implemented; K4 `NB$`/`NR$` levels implemented; reviewed non-K4 references do not provide a lossless typed NR CAT surface | Separate enable/level controls and range tests | Level behavior and mode interaction |
 | Preamp/attenuator | Implemented in driver; framework-level | Distinct profile controls and mutual-exclusion tests | RF-path state and combinations |
-| Internal tuner | K4 mode/start implemented; other models open | Tuner state model, explicit-start path, and failure tests | Tune start/completion/failure and TX interlock |
-| Memory/channel operations | KX2/KX3/K3/K3S selection implemented via `MC`; record read/write remains open | Lossless `MemoryChannel` mapping or explicit unsupported fields | Empty/read/write/name/mode/frequency round trips |
-| Repeater/tone | K4 shift/offset implemented; tone and other models open | Profile-gated `RepeaterSettings` and unsupported-field tests | Tone, offset, and model-specific repeater behavior |
+| Internal tuner | K4 mode/start implemented; KAT/KXAT accessories remain separate components and other transceiver profiles are gated | Tuner state model, explicit-start path, and failure tests | Tune start/completion/failure and TX interlock |
+| Memory/channel operations | KX2/KX3/K3/K3S selection implemented via `MC`; reviewed transceiver references do not provide lossless record read/write framing and K4 `MC` is pending | Lossless `MemoryChannel` mapping only if a documented record surface appears; otherwise explicit unsupported fields | Empty/read/write/name/mode/frequency round trips |
+| Repeater/tone | K4 shift/offset implemented; reviewed transceiver references do not expose typed tone payloads | Profile-gated `RepeaterSettings` and unsupported-field tests | Tone, offset, and model-specific repeater behavior |
 | TX status and additional meters | Power/ALC/SWR implemented where the protocol permits; K4 actual TX state via `TQX`, K3/K3S `TM` source selection, K4 `SM$`/`PO` queries, and K4 `TM` ALC/compression/power/SWR event reports implemented; voltage/current/temperature remain unavailable in the transceiver HAL | Typed status/events, normalized meter fixtures, read-only semantics | RX/TX/tune captures for power/SWR/ALC/etc. |
-| Identification and capability probing (`ID`/`OM`/status) | `ID` and decoded model-specific `OM` probes implemented for K3/K3S/KX2/KX3/K4; KH1 schema remains an explicit gap | Bounded probe, unknown-model, timeout, malformed-frame, and family-parser tests | Known model, firmware, and installed-option identification |
+| Identification and capability probing (`ID`/`OM`/status) | `ID` and decoded model-specific `OM` probes implemented for K3/K3S/KX2/KX3/K4; KH1 has no reviewed `OM` schema | Bounded probe, unknown-model, timeout, malformed-frame, and family-parser tests | Known model, firmware, and installed-option identification |
 
 The tester gate is deliberate: all rows may reach `Implemented` with manual
 review and deterministic fixtures, but no Elecraft model should move from

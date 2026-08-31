@@ -42,6 +42,8 @@
   unsolicited metering instead.
 - Decode the K4 fixed-position `OM` option bitmap while preserving its raw
   option string for forward-compatible probing.
+- Clarify the Elecraft completion boundaries for accessory-owned tuners,
+  undocumented memory/tone records, and event-only or unavailable meters.
 - Add explicit independent Elecraft VFO-A/VFO-B frequency read/write methods
   using `FA`/`FB`, while keeping receive/transmit selection semantics separate.
 - Add K3/K3S transmit meter-source selection through documented `TM0`/`TM1`
