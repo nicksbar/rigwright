@@ -67,6 +67,8 @@ pub struct ElecraftProfile {
     pub antenna_max: Option<u8>,
     pub preamp_max: Option<u8>,
     pub attenuator_max: Option<u8>,
+    pub supports_notch: bool,
+    pub supports_manual_notch: bool,
     pub supports_noise_blanker: bool,
     pub noise_blanker_level_max: Option<u8>,
     pub noise_reduction_level_max: Option<u8>,
@@ -124,6 +126,8 @@ impl ElecraftProfile {
             ControlId::RfGain => self.rf_gain_max.is_some(),
             ControlId::Preamp => self.preamp_max.is_some(),
             ControlId::Attenuator => self.attenuator_max.is_some(),
+            ControlId::Notch => self.supports_notch,
+            ControlId::ManualNotch | ControlId::ManualNotchPosition => self.supports_manual_notch,
             ControlId::Antenna => self.antenna_max.is_some(),
             ControlId::NoiseBlanker => self.supports_noise_blanker,
             ControlId::NoiseReduction | ControlId::NoiseReductionLevel => {

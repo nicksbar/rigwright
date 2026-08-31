@@ -10,6 +10,7 @@ use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 
 use super::{
+    notch,
     options::{self, ElecraftOptions},
     profile::{profile_for_model, ElecraftModel, ElecraftProfile},
     transport::ElecraftTransport,
@@ -630,6 +631,8 @@ impl Radio for ElecraftRadio {
             ControlId::Squelch => "SQ",
             ControlId::RfPower => "PC",
             ControlId::Antenna => "AN",
+            ControlId::Notch => "NA$",
+            ControlId::ManualNotch | ControlId::ManualNotchPosition => "NM$",
             ControlId::Vfo => "FR",
             ControlId::Split => return Ok(Some(ControlValue::Bool(self.is_split()?))),
             ControlId::Rit | ControlId::Xit => "IF",
@@ -658,6 +661,20 @@ impl Radio for ElecraftRadio {
                 "invalid Elecraft antenna selector"
             );
             return Ok(Some(ControlValue::U8(value as u8)));
+        }
+        if id == ControlId::Notch {
+            return Ok(Some(ControlValue::Bool(notch::parse_enabled(
+                &self.query(command)?,
+                "NA$",
+            )?)));
+        }
+        if matches!(id, ControlId::ManualNotch | ControlId::ManualNotchPosition) {
+            let (position, enabled) = notch::parse_manual(&self.query(command)?)?;
+            return Ok(Some(if id == ControlId::ManualNotch {
+                ControlValue::Bool(enabled)
+            } else {
+                ControlValue::U8(notch::normalize_position(position))
+            }));
         }
         if id == ControlId::TuningStep {
             let response = self.query_with_response_prefix("VT$X", "VT$")?;
@@ -737,6 +754,24 @@ impl Radio for ElecraftRadio {
                     "invalid Elecraft antenna selector"
                 );
                 self.set("AN", &value.to_string())
+            }
+            (ControlId::Notch, ControlValue::Bool(enabled)) if profile.supports_notch => {
+                self.set("NA$", if enabled { "1" } else { "0" })
+            }
+            (ControlId::ManualNotch, ControlValue::Bool(enabled))
+                if profile.supports_manual_notch =>
+            {
+                let (position, _) = notch::parse_manual(&self.query("NM$")?)?;
+                self.set("NM$", &notch::encode_manual(position, enabled))
+            }
+            (ControlId::ManualNotchPosition, ControlValue::U8(value))
+                if profile.supports_manual_notch =>
+            {
+                let (_, enabled) = notch::parse_manual(&self.query("NM$")?)?;
+                self.set(
+                    "NM$",
+                    &notch::encode_manual(notch::denormalize_position(value), enabled),
+                )
             }
             (ControlId::Vfo, ControlValue::Vfo(value)) if value <= 1 => {
                 anyhow::ensure!(
@@ -1388,6 +1423,39 @@ mod tests {
         );
         block_on(radio.set_control(ControlId::Antenna, ControlValue::U8(2))).unwrap();
         assert_eq!(&*output.lock().unwrap(), b"AN;AN2;");
+    }
+
+    #[test]
+    fn k4_notch_controls_preserve_native_manual_position() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K4),
+            9_600,
+            MemoryTransport {
+                input: b"NA$1;NM$12001;NM$12001;NM$12001;NM$12000;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            block_on(radio.get_control(ControlId::Notch)).unwrap(),
+            Some(ControlValue::Bool(true))
+        );
+        assert_eq!(
+            block_on(radio.get_control(ControlId::ManualNotch)).unwrap(),
+            Some(ControlValue::Bool(true))
+        );
+        assert_eq!(
+            block_on(radio.get_control(ControlId::ManualNotchPosition)).unwrap(),
+            Some(ControlValue::U8(55))
+        );
+        block_on(radio.set_control(ControlId::Notch, ControlValue::Bool(false))).unwrap();
+        block_on(radio.set_control(ControlId::ManualNotch, ControlValue::Bool(false))).unwrap();
+        block_on(radio.set_control(ControlId::ManualNotchPosition, ControlValue::U8(255))).unwrap();
+        assert_eq!(
+            &*output.lock().unwrap(),
+            b"NA$;NM$;NM$;NA$0;NM$;NM$12000;NM$;NM$50000;"
+        );
     }
 
     #[test]

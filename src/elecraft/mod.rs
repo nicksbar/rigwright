@@ -10,6 +10,7 @@ pub mod k4;
 pub mod kh1;
 pub mod kx2;
 pub mod kx3;
+mod notch;
 pub mod options;
 pub mod profile;
 pub mod transceiver;

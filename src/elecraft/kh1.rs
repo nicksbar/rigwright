@@ -44,6 +44,8 @@ pub const PROFILE: ElecraftProfile = ElecraftProfile {
     antenna_max: None,
     preamp_max: None,
     attenuator_max: None,
+    supports_notch: false,
+    supports_manual_notch: false,
     supports_noise_blanker: false,
     noise_blanker_level_max: None,
     noise_reduction_level_max: None,
