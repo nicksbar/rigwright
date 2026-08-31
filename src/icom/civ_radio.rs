@@ -732,7 +732,8 @@ impl IcomCiVRadio {
 
     /// Read the signed RIT offset documented by the Icom CI-V `21 00`
     /// command. The wire value is four packed-BCD bytes in Hz followed by a
-    /// sign byte (`00` positive, `01` negative).
+    /// sign byte (`00` positive, `01` negative). A CI-V NAK is surfaced as an
+    /// unavailable operation rather than being decoded as a malformed value.
     pub fn get_rit_offset_hz(&self) -> Result<i32> {
         self.selected_model()?;
         let response = self.transact(&[0x21, 0x00], true)?;

@@ -172,7 +172,7 @@ fn main() -> Result<()> {
             Some(value)
         }
         Err(error) => {
-            println!("RIT offset: unavailable ({error})");
+            println!("RIT offset: unavailable in current radio configuration ({error})");
             None
         }
     };
