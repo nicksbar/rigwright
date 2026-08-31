@@ -57,8 +57,9 @@ controls or meters until a concrete model profile is selected.
 
 Elecraft profile differences currently cover K2 versus K3-family mode tables,
 model-specific baud lists, conservative HF frequency ranges, and normalized
-S-meter limits. K4 Ethernet/streaming, Auto-Info event routing, VFO-B
-selection, RF power, and the wider K3-family control surface remain open.
+S-meter limits. Auto-Info event routing is now available through the shared
+event router. K4 Ethernet/streaming, VFO-B selection, RF power, and the wider
+K3-family control surface remain open.
 KH1 and P3/PX3/KAT/KPA/KXPA equipment are separate future profiles or station
 components and are not included in this row.
 

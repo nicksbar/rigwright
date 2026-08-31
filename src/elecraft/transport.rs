@@ -56,6 +56,18 @@ impl ElecraftTransport {
         command: &[u8],
         response_prefix: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
+        self.transact_with_handler(command, response_prefix, |_| {})
+    }
+
+    pub(crate) fn transact_with_handler<F>(
+        &self,
+        command: &[u8],
+        response_prefix: Option<&[u8]>,
+        mut on_unmatched: F,
+    ) -> Result<Vec<u8>>
+    where
+        F: FnMut(&[u8]),
+    {
         let mut state = self
             .state
             .lock()
@@ -77,7 +89,7 @@ impl ElecraftTransport {
                     })?,
             )));
         }
-        let result = Self::transact_locked(&mut state, command, response_prefix);
+        let result = Self::transact_locked(&mut state, command, response_prefix, &mut on_unmatched);
         if result.is_err() {
             state.port = None;
             state.pending.clear();
@@ -89,6 +101,7 @@ impl ElecraftTransport {
         state: &mut State,
         command: &[u8],
         response_prefix: Option<&[u8]>,
+        on_unmatched: &mut impl FnMut(&[u8]),
     ) -> Result<Vec<u8>> {
         let transport = state
             .port
@@ -113,6 +126,7 @@ impl ElecraftTransport {
                 if frame.starts_with(prefix) {
                     return Ok(frame);
                 }
+                on_unmatched(&frame);
                 continue;
             }
             if state.pending.len() > MAX_FRAME_LEN {
@@ -134,10 +148,13 @@ impl ElecraftTransport {
         }
     }
 
-    pub(crate) fn query(&self, command: &str) -> Result<Vec<u8>> {
+    pub(crate) fn query_with_handler<F>(&self, command: &str, on_unmatched: F) -> Result<Vec<u8>>
+    where
+        F: FnMut(&[u8]),
+    {
         let mut frame = command.as_bytes().to_vec();
         frame.push(b';');
-        self.transact(&frame, Some(command.as_bytes()))
+        self.transact_with_handler(&frame, Some(command.as_bytes()), on_unmatched)
     }
 
     pub(crate) fn set(&self, command: &str, parameter: &str) -> Result<()> {

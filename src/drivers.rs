@@ -313,6 +313,7 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.event_router(),
             Self::Yaesu(r) => r.event_router(),
             Self::Kenwood(r) => r.event_router(),
+            Self::Elecraft(r) => Some(r.event_router()),
             _ => None,
         }
     }

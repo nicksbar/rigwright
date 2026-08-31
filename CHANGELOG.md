@@ -6,6 +6,8 @@
   separate P3/PX3, KAT, and KPA/KXPA station components.
 - Add a profile-driven semicolon CAT transceiver backend for K2, KX2, KX3, K3,
   K3S, and K4 core operations.
+- Route Elecraft Auto-Info frequency, mode, PTT, AF-gain, signal-meter, and raw
+  frames through the shared Rigwright event router.
 - Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
   outside this initial radio slice.
 

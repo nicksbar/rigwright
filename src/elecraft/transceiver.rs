@@ -1,6 +1,7 @@
 //! Shared semicolon-framed Elecraft transceiver driver.
 
 use crate::{
+    events::{RadioEvent, RadioEventRouter},
     hal::{Mode, Radio, RadioCapabilities},
     hal_types::{ControlId, ControlValue, MeterId},
     transport::RadioTransport,
@@ -18,6 +19,7 @@ pub struct ElecraftRadio {
     port: String,
     baud_rate: u32,
     transport: ElecraftTransport,
+    event_router: RadioEventRouter,
 }
 
 impl Clone for ElecraftRadio {
@@ -27,6 +29,7 @@ impl Clone for ElecraftRadio {
             port: self.port.clone(),
             baud_rate: self.baud_rate,
             transport: self.transport.clone(),
+            event_router: self.event_router.clone(),
         }
     }
 }
@@ -71,6 +74,7 @@ impl ElecraftRadio {
             port: String::new(),
             baud_rate,
             transport: ElecraftTransport::external(transport),
+            event_router: RadioEventRouter::default(),
         })
     }
 
@@ -85,6 +89,7 @@ impl ElecraftRadio {
             port: port.clone(),
             baud_rate,
             transport: ElecraftTransport::serial(port, baud_rate),
+            event_router: RadioEventRouter::default(),
         }
     }
 
@@ -93,11 +98,27 @@ impl ElecraftRadio {
     }
 
     fn query(&self, command: &str) -> Result<Vec<u8>> {
-        self.transport.query(command)
+        let router = self.event_router.clone();
+        let model = self.model;
+        self.transport.query_with_handler(command, move |frame| {
+            publish_event(&router, model, frame);
+        })
     }
 
     fn set(&self, command: &str, parameter: &str) -> Result<()> {
         self.transport.set(command, parameter)
+    }
+
+    /// Configure the documented Elecraft Auto-Info mode. Modes 1 and 2 can
+    /// produce unsolicited frames while another command is being queried;
+    /// those frames are routed through `Radio::event_router()`.
+    pub fn set_auto_info(&self, mode: u8) -> Result<()> {
+        anyhow::ensure!(mode <= 3, "Elecraft Auto-Info mode must be 0..=3");
+        self.set("AI", &mode.to_string())
+    }
+
+    pub fn event_router(&self) -> RadioEventRouter {
+        self.event_router.clone()
     }
 
     fn selected_frequency(&self) -> &'static str {
@@ -125,8 +146,76 @@ impl ElecraftRadio {
     }
 }
 
+fn publish_event(router: &RadioEventRouter, model: Option<ElecraftModel>, frame: &[u8]) {
+    let text = String::from_utf8_lossy(frame);
+    let payload = text.strip_suffix(';').unwrap_or(&text);
+    if let Some(value) = payload
+        .strip_prefix("FA")
+        .and_then(|value| value.parse().ok())
+    {
+        router.publish(RadioEvent::FrequencyChanged {
+            frequency_hz: value,
+        });
+    } else if let Some(code) = payload
+        .strip_prefix("MD")
+        .and_then(|value| value.chars().next())
+    {
+        if let Some(profile) = model.map(profile_for_model) {
+            if let Ok(mode) = profile.decode_mode(code) {
+                router.publish(RadioEvent::ModeChanged { mode });
+                return;
+            }
+        }
+        router.publish(RadioEvent::Raw {
+            payload: frame.to_vec(),
+        });
+    } else if let Some(value) = payload.strip_prefix("TQ") {
+        match value {
+            "0" => router.publish(RadioEvent::PttChanged { enabled: false }),
+            "1" => router.publish(RadioEvent::PttChanged { enabled: true }),
+            _ => router.publish(RadioEvent::Raw {
+                payload: frame.to_vec(),
+            }),
+        }
+    } else if let Some(value) = payload
+        .strip_prefix("AG")
+        .and_then(|value| value.parse::<u8>().ok())
+    {
+        router.publish(RadioEvent::ControlChanged {
+            id: ControlId::AfGain,
+            value: ControlValue::U8(value),
+        });
+    } else if let Some(value) = payload
+        .strip_prefix("SM")
+        .and_then(|value| value.parse::<u16>().ok())
+    {
+        let maximum = if model == Some(ElecraftModel::K2) {
+            15
+        } else {
+            30
+        };
+        if let Some(value) = crate::normalize_meter_level(value, maximum) {
+            router.publish(RadioEvent::MeterChanged {
+                id: MeterId::Signal,
+                value,
+            });
+        } else {
+            router.publish(RadioEvent::Raw {
+                payload: frame.to_vec(),
+            });
+        }
+    } else {
+        router.publish(RadioEvent::Raw {
+            payload: frame.to_vec(),
+        });
+    }
+}
+
 #[async_trait]
 impl Radio for ElecraftRadio {
+    fn event_router(&self) -> Option<RadioEventRouter> {
+        Some(self.event_router.clone())
+    }
     async fn get_frequency_hz(&self) -> Result<u64> {
         Self::parse_frequency(&self.query(self.selected_frequency())?)
     }
@@ -327,6 +416,23 @@ mod tests {
         assert_eq!(
             block_on(radio.get_meter(MeterId::Signal)).unwrap(),
             Some(255)
+        );
+    }
+
+    #[test]
+    fn auto_info_frames_are_routed_while_querying() {
+        let transport = MemoryTransport {
+            input: b"MD2;FA00014060000;".to_vec(),
+            output: Arc::new(Mutex::new(Vec::new())),
+        };
+        let radio =
+            ElecraftRadio::with_external_transport(Some(ElecraftModel::K3), 9_600, transport)
+                .unwrap();
+        let subscription = radio.event_router().subscribe();
+        assert_eq!(block_on(radio.get_frequency_hz()).unwrap(), 14_060_000);
+        assert_eq!(
+            subscription.drain(),
+            vec![RadioEvent::ModeChanged { mode: Mode::Usb }]
         );
     }
 }
