@@ -33,7 +33,7 @@ pub use hal_types::{
 pub use icom::civ_radio::{
     enumerate_serial_port_descriptors, enumerate_serial_ports, IcomCiVRadio, IcomProbeResult,
     IcomReceiver, IcomSerialPolicy, IcomTransportMetrics, IcomVfo, ScopeConfiguration,
-    SerialPortDescriptor,
+    ScopeStreamHealth, SerialPortDescriptor,
 };
 pub use iq::{decode_interleaved_iq, IqSampleBlock, IqSampleFormat};
 pub use kenwood::cat_radio::{KenwoodSerialPolicy, KenwoodTransportMetrics};

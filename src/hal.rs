@@ -109,6 +109,13 @@ pub trait Radio: Send + Sync {
     fn link_health(&self) -> LinkHealth {
         LinkHealth::default()
     }
+    /// How long ago the radio last pushed a typed unsolicited event, when the
+    /// backend has a live event stream. `None` means the backend does not
+    /// track (or has not seen) unsolicited events. The session uses this to
+    /// trust recently-streamed state instead of re-polling on every refresh.
+    fn event_stream_age(&self) -> Option<Duration> {
+        None
+    }
     async fn get_power(&self) -> Result<bool> {
         anyhow::bail!("reading radio power state is not supported by this radio")
     }

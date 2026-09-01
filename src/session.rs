@@ -22,6 +22,11 @@ const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 /// Default ceiling for a continuous transmit hold before the session forces
 /// PTT off as a safety measure.
 const DEFAULT_MAX_TX_HOLD: Duration = Duration::from_secs(180);
+/// How fresh the radio's unsolicited event stream must be for a refresh to
+/// trust the streamed observed state instead of issuing wire polls. Well
+/// under any reasonable CI-V/CAT event cadence, so a live stream makes
+/// refreshes effectively free while a stalled stream falls back to polling.
+const EVENT_STREAM_FRESHNESS: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionStatus {
@@ -806,7 +811,7 @@ fn worker_loop(
         } else {
             radio
                 .lock()
-                .map(|radio| execute(&radio, &queued.operation))
+                .map(|radio| execute(&radio, &queued.operation, &shared.state))
                 .unwrap_or_else(|_| Err(anyhow::anyhow!("radio session backend lock poisoned")))
         };
         let mut state = match shared.state.lock() {
@@ -990,9 +995,27 @@ fn ingest_events(shared: &Shared) {
 fn execute(
     radio: &Arc<dyn Radio>,
     operation: &SessionOperation,
+    shared_state: &Mutex<SharedState>,
 ) -> anyhow::Result<Option<RadioState>> {
     match operation {
         SessionOperation::Refresh => {
+            // When the radio's unsolicited event stream is live and we
+            // already hold observed core state, the streamed values are at
+            // least as current as a fresh poll, so serve the refresh from
+            // cache without touching the wire. This makes Icom CI-V
+            // refreshes effectively free on a healthy link while a stalled
+            // stream falls straight back to polling.
+            let stream_live = radio
+                .event_stream_age()
+                .is_some_and(|age| age <= EVENT_STREAM_FRESHNESS);
+            if stream_live {
+                if let Ok(state) = shared_state.lock() {
+                    let observed = &state.snapshot.observed;
+                    if observed.frequency_hz.is_some() || observed.mode.is_some() {
+                        return Ok(Some(observed.clone()));
+                    }
+                }
+            }
             // Prefer the backend's batched core-state read (e.g. the Yaesu
             // `IF;` frame) so a refresh costs the fewest round trips the
             // protocol allows; the default falls back to individual reads.
@@ -1031,7 +1054,7 @@ fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::RadioEventRouter;
+    use crate::{CoreState, RadioEventRouter};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct FakeRadio {
@@ -1039,6 +1062,8 @@ mod tests {
         mode: Mutex<Mode>,
         ptt: Mutex<bool>,
         writes: AtomicUsize,
+        core_reads: AtomicUsize,
+        stream_age: Mutex<Option<Duration>>,
         events: RadioEventRouter,
     }
 
@@ -1046,6 +1071,17 @@ mod tests {
     impl Radio for FakeRadio {
         fn event_router(&self) -> Option<RadioEventRouter> {
             Some(self.events.clone())
+        }
+        fn event_stream_age(&self) -> Option<Duration> {
+            *self.stream_age.lock().unwrap()
+        }
+        async fn read_core_state(&self) -> anyhow::Result<CoreState> {
+            self.core_reads.fetch_add(1, Ordering::SeqCst);
+            Ok(CoreState {
+                frequency_hz: Some(*self.frequency.lock().unwrap()),
+                mode: Some(*self.mode.lock().unwrap()),
+                ptt: Some(*self.ptt.lock().unwrap()),
+            })
         }
         async fn get_frequency_hz(&self) -> anyhow::Result<u64> {
             Ok(*self.frequency.lock().unwrap())
@@ -1095,6 +1131,8 @@ mod tests {
             mode: Mutex::new(Mode::Usb),
             ptt: Mutex::new(false),
             writes: AtomicUsize::new(0),
+            core_reads: AtomicUsize::new(0),
+            stream_age: Mutex::new(None),
             events: RadioEventRouter::default(),
         })
     }
@@ -1249,6 +1287,45 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(session.snapshot().observed.ptt, Some(false));
+    }
+
+    #[test]
+    fn refresh_trusts_a_live_event_stream_instead_of_polling() {
+        let radio = fake();
+        let session = RadioSession::from_radio(
+            Arc::clone(&radio),
+            SessionConfig {
+                queue_capacity: 4,
+                refresh_interval: None,
+                max_tx_hold: None,
+            },
+        )
+        .unwrap();
+        // Establish baseline observed state via one polled refresh.
+        futures::executor::block_on(session.refresh().unwrap())
+            .unwrap()
+            .unwrap();
+        let reads_after_first = radio.core_reads.load(Ordering::SeqCst);
+        assert!(reads_after_first >= 1);
+
+        // Mark the event stream as freshly live; subsequent refreshes must be
+        // served from streamed state without another wire read.
+        *radio.stream_age.lock().unwrap() = Some(Duration::from_millis(50));
+        futures::executor::block_on(session.refresh().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            radio.core_reads.load(Ordering::SeqCst),
+            reads_after_first,
+            "a live event stream should not trigger another wire read"
+        );
+
+        // A stalled stream falls back to polling.
+        *radio.stream_age.lock().unwrap() = Some(Duration::from_secs(60));
+        futures::executor::block_on(session.refresh().unwrap())
+            .unwrap()
+            .unwrap();
+        assert!(radio.core_reads.load(Ordering::SeqCst) > reads_after_first);
     }
 
     #[test]
