@@ -4,12 +4,6 @@ name: GitHub Release
   push:
     tags:
       - "v*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing version tag to release
-        required: true
-        type: string
 
 permissions:
   contents: write
@@ -18,10 +12,28 @@ jobs:
   release:
     runs-on: ubuntu-24.04
     steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Verify SemVer tag matches package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag '$GITHUB_REF_NAME' is not SemVer (expected vMAJOR.MINOR.PATCH)."
+            exit 1
+          fi
+          PACKAGE_VERSION="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "rigwright") | .version')"
+          if [[ "$PACKAGE_VERSION" != "$TAG_VERSION" ]]; then
+            echo "Tag $TAG_VERSION does not match package version $PACKAGE_VERSION"
+            exit 1
+          fi
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists; nothing to create."
