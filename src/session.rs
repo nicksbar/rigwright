@@ -19,6 +19,9 @@ use std::{
 const DEFAULT_QUEUE_CAPACITY: usize = 32;
 const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+/// Default ceiling for a continuous transmit hold before the session forces
+/// PTT off as a safety measure.
+const DEFAULT_MAX_TX_HOLD: Duration = Duration::from_secs(180);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionStatus {
@@ -183,6 +186,12 @@ pub type SessionTicket = oneshot::Receiver<Result<RadioSnapshot, SessionError>>;
 pub struct SessionConfig {
     pub queue_capacity: usize,
     pub refresh_interval: Option<Duration>,
+    /// Maximum continuous transmit hold before the session forces PTT back
+    /// off. This is a safety net for a crashed or stuck client: once the
+    /// ceiling is reached the worker issues `SetPtt(false)` itself. `None`
+    /// disables the watchdog. Defaults to three minutes, the classic
+    /// FCC-style transmission limit.
+    pub max_tx_hold: Option<Duration>,
 }
 
 impl Default for SessionConfig {
@@ -190,6 +199,7 @@ impl Default for SessionConfig {
         Self {
             queue_capacity: DEFAULT_QUEUE_CAPACITY,
             refresh_interval: Some(DEFAULT_REFRESH_INTERVAL),
+            max_tx_hold: Some(DEFAULT_MAX_TX_HOLD),
         }
     }
 }
@@ -202,6 +212,9 @@ pub enum SessionEvent {
         operation: SessionOperation,
         outcome: SessionOutcome,
     },
+    /// The safety watchdog forced PTT off after the configured maximum
+    /// continuous transmit hold elapsed.
+    PttWatchdogTripped,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -260,6 +273,9 @@ struct SharedState {
     snapshot: RadioSnapshot,
     closed: bool,
     diagnostics: SessionDiagnostics,
+    /// When the transmitter was last observed or commanded on. `Some` only
+    /// while PTT is believed active; used by the safety watchdog.
+    ptt_on_since: Option<Instant>,
 }
 
 struct Shared {
@@ -267,6 +283,7 @@ struct Shared {
     wake: Condvar,
     events: SessionEventRouter,
     queue_capacity: usize,
+    max_tx_hold: Option<Duration>,
     event_subscription: Mutex<Option<crate::RadioEventSubscription>>,
 }
 
@@ -376,10 +393,12 @@ impl RadioSession {
                 snapshot,
                 closed: false,
                 diagnostics: SessionDiagnostics::default(),
+                ptt_on_since: None,
             }),
             wake: Condvar::new(),
             events: SessionEventRouter::default(),
             queue_capacity: config.queue_capacity,
+            max_tx_hold: config.max_tx_hold,
             event_subscription: Mutex::new(None),
         });
         let weak = Arc::downgrade(&shared);
@@ -448,6 +467,15 @@ impl RadioSession {
             .lock()
             .map(|state| state.diagnostics)
             .unwrap_or_default()
+    }
+
+    /// A protocol-neutral snapshot of the wrapped radio's link health, drawn
+    /// from the backend's transport counters. Combine this with
+    /// `diagnostics()` for a full picture: the session tracks admission and
+    /// outcomes, while link health reflects the wire (latency, timeouts,
+    /// dropped frames).
+    pub fn link_health(&self) -> crate::hal::LinkHealth {
+        self.current_radio().link_health()
     }
 
     async fn wait(
@@ -739,6 +767,7 @@ fn worker_loop(
     loop {
         let Some(shared) = weak.upgrade() else { break };
         ingest_events(&shared);
+        enforce_ptt_watchdog(&shared, &radio);
         let operation = {
             let mut state = match shared.state.lock() {
                 Ok(state) => state,
@@ -803,6 +832,11 @@ fn worker_loop(
                     state.snapshot.observed = observed;
                 } else {
                     update_observed(&mut state.snapshot.observed, &queued.operation);
+                }
+                // Track the start of a transmit hold so the safety watchdog
+                // can force PTT off if the client never will.
+                if let SessionOperation::SetPtt(enabled) = queued.operation {
+                    state.ptt_on_since = if enabled { Some(Instant::now()) } else { None };
                 }
                 state.snapshot.status = SessionStatus::Ready;
                 state.snapshot.synchronized = true;
@@ -870,6 +904,49 @@ fn transition_status(shared: &Shared, status: SessionStatus) {
     }
 }
 
+/// Force PTT off when the transmitter has been held longer than the
+/// configured safety ceiling. This is a defensive net for a crashed or stuck
+/// client: it issues `SetPtt(false)` directly rather than queueing it, so a
+/// full or stalled command queue cannot delay the shutoff.
+fn enforce_ptt_watchdog(shared: &Shared, radio: &Arc<Mutex<Arc<dyn Radio>>>) {
+    let Some(max_hold) = shared.max_tx_hold else {
+        return;
+    };
+    let exceeded = shared
+        .state
+        .lock()
+        .ok()
+        .and_then(|state| state.ptt_on_since)
+        .is_some_and(|since| since.elapsed() >= max_hold);
+    if !exceeded {
+        return;
+    }
+    let result = radio
+        .lock()
+        .map(|radio| futures::executor::block_on(radio.set_ptt(false)))
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("radio session backend lock poisoned")));
+    if let Ok(mut state) = shared.state.lock() {
+        state.ptt_on_since = None;
+        state.snapshot.observed.ptt = Some(false);
+        state.snapshot.sequence = state.snapshot.sequence.wrapping_add(1);
+        match result {
+            Ok(()) => {
+                shared.events.publish(SessionEvent::PttWatchdogTripped);
+                shared
+                    .events
+                    .publish(SessionEvent::SnapshotChanged(state.snapshot.clone()));
+            }
+            Err(error) => {
+                state.snapshot.last_error =
+                    Some(format!("PTT watchdog failed to drop the transmitter: {error}"));
+                shared
+                    .events
+                    .publish(SessionEvent::SnapshotChanged(state.snapshot.clone()));
+            }
+        }
+    }
+}
+
 fn ingest_events(shared: &Shared) {
     let events = shared
         .event_subscription
@@ -891,7 +968,10 @@ fn ingest_events(shared: &Shared) {
                     state.snapshot.observed.frequency_hz = Some(frequency_hz)
                 }
                 RadioEvent::ModeChanged { mode } => state.snapshot.observed.mode = Some(mode),
-                RadioEvent::PttChanged { enabled } => state.snapshot.observed.ptt = Some(enabled),
+                RadioEvent::PttChanged { enabled } => {
+                    state.snapshot.observed.ptt = Some(enabled);
+                    state.ptt_on_since = if enabled { Some(Instant::now()) } else { None };
+                }
                 RadioEvent::ControlChanged { id, value } => {
                     set_control(&mut state.snapshot.observed, id, value)
                 }
@@ -1027,6 +1107,7 @@ mod tests {
             SessionConfig {
                 queue_capacity: 4,
                 refresh_interval: None,
+                max_tx_hold: None,
             },
         )
         .unwrap();
@@ -1049,6 +1130,7 @@ mod tests {
             SessionConfig {
                 queue_capacity: 1,
                 refresh_interval: None,
+                max_tx_hold: None,
             },
         )
         .unwrap();
@@ -1067,6 +1149,7 @@ mod tests {
             SessionConfig {
                 queue_capacity: 4,
                 refresh_interval: None,
+                max_tx_hold: None,
             },
         )
         .unwrap();
@@ -1090,6 +1173,7 @@ mod tests {
             SessionConfig {
                 queue_capacity: 4,
                 refresh_interval: None,
+                max_tx_hold: None,
             },
         )
         .unwrap();
@@ -1110,6 +1194,64 @@ mod tests {
     }
 
     #[test]
+    fn ptt_watchdog_forces_transmitter_off_after_the_hold_ceiling() {
+        let radio = fake();
+        let session = RadioSession::from_radio(
+            Arc::clone(&radio),
+            SessionConfig {
+                queue_capacity: 4,
+                // Refresh must fire for the worker loop to keep cycling and
+                // run the watchdog check between operations.
+                refresh_interval: Some(Duration::from_millis(10)),
+                max_tx_hold: Some(Duration::from_millis(50)),
+            },
+        )
+        .unwrap();
+        // Key the transmitter on through the normal admission path.
+        futures::executor::block_on(session.set_ptt(true).unwrap())
+            .unwrap()
+            .unwrap();
+        assert!(session.snapshot().observed.ptt == Some(true));
+
+        // With no client action, the watchdog must drop PTT once the ceiling
+        // elapses, even though nothing else is queued.
+        let mut dropped = false;
+        for _ in 0..1000 {
+            if session.snapshot().observed.ptt == Some(false) {
+                dropped = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(dropped, "watchdog did not force PTT off");
+    }
+
+    #[test]
+    fn ptt_watchdog_leaves_short_transmissions_alone() {
+        let radio = fake();
+        let session = RadioSession::from_radio(
+            Arc::clone(&radio),
+            SessionConfig {
+                queue_capacity: 4,
+                refresh_interval: Some(Duration::from_millis(10)),
+                // Generous ceiling: a brief keyed period must not trip it.
+                max_tx_hold: Some(Duration::from_secs(60)),
+            },
+        )
+        .unwrap();
+        futures::executor::block_on(session.set_ptt(true).unwrap())
+            .unwrap()
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(80));
+        assert_eq!(session.snapshot().observed.ptt, Some(true));
+        // A clean PTT-off still works and clears the hold timestamp.
+        futures::executor::block_on(session.set_ptt(false).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(session.snapshot().observed.ptt, Some(false));
+    }
+
+    #[test]
     fn one_thousand_state_writes_collapse_to_the_latest_intent() {
         let radio = fake();
         let session = RadioSession::from_radio(
@@ -1117,6 +1259,7 @@ mod tests {
             SessionConfig {
                 queue_capacity: 4,
                 refresh_interval: None,
+                max_tx_hold: None,
             },
         )
         .unwrap();
@@ -1144,6 +1287,7 @@ mod tests {
             SessionConfig {
                 queue_capacity: 4,
                 refresh_interval: None,
+                max_tx_hold: None,
             },
         )
         .unwrap();
@@ -1169,6 +1313,7 @@ mod tests {
             SessionConfig {
                 queue_capacity: 4,
                 refresh_interval: None,
+                max_tx_hold: None,
             },
         )
         .unwrap();
@@ -1188,6 +1333,7 @@ mod tests {
             SessionConfig {
                 queue_capacity: 4,
                 refresh_interval: None,
+                max_tx_hold: None,
             },
         )
         .unwrap();
@@ -1216,6 +1362,7 @@ mod tests {
             SessionConfig {
                 queue_capacity: 4,
                 refresh_interval: None,
+                max_tx_hold: None,
             },
         )
         .unwrap();

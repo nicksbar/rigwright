@@ -7,6 +7,7 @@ pub use crate::hal_types::{
 };
 use anyhow::Result;
 use async_trait::async_trait;
+use std::time::Duration;
 
 /// Operations a backend can actually perform.
 ///
@@ -24,6 +25,42 @@ pub struct RadioCapabilities {
     pub can_get_power: bool,
     pub can_set_power: bool,
     pub can_raw_protocol: bool,
+}
+
+/// A protocol-neutral snapshot of link health, derived from the transport
+/// counters each driver already maintains. All fields are optional so drivers
+/// surface only what they measure; `None` means "not instrumented", never
+/// "zero". Applications can render this directly ("radio link degraded: 3
+/// consecutive timeouts") without knowing the vendor protocol.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct LinkHealth {
+    /// Commands issued to the radio.
+    pub commands_started: Option<u64>,
+    /// Commands that received a matched response.
+    pub responses_matched: Option<u64>,
+    /// Commands that timed out waiting for a response.
+    pub response_timeouts: Option<u64>,
+    /// Current run of consecutive timeouts (reset on any success).
+    pub consecutive_timeouts: Option<u32>,
+    /// Mean response latency across matched responses.
+    pub avg_response: Option<Duration>,
+    /// Framing/parse-level events dropped from the retain buffer.
+    pub frames_dropped: Option<u64>,
+}
+
+impl LinkHealth {
+    /// True when the link shows signs of trouble worth surfacing to the
+    /// operator: any consecutive-timeout backlog or a timeout on a nontrivial
+    /// share of commands.
+    pub fn is_degraded(&self) -> bool {
+        if self.consecutive_timeouts.unwrap_or(0) > 0 {
+            return true;
+        }
+        match (self.response_timeouts, self.commands_started) {
+            (Some(timeouts), Some(started)) if started >= 8 => timeouts * 4 >= started,
+            _ => false,
+        }
+    }
 }
 
 #[async_trait]
@@ -65,6 +102,12 @@ pub trait Radio: Send + Sync {
             mode,
             ptt,
         })
+    }
+    /// A point-in-time snapshot of link health derived from the driver's
+    /// transport counters. The default returns an empty (uninstrumented)
+    /// snapshot; serial backends override it with their measured counters.
+    fn link_health(&self) -> LinkHealth {
+        LinkHealth::default()
     }
     async fn get_power(&self) -> Result<bool> {
         anyhow::bail!("reading radio power state is not supported by this radio")
@@ -377,6 +420,53 @@ mod tests {
             .is_none());
         assert!(!radio.capabilities().can_get_frequency);
         let _ = NullRadio::default();
+    }
+
+    #[test]
+    fn link_health_flags_consecutive_timeouts_as_degraded() {
+        let healthy = LinkHealth::default();
+        assert!(!healthy.is_degraded());
+
+        let backlog = LinkHealth {
+            consecutive_timeouts: Some(2),
+            ..LinkHealth::default()
+        };
+        assert!(backlog.is_degraded());
+    }
+
+    #[test]
+    fn link_health_flags_a_high_timeout_rate_once_traffic_is_meaningful() {
+        // Below the minimum traffic floor, a couple of timeouts on a fresh
+        // link should not raise a degradation alarm.
+        let quiet = LinkHealth {
+            commands_started: Some(4),
+            response_timeouts: Some(2),
+            ..LinkHealth::default()
+        };
+        assert!(!quiet.is_degraded());
+
+        // Once enough commands have run, a >=25% timeout rate is degraded.
+        let lossy = LinkHealth {
+            commands_started: Some(20),
+            response_timeouts: Some(5),
+            ..LinkHealth::default()
+        };
+        assert!(lossy.is_degraded());
+
+        let solid = LinkHealth {
+            commands_started: Some(20),
+            response_timeouts: Some(1),
+            ..LinkHealth::default()
+        };
+        assert!(!solid.is_degraded());
+    }
+
+    #[test]
+    fn default_link_health_is_uninstrumented() {
+        let radio = MinimalRadio;
+        let health = radio.link_health();
+        assert_eq!(health, LinkHealth::default());
+        assert!(!health.is_degraded());
     }
 
     #[test]

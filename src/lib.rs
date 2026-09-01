@@ -24,7 +24,7 @@ pub use elecraft::profile::ElecraftModel;
 pub use elecraft::transport::{ElecraftSerialPolicy, ElecraftTransportMetrics};
 pub use elecraft::ElecraftRadio;
 pub use events::{RadioEvent, RadioEventRouter, RadioEventSubscription, SubscriptionId};
-pub use hal::{NullRadio, Radio, RadioCapabilities, RadioStatus};
+pub use hal::{LinkHealth, NullRadio, Radio, RadioCapabilities, RadioStatus};
 pub use hal_types::{
     denormalize_meter_level, normalize_meter_level, BaseMode, ControlId, ControlValue, CoreState,
     DtmfSequence, MemoryChannel, MeterId, Mode, OperatingMode, RepeaterSettings, RepeaterShift,

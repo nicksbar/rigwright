@@ -1977,6 +1977,23 @@ impl Radio for IcomCiVRadio {
         self.get_ptt_blocking()
     }
 
+    fn link_health(&self) -> crate::hal::LinkHealth {
+        let metrics = self.transport_metrics();
+        let avg_response = if metrics.responses_matched > 0 {
+            Some(metrics.total_response_time / metrics.responses_matched as u32)
+        } else {
+            None
+        };
+        crate::hal::LinkHealth {
+            commands_started: Some(metrics.commands_started),
+            responses_matched: Some(metrics.responses_matched),
+            response_timeouts: Some(metrics.response_timeouts),
+            consecutive_timeouts: Some(metrics.consecutive_timeouts),
+            avg_response,
+            frames_dropped: Some(metrics.frames_dropped),
+        }
+    }
+
     async fn get_power(&self) -> Result<bool> {
         anyhow::bail!("Icom CI-V power state is write-only")
     }
