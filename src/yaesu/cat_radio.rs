@@ -461,14 +461,27 @@ impl YaesuCatRadio {
         })
     }
 
-    /// FTDX10 exposes its CAT RTS setting as EX 03-03-10. Read it once over
-    /// CAT and adapt the serial adapter before issuing ordinary queries.
-    /// Other Yaesu profiles do not share this menu address and retain their
-    /// configured/default transport behavior.
+    /// Some models expose a CAT RTS (hardware flow control) setting through
+    /// their `EX` menu. Read it once over CAT and adapt the serial adapter
+    /// before issuing ordinary queries. The `EX` selector and its reply
+    /// layout are model-specific (hierarchical `030310` on FTDX10/FTDX101,
+    /// flat menu `033` on FT-991A), so the probe is driven by the profile's
+    /// `cat_rts_menu`. Models with no CAT RTS menu (FT-710) skip the probe
+    /// and retain their configured/default transport behavior.
     fn ensure_cat_rts_detected(&self, command: &str) -> Result<()> {
-        if command.eq_ignore_ascii_case("EX") || self.model != Some(YaesuCatModel::Ftdx10) {
+        if command.eq_ignore_ascii_case("EX") {
             return Ok(());
         }
+        let Some(profile) = self.profile() else {
+            return Ok(());
+        };
+        let Some(menu) = profile.cat_rts_menu else {
+            return Ok(());
+        };
+        // The probe reply is the echoed `EX` selector plus a single value
+        // digit; the selector length is model-specific (6 for the
+        // hierarchical `030310`, 3 for the flat FT-991A `033`).
+        let probe_payload_len = menu.len() + 1;
         if self
             .cat_rts_detected
             .lock()
@@ -478,13 +491,13 @@ impl YaesuCatRadio {
             return Ok(());
         }
 
-        let response = match self.query("EX", Some("030310"), 7) {
+        let response = match self.query("EX", Some(menu), probe_payload_len) {
             Ok(response) => response,
             Err(first_error) => {
                 // If CAT RTS is already enabled on the radio, a no-flow
                 // control probe may never receive a response. Reopen with
-                // RTS/CTS and retry the menu read. Some FTDX10 firmware and
-                // USB bridge combinations do not answer this EX menu query,
+                // RTS/CTS and retry the menu read. Some firmware and USB
+                // bridge combinations do not answer this EX menu query,
                 // even though ordinary CAT commands still work. In that
                 // case the probe is advisory: keep the bounded retry, cache
                 // detection as unavailable, and let the requested command
@@ -492,7 +505,7 @@ impl YaesuCatRadio {
                 self.enable_hardware_flow_control().with_context(|| {
                     format!("failed to apply Yaesu CAT RTS/CTS after initial probe: {first_error}")
                 })?;
-                match self.query("EX", Some("030310"), 7) {
+                match self.query("EX", Some(menu), probe_payload_len) {
                     Ok(response) => response,
                     Err(_) => {
                         *self
@@ -506,10 +519,10 @@ impl YaesuCatRadio {
         };
         let payload = parse_payload(&response, "EX")?;
         anyhow::ensure!(
-            payload.starts_with("030310") && payload.len() == 7,
+            payload.starts_with(menu) && payload.len() == probe_payload_len,
             "unexpected Yaesu CAT RTS response payload: {payload}"
         );
-        let enabled = match payload.as_bytes()[6] {
+        let enabled = match payload.as_bytes()[menu.len()] {
             b'0' => false,
             b'1' => true,
             value => bail!("unexpected Yaesu CAT RTS value: {}", char::from(value)),
@@ -1650,6 +1663,104 @@ mod tests {
             14_250_000
         );
         assert_eq!(&*output.lock().unwrap(), b"EX030310;EX030310;VS;FB;");
+    }
+
+    #[test]
+    fn ft991a_rts_probe_uses_the_flat_ex033_selector_and_applies_flow_control() {
+        // The FT-991A documents CAT RTS as flat menu 033 (answer `EX033<v>;`),
+        // not the hierarchical `030310` used by the FTDX10/FTDX101 family.
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let flow_control = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ft991A),
+            38_400,
+            FlowControlTransport {
+                scripted: ScriptedTransport {
+                    input: b"EX0331;VS0;FA014250000;".to_vec(),
+                    output: Arc::clone(&output),
+                },
+                flow_control: Arc::clone(&flow_control),
+            },
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        // The probe issues the model-specific `EX033;`, then enables RTS/CTS
+        // because the radio reports CAT RTS enabled.
+        assert_eq!(&*output.lock().unwrap(), b"EX033;VS;FA;");
+        assert_eq!(&*flow_control.lock().unwrap(), &[true]);
+    }
+
+    #[test]
+    fn ft991a_rts_probe_observes_disabled_setting_without_enabling_flow_control() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let flow_control = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ft991A),
+            38_400,
+            FlowControlTransport {
+                scripted: ScriptedTransport {
+                    input: b"EX0330;VS0;FA014250000;".to_vec(),
+                    output: Arc::clone(&output),
+                },
+                flow_control: Arc::clone(&flow_control),
+            },
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        assert_eq!(&*output.lock().unwrap(), b"EX033;VS;FA;");
+        assert!(flow_control.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn ftdx101_rts_probe_uses_the_hierarchical_ex030310_selector() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let flow_control = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx101D),
+            38_400,
+            FlowControlTransport {
+                scripted: ScriptedTransport {
+                    input: b"EX0303101;VS0;FA014250000;".to_vec(),
+                    output: Arc::clone(&output),
+                },
+                flow_control: Arc::clone(&flow_control),
+            },
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        assert_eq!(&*output.lock().unwrap(), b"EX030310;VS;FA;");
+        assert_eq!(&*flow_control.lock().unwrap(), &[true]);
+    }
+
+    #[test]
+    fn ft710_skips_the_cat_rts_probe_because_the_model_has_no_such_menu() {
+        // The FT-710 documents no CAT RTS menu (RTS on its standard port is a
+        // PTT source via RPTT SELECT), so ordinary queries must not be
+        // preceded by any EX probe.
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ft710),
+            38_400,
+            ScriptedTransport {
+                input: b"VS0;FA014250000;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        assert_eq!(&*output.lock().unwrap(), b"VS;FA;");
     }
 
     #[test]

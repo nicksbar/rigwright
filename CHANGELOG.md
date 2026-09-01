@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.19 — per-model Yaesu CAT RTS probing
+
+- Drive the modern-Yaesu CAT RTS / hardware-flow-control probe from each
+  model profile's own `EX` menu selector instead of an FTDX10-only hardcoded
+  address. Add a `cat_rts_menu` field to `YaesuCatProfile` that records the
+  model's documented CAT RTS `EX` selector and reply layout.
+- Probe CAT RTS on the FT-991A using its flat menu number `033`
+  (`EX033;` → `EX033<v>;`), fixing CAT timeouts when the radio's menu 033
+  CAT RTS is enabled (the factory default) while the host port was opened
+  without RTS/CTS flow control.
+- Extend the probe to the FTDX101D/MP, which share the FTDX10's hierarchical
+  `030310` selector, and skip the probe entirely on the FT-710, whose manual
+  documents no CAT RTS menu (its standard-port RTS is a PTT source via
+  `RPTT SELECT`).
+- Add per-model regression tests asserting each radio's unique `EX` probe
+  request bytes and flow-control behavior.
+
 ## 0.1.18 — Release and CI maintenance
 
 - Restrict release automation to manually pushed `vMAJOR.MINOR.PATCH` tags.

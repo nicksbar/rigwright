@@ -42,6 +42,14 @@ pub struct YaesuCatProfile {
     pub supports_repeater_settings: bool,
     /// The model manual documents `MC`, `MR`, and `MT` memory operations.
     pub supports_memory_channels: bool,
+    /// `EX` menu selector that reads the radio's CAT RTS (hardware flow
+    /// control) setting, when the model documents one. The selector is the
+    /// model's own `EX` menu address, not a shared value: the FTDX10 and
+    /// FTDX101D/MP use the hierarchical `PP II SS` form (CAT RTS = `030310`),
+    /// while the FT-991A uses the flat `PPP` menu number (CAT RTS = menu
+    /// `033`). The FT-710 has no CAT RTS menu at all (its standard-port RTS
+    /// is a PTT source via `RPTT SELECT`), so it leaves this `None`.
+    pub cat_rts_menu: Option<&'static str>,
 }
 
 impl YaesuCatProfile {
@@ -193,6 +201,9 @@ pub const FT710_PROFILE: YaesuCatProfile = YaesuCatProfile {
     supports_split: true,
     supports_repeater_settings: true,
     supports_memory_channels: true,
+    // The FT-710 manual documents no CAT RTS menu; RTS on its standard COM
+    // port is a PTT source configured by `RPTT SELECT`, not CAT flow control.
+    cat_rts_menu: None,
 };
 
 pub const FTDX10_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -207,6 +218,8 @@ pub const FTDX10_PROFILE: YaesuCatProfile = YaesuCatProfile {
     supports_split: true,
     supports_repeater_settings: true,
     supports_memory_channels: true,
+    // FTDX10 CAT RTS is menu 03-03-10, read as hierarchical `EX030310;`.
+    cat_rts_menu: Some("030310"),
 };
 
 pub const FTDX101D_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -221,6 +234,8 @@ pub const FTDX101D_PROFILE: YaesuCatProfile = YaesuCatProfile {
     supports_split: true,
     supports_repeater_settings: true,
     supports_memory_channels: true,
+    // FTDX101D CAT RTS is menu 03-03-10, read as hierarchical `EX030310;`.
+    cat_rts_menu: Some("030310"),
 };
 
 pub const FTDX101MP_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -235,6 +250,8 @@ pub const FTDX101MP_PROFILE: YaesuCatProfile = YaesuCatProfile {
     supports_split: true,
     supports_repeater_settings: true,
     supports_memory_channels: true,
+    // FTDX101MP CAT RTS is menu 03-03-10, read as hierarchical `EX030310;`.
+    cat_rts_menu: Some("030310"),
 };
 
 pub const FT991A_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -249,6 +266,9 @@ pub const FT991A_PROFILE: YaesuCatProfile = YaesuCatProfile {
     supports_split: false,
     supports_repeater_settings: true,
     supports_memory_channels: true,
+    // FT-991A CAT RTS is the flat menu 033, read as `EX033;` (not the
+    // hierarchical `030310` used by the FTDX10/FTDX101 family).
+    cat_rts_menu: Some("033"),
 };
 
 pub fn profile_for_model(model: YaesuCatModel) -> &'static YaesuCatProfile {
@@ -313,6 +333,30 @@ mod tests {
             let profile = profile_for_model(model);
             assert!(profile.supports_repeater_settings);
             assert!(profile.supports_memory_channels);
+        }
+    }
+
+    #[test]
+    fn cat_rts_menu_selectors_are_unique_to_each_models_ex_layout() {
+        // FT-710 documents no CAT RTS menu; its standard-port RTS is PTT.
+        assert_eq!(profile_for_model(YaesuCatModel::Ft710).cat_rts_menu, None);
+        // FT-991A uses the flat 3-digit menu number for CAT RTS (menu 033).
+        assert_eq!(
+            profile_for_model(YaesuCatModel::Ft991A).cat_rts_menu,
+            Some("033")
+        );
+        // FTDX10 and FTDX101D/MP share the hierarchical 03-03-10 selector.
+        for model in [
+            YaesuCatModel::Ftdx10,
+            YaesuCatModel::Ftdx101D,
+            YaesuCatModel::Ftdx101Mp,
+        ] {
+            assert_eq!(
+                profile_for_model(model).cat_rts_menu,
+                Some("030310"),
+                "{} uses the hierarchical EX selector",
+                model.model_name()
+            );
         }
     }
 }
