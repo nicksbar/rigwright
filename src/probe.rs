@@ -115,3 +115,36 @@ fn json_escape(value: &str) -> String {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ProbeLog;
+    use std::fs;
+    use std::path::PathBuf;
+
+    #[test]
+    fn probe_log_records_results_metrics_and_escaped_json() {
+        let path = unique_temp_path();
+        let mut log = ProbeLog::new("probe\"tool", "IC-7300", "/dev/ttyUSB0", 115_200);
+        log.pass("frequency", "7 MHz\nconfirmed");
+        log.fail("mode", "unexpected \\ response");
+        log.skip("transmit", "TX intentionally avoided");
+        log.set_metrics(("writes", 3));
+
+        log.write(&path).expect("probe log should be writable");
+        let document = fs::read_to_string(&path).expect("probe log should be readable");
+        fs::remove_file(&path).expect("test probe log should be removable");
+
+        assert!(document.contains("\\\"tool"));
+        assert!(document.contains("frequency"));
+        assert!(document.contains("7 MHz\\nconfirmed"));
+        assert!(document.contains("unexpected \\\\ response"));
+        assert!(document.contains("transport_metrics"));
+        assert!(document.contains("writes"));
+        assert!(document.contains("\"status\":\"skip\""));
+    }
+
+    fn unique_temp_path() -> PathBuf {
+        std::env::temp_dir().join(format!("rigwright-probe-test-{}.json", std::process::id()))
+    }
+}
