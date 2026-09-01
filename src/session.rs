@@ -942,8 +942,9 @@ fn enforce_ptt_watchdog(shared: &Shared, radio: &Arc<Mutex<Arc<dyn Radio>>>) {
                     .publish(SessionEvent::SnapshotChanged(state.snapshot.clone()));
             }
             Err(error) => {
-                state.snapshot.last_error =
-                    Some(format!("PTT watchdog failed to drop the transmitter: {error}"));
+                state.snapshot.last_error = Some(format!(
+                    "PTT watchdog failed to drop the transmitter: {error}"
+                ));
                 shared
                     .events
                     .publish(SessionEvent::SnapshotChanged(state.snapshot.clone()));

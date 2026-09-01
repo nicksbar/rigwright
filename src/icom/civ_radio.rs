@@ -123,10 +123,7 @@ impl ScopeStreamHealth {
     /// True when the scope has produced sweeps before but none recently,
     /// indicating a stalled waterfall the UI may want to recover.
     pub fn is_stalled(&self, max_age: Duration) -> bool {
-        self.completed_sweeps > 0
-            && self
-                .last_sweep_age
-                .is_some_and(|age| age > max_age)
+        self.completed_sweeps > 0 && self.last_sweep_age.is_some_and(|age| age > max_age)
     }
 }
 
@@ -643,8 +640,7 @@ impl IcomCiVRadio {
     /// seen within `freshness`), so core state can come from events rather
     /// than fresh polls.
     pub fn event_stream_is_live(&self, freshness: Duration) -> bool {
-        self.event_stream_age()
-            .is_some_and(|age| age <= freshness)
+        self.event_stream_age().is_some_and(|age| age <= freshness)
     }
 
     /// A point-in-time snapshot of scope/waterfall stream health. Use
