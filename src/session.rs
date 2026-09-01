@@ -913,15 +913,16 @@ fn execute(
 ) -> anyhow::Result<Option<RadioState>> {
     match operation {
         SessionOperation::Refresh => {
+            // Prefer the backend's batched core-state read (e.g. the Yaesu
+            // `IF;` frame) so a refresh costs the fewest round trips the
+            // protocol allows; the default falls back to individual reads.
+            let core = futures::executor::block_on(radio.read_core_state())?;
             let observed = RadioState {
-                frequency_hz: futures::executor::block_on(radio.get_frequency_hz()).ok(),
-                mode: futures::executor::block_on(radio.get_mode()).ok(),
-                ptt: futures::executor::block_on(radio.get_ptt()).ok(),
+                frequency_hz: core.frequency_hz,
+                mode: core.mode,
+                ptt: core.ptt,
                 ..RadioState::default()
             };
-            if observed.frequency_hz.is_none() && observed.mode.is_none() {
-                anyhow::bail!("radio refresh returned no readable core state")
-            }
             Ok(Some(observed))
         }
         SessionOperation::SetFrequency(value) => {

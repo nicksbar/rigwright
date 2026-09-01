@@ -2,8 +2,8 @@
 
 pub use crate::events::RadioEventRouter;
 pub use crate::hal_types::{
-    BaseMode, ControlId, ControlValue, DtmfSequence, MemoryChannel, MeterId, Mode, OperatingMode,
-    RepeaterSettings, RepeaterShift, ToneSettings, TunerStatus,
+    BaseMode, ControlId, ControlValue, CoreState, DtmfSequence, MemoryChannel, MeterId, Mode,
+    OperatingMode, RepeaterSettings, RepeaterShift, ToneSettings, TunerStatus,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -47,6 +47,24 @@ pub trait Radio: Send + Sync {
     async fn set_ptt(&self, enabled: bool) -> Result<()>;
     async fn get_ptt(&self) -> Result<bool> {
         anyhow::bail!("reading PTT state is not supported by this radio")
+    }
+    /// Read the radio's core operating state (frequency, mode, PTT) in as few
+    /// protocol round trips as the backend allows. The default issues the
+    /// individual reads; backends with a combined status frame (such as the
+    /// Yaesu `IF;` response) override this to collapse the refresh round
+    /// trips. Fields that cannot be read are left `None`.
+    async fn read_core_state(&self) -> Result<CoreState> {
+        let frequency_hz = self.get_frequency_hz().await.ok();
+        let mode = self.get_mode().await.ok();
+        let ptt = self.get_ptt().await.ok();
+        if frequency_hz.is_none() && mode.is_none() && ptt.is_none() {
+            anyhow::bail!("radio refresh returned no readable core state")
+        }
+        Ok(CoreState {
+            frequency_hz,
+            mode,
+            ptt,
+        })
     }
     async fn get_power(&self) -> Result<bool> {
         anyhow::bail!("reading radio power state is not supported by this radio")

@@ -16,8 +16,9 @@ use crate::{
     events::{RadioEvent, RadioEventRouter, RadioEventSubscription},
     hal::{Mode, Radio, RadioCapabilities},
     hal_types::{
-        denormalize_meter_level, normalize_meter_level, ControlId, ControlValue, MemoryChannel,
-        MeterId, RepeaterSettings, RepeaterShift, ToneMode, ToneSettings, TunerStatus,
+        denormalize_meter_level, normalize_meter_level, ControlId, ControlValue, CoreState,
+        MemoryChannel, MeterId, RepeaterSettings, RepeaterShift, ToneMode, ToneSettings,
+        TunerStatus,
     },
     models::YaesuCatModel,
     protocol::ascii_cat,
@@ -286,6 +287,97 @@ impl YaesuCatRadio {
     /// Send a documented read command and return its complete CAT frame.
     pub fn query_raw(&self, command: &str, parameters: Option<&str>) -> Result<Vec<u8>> {
         self.query(command, parameters, 0)
+    }
+
+    /// Read the radio's core operating state in as few round trips as the
+    /// protocol allows. Modern Yaesu models answer `IF;` with the VFO-A
+    /// frequency and the operating mode in a single frame, so a full core
+    /// refresh costs `IF;` + `TX;` instead of separate `FA;`/`MD;`/`TX;`
+    /// reads. Falls back to the individual reads when `IF;` is unavailable
+    /// or malformed, so callers always get a best-effort snapshot.
+    pub fn read_core_state(&self) -> Result<CoreState> {
+        let mut state = CoreState::default();
+        match self.read_if_status() {
+            Ok(Some((frequency_hz, mode))) => {
+                state.frequency_hz = Some(frequency_hz);
+                state.mode = Some(mode);
+            }
+            Ok(None) | Err(_) => {
+                // `IF;` is unavailable or returned an unexpected shape; fall
+                // back to the per-value reads so a partial answer never
+                // leaves the caller with nothing.
+                state.frequency_hz = self.frequency_hz_via_fa().ok();
+                state.mode = self.mode_via_md().ok();
+            }
+        }
+        state.ptt = self.ptt_via_tx().ok();
+        if state.frequency_hz.is_none() && state.mode.is_none() && state.ptt.is_none() {
+            bail!("Yaesu core state read returned no usable values");
+        }
+        Ok(state)
+    }
+
+    /// Parse the `IF;` information frame into (frequency_hz, mode). The frame
+    /// payload is 25 characters: P1 memory (3), P2 VFO-A frequency (9), P3
+    /// clarifier (5), P4 (1), P5 (1), P6 mode (1), P7 (1), P8 (1), P9 fixed
+    /// `00` (2), P10 (1). Returns `Ok(None)` when the radio does not answer
+    /// with a recognizable `IF` frame so the caller can fall back.
+    fn read_if_status(&self) -> Result<Option<(u64, Mode)>> {
+        let response = match self.query("IF", None, 25) {
+            Ok(response) => response,
+            Err(_) => return Ok(None),
+        };
+        let payload = match parse_payload(&response, "IF") {
+            Ok(payload) => payload,
+            Err(_) => return Ok(None),
+        };
+        if payload.len() != 25 {
+            return Ok(None);
+        }
+        let frequency_hz: u64 = match payload[3..12].parse() {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        };
+        let mode_code = payload.chars().nth(19).expect("length checked above");
+        let mode = match self.profile() {
+            Some(profile) => profile.decode_mode(mode_code).ok(),
+            None => decode_common_mode(mode_code).ok(),
+        };
+        let Some(mode) = mode else {
+            return Ok(None);
+        };
+        Ok(Some((frequency_hz, mode)))
+    }
+
+    fn frequency_hz_via_fa(&self) -> Result<u64> {
+        let command = active_vfo_command(self.active_vfo_selector()?);
+        parse_payload(&self.query(command, None, 9)?, command)?
+            .parse()
+            .context("invalid Yaesu FA response")
+    }
+
+    fn mode_via_md(&self) -> Result<Mode> {
+        let selector = self.active_vfo_selector()?;
+        let selector_text = selector.to_string();
+        let response = self.query("MD", Some(&selector_text), 2)?;
+        let payload = parse_payload(&response, "MD")?;
+        let mut chars = payload.chars();
+        if chars.next() != Some(char::from(b'0' + selector)) {
+            bail!("unexpected Yaesu MD receiver selector: {payload}");
+        }
+        let code = chars.next().context("missing Yaesu MD mode code")?;
+        match self.profile() {
+            Some(profile) => profile.decode_mode(code),
+            None => decode_common_mode(code),
+        }
+    }
+
+    fn ptt_via_tx(&self) -> Result<bool> {
+        match parse_payload(&self.query("TX", None, 1)?, "TX")? {
+            "0" => Ok(false),
+            "1" | "2" => Ok(true),
+            value => bail!("invalid Yaesu TX response: {value}"),
+        }
     }
 
     pub fn get_power_watts(&self) -> Result<u16> {
@@ -760,10 +852,7 @@ impl Radio for YaesuCatRadio {
     }
 
     async fn get_frequency_hz(&self) -> Result<u64> {
-        let command = active_vfo_command(self.active_vfo_selector()?);
-        parse_payload(&self.query(command, None, 9)?, command)?
-            .parse()
-            .context("invalid Yaesu FA response")
+        self.frequency_hz_via_fa()
     }
 
     async fn set_frequency_hz(&self, hz: u64) -> Result<()> {
@@ -785,19 +874,7 @@ impl Radio for YaesuCatRadio {
     async fn get_mode(&self) -> Result<Mode> {
         // Modern Yaesu uses the selected VFO selector in MD reads and writes:
         // MD0; / MD1; select the mode for VFO-A / VFO-B respectively.
-        let selector = self.active_vfo_selector()?;
-        let selector_text = selector.to_string();
-        let response = self.query("MD", Some(&selector_text), 2)?;
-        let payload = parse_payload(&response, "MD")?;
-        let mut chars = payload.chars();
-        if chars.next() != Some(char::from(b'0' + selector)) {
-            bail!("unexpected Yaesu MD receiver selector: {payload}");
-        }
-        let code = chars.next().context("missing Yaesu MD mode code")?;
-        match self.profile() {
-            Some(profile) => profile.decode_mode(code),
-            None => decode_common_mode(code),
-        }
+        self.mode_via_md()
     }
 
     async fn set_mode(&self, mode: Mode) -> Result<()> {
@@ -814,11 +891,13 @@ impl Radio for YaesuCatRadio {
     }
 
     async fn get_ptt(&self) -> Result<bool> {
-        match parse_payload(&self.query("TX", None, 1)?, "TX")? {
-            "0" => Ok(false),
-            "1" | "2" => Ok(true),
-            value => bail!("invalid Yaesu TX response: {value}"),
-        }
+        self.ptt_via_tx()
+    }
+
+    async fn read_core_state(&self) -> Result<CoreState> {
+        // Modern Yaesu collapses frequency+mode into the `IF;` frame, so a
+        // full core refresh costs `IF;` + `TX;` instead of three round trips.
+        YaesuCatRadio::read_core_state(self)
     }
 
     async fn get_power(&self) -> Result<bool> {
@@ -1761,6 +1840,60 @@ mod tests {
             14_250_000
         );
         assert_eq!(&*output.lock().unwrap(), b"VS;FA;");
+    }
+
+    #[test]
+    fn core_state_read_collapses_frequency_and_mode_into_one_if_frame() {
+        // `IF;` returns VFO-A frequency and mode in one frame; PTT comes from
+        // `TX;`. The whole core refresh costs two round trips instead of
+        // three, and issues no `FA;`/`MD;` reads at all. Payload layout:
+        // mem(3)=000, freq(9)=014250000, clar(5)=+0000, P4=0, P5=0, mode=C
+        // (DATA-USB), P7=0, P8=0, P9=00, P10=0.
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ft991A),
+            38_400,
+            ScriptedTransport {
+                input: b"EX0330;IF000014250000+000000C00000;TX0;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        );
+
+        let state = YaesuCatRadio::read_core_state(&radio).unwrap();
+        assert_eq!(state.frequency_hz, Some(14_250_000));
+        assert_eq!(state.mode, Some(Mode::Data));
+        assert_eq!(state.ptt, Some(false));
+        assert_eq!(&*output.lock().unwrap(), b"EX033;IF;TX;");
+    }
+
+    #[test]
+    fn core_state_read_falls_back_to_individual_reads_when_if_is_unanswered() {
+        // When `IF;` produces no usable frame, the reader falls back to the
+        // individual FA/MD/TX reads so a partial answer never yields nothing.
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            UnansweredRtsProbeTransport {
+                input: Vec::new(),
+                output: Arc::clone(&output),
+            },
+        );
+
+        let state = YaesuCatRadio::read_core_state(&radio).unwrap();
+        assert_eq!(state.frequency_hz, Some(14_250_000));
+        // The fallback path drives the individual reads after `IF;` fails.
+        // This scripted radio sits on VFO-B (`VS1`), so the frequency read is
+        // `FB;` rather than `FA;`, followed by the mode read `MD1;`.
+        let written = output.lock().unwrap().clone();
+        assert!(
+            written.windows(3).any(|w| w == b"FB;"),
+            "expected FB frequency read: {written:?}"
+        );
+        assert!(
+            written.windows(4).any(|w| w == b"MD1;"),
+            "expected MD mode read: {written:?}"
+        );
     }
 
     #[test]
