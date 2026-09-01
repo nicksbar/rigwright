@@ -1,6 +1,6 @@
 //! Declarative profiles for classic five-byte Yaesu CAT radios.
 
-use crate::{models::YaesuLegacyModel, protocol::yaesu_legacy_cat::LegacyMode};
+use crate::{models::YaesuLegacyModel, protocol::yaesu_legacy_cat::LegacyMode, ControlId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct YaesuLegacyProfile {
@@ -12,6 +12,9 @@ pub struct YaesuLegacyProfile {
     pub baud_rates: &'static [u32],
     /// Modes accepted by the documented `07` set command.
     pub writable_modes: &'static [LegacyMode],
+    pub controls: &'static [ControlId],
+    pub readable_controls: &'static [ControlId],
+    pub writable_controls: &'static [ControlId],
     /// FT-817ND/FT-818 document radio power commands; these remain deliberately
     /// outside the protocol-neutral HAL because remote power-off is hazardous.
     pub documents_power_commands: bool,
@@ -26,6 +29,18 @@ impl YaesuLegacyProfile {
 
     pub fn supports_mode(self, mode: LegacyMode) -> bool {
         self.writable_modes.contains(&mode)
+    }
+
+    pub fn supports_control(self, id: ControlId) -> bool {
+        self.controls.contains(&id)
+    }
+
+    pub fn supports_control_read(self, id: ControlId) -> bool {
+        self.readable_controls.contains(&id)
+    }
+
+    pub fn supports_control_write(self, id: ControlId) -> bool {
+        self.writable_controls.contains(&id)
     }
 }
 
@@ -51,6 +66,9 @@ const MOBILE_MODES: &[LegacyMode] = &[
     LegacyMode::Digital,
     LegacyMode::Packet,
 ];
+const CONTROLS: &[ControlId] = &[ControlId::Split, ControlId::Rit];
+const READABLE_CONTROLS: &[ControlId] = &[ControlId::Split];
+const WRITABLE_CONTROLS: &[ControlId] = &[ControlId::Split, ControlId::Rit];
 
 const FT817_RANGES: &[(u64, u64)] = &[
     (100_000, 30_000_000),
@@ -75,6 +93,9 @@ pub const FT817ND_PROFILE: YaesuLegacyProfile = YaesuLegacyProfile {
     frequency_ranges: FT817_RANGES,
     baud_rates: BAUD_RATES,
     writable_modes: BASE_MODES,
+    controls: CONTROLS,
+    readable_controls: READABLE_CONTROLS,
+    writable_controls: WRITABLE_CONTROLS,
     documents_power_commands: true,
 };
 
@@ -83,6 +104,9 @@ pub const FT818_PROFILE: YaesuLegacyProfile = YaesuLegacyProfile {
     frequency_ranges: FT818_RANGES,
     baud_rates: BAUD_RATES,
     writable_modes: BASE_MODES,
+    controls: CONTROLS,
+    readable_controls: READABLE_CONTROLS,
+    writable_controls: WRITABLE_CONTROLS,
     documents_power_commands: true,
 };
 
@@ -91,6 +115,9 @@ pub const FT857D_PROFILE: YaesuLegacyProfile = YaesuLegacyProfile {
     frequency_ranges: MOBILE_RANGES,
     baud_rates: BAUD_RATES,
     writable_modes: MOBILE_MODES,
+    controls: CONTROLS,
+    readable_controls: READABLE_CONTROLS,
+    writable_controls: WRITABLE_CONTROLS,
     documents_power_commands: false,
 };
 
@@ -99,6 +126,9 @@ pub const FT897D_PROFILE: YaesuLegacyProfile = YaesuLegacyProfile {
     frequency_ranges: MOBILE_RANGES,
     baud_rates: BAUD_RATES,
     writable_modes: MOBILE_MODES,
+    controls: CONTROLS,
+    readable_controls: READABLE_CONTROLS,
+    writable_controls: WRITABLE_CONTROLS,
     documents_power_commands: false,
 };
 
@@ -127,5 +157,16 @@ mod tests {
     fn only_mobile_profiles_write_narrow_fm() {
         assert!(!FT817ND_PROFILE.supports_mode(LegacyMode::FmNarrow));
         assert!(FT857D_PROFILE.supports_mode(LegacyMode::FmNarrow));
+        for profile in [
+            FT817ND_PROFILE,
+            FT818_PROFILE,
+            FT857D_PROFILE,
+            FT897D_PROFILE,
+        ] {
+            assert!(profile.supports_control(ControlId::Split));
+            assert!(profile.supports_control(ControlId::Rit));
+            assert!(profile.supports_control_read(ControlId::Split));
+            assert!(!profile.supports_control_read(ControlId::Rit));
+        }
     }
 }

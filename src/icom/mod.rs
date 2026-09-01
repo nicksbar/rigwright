@@ -2,6 +2,8 @@
 
 pub mod civ_radio;
 pub mod ic705;
+pub mod ic718;
+pub mod ic7200;
 pub mod ic7300;
 pub mod ic7610;
 pub mod ic9700;

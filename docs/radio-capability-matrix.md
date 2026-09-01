@@ -18,6 +18,23 @@ implementation, profile, application, and validation claims:
 are not yet safe to expose generically because command selectors, payloads,
 units, or model behavior differ.
 
+## Issue #20 session execution
+
+| Area | Rigwright status | Client contract |
+|---|---|---|
+| Driver-owned worker/state machine | H | `RadioSession` owns execution and lifecycle status |
+| Bounded queue/backpressure | H | `QueueFull` is returned before admission |
+| Duplicate/coalesced commands | H | Pending same-key intent supersedes older waiters |
+| Safety priority | H | PTT writes are scheduled ahead of ordinary state work |
+| Desired/observed/pending state | H | Every ticket resolves to a `RadioSnapshot` |
+| Polling and driver events | H | Worker refreshes and consumes vendor event routers |
+| Recovery | H | Backend errors produce `Degraded`; later success returns `Ready` |
+| Profile baud choices | H | Model catalog exposes documented choices and fastest selection |
+| Automatic baud probing | M / future transport | Requires transport-level negotiation before CAT traffic |
+
+This is a Rigwright HAL capability and does not imply QSONaut or QSONoid
+integration. No qsonaut-modems or qsonaut-third-party change is required.
+
 ## Root HAL operations
 
 | Operation | HAL surface | Icom CI-V | Modern Yaesu CAT | Classic Yaesu CAT | Kenwood PC control | QSONaut native use |
@@ -40,6 +57,125 @@ check `Radio::capabilities()`, `supports_control()`, and `supports_meter()` as
 appropriate. A generic vendor driver deliberately reports no optional typed
 controls or meters until a concrete model profile is selected.
 
+### Icom CI-V transport hardening
+
+The IC-7200 is now cataloged at framework maturity from the local
+`IC-7200_ENG_CD_0b.pdf` manual. Its profile covers documented HF/50 MHz CI-V
+frequency and mode operations, RIT/split/VFO/memory/tuner paths, receiver
+controls, tuning-step selection, and signal/power/SWR/ALC meters. It has no
+native scope profile and remains untested on physical hardware.
+
+The IC-718 is also cataloged at framework maturity from the local
+`IC-718 ADVANCED MANUAL 2024.pdf`. Its profile uses CI-V address `5E` and
+covers the manual's HF/50 MHz frequency and mode, VFO, split, tuning-step,
+AGC, preamp, noise, attenuator, RF power, memory, and S-meter surfaces. It
+does not advertise scope, repeater, or I/Q support, and remains untested on
+physical hardware.
+
+| Transport behavior | Status |
+|---|---|
+| One in-flight CI-V transaction | H; deliberately retained because CI-V frames have no transaction ID |
+| Immediate completion on decoded response | H; host-side inter-frame delay removed |
+| Persistent bounded inbox for unmatched radio frames | H; preserves interleaved replies for later commands |
+| USB echo-back filtering | H; echoed outbound frames are discarded and counted |
+| Scope-frame separation | H; waveform frames remain in the scope assembler and do not fill CAT inbox state |
+| Link-health metrics | H; counters and cumulative response time exposed by `IcomCiVRadio::transport_metrics()` |
+| Adaptive timeout and opt-in baud/address probing | H; adaptive deadlines are bounded and probing only tries caller-supplied candidates |
+
+### Remaining vendor transport hardening
+
+| Vendor | Low-latency reads | Bounded retained frames | Link metrics | Remaining |
+|---|---:|---:|---:|---|
+| Modern Yaesu CAT | H | H | H via `YaesuTransportMetrics` | Model verification is opt-in via `verify_model`; FTDX10 RTS probing remains advisory |
+| Kenwood PC control | H | H | H via `KenwoodTransportMetrics` | Model verification is opt-in via `verify_model` |
+| Classic Yaesu CAT | H for fixed binary transaction metrics | — | H via `LegacyYaesuTransportMetrics` | Fixed 8N2/no-flow policy is exposed; binary probing is intentionally not automatic |
+| Elecraft CAT | H | H | H via `ElecraftTransportMetrics` | `identify`/`probe_options` remain explicit and model-scoped |
+
+## Elecraft first implementation slice
+
+| Model profiles | Support level | Profile module | Manual evidence |
+|---|---|---|---|
+| K2 | Framework | `src/elecraft/k2.rs` | `KIO2 Pgmrs Ref rev E.pdf` |
+| KX2 | Framework | `src/elecraft/kx2.rs` | `K3S&K3&KX3&KX2 Pgmrs Ref, G5.pdf` |
+| KX3 | Framework | `src/elecraft/kx3.rs` | `K3S&K3&KX3&KX2 Pgmrs Ref, G5.pdf` |
+| K3 | Framework | `src/elecraft/k3.rs` | `K3S&K3&KX3&KX2 Pgmrs Ref, G5.pdf` |
+| K3S | Framework | `src/elecraft/k3s.rs` | `K3S&K3&KX3&KX2 Pgmrs Ref, G5.pdf` |
+| K4 | Framework | `src/elecraft/k4.rs` | `K4 Programmer's Reference, rev. D5.pdf` |
+| KH1 | Framework | `src/elecraft/kh1.rs` | `Elecraft KH1 Programmer's Ref, rev B2.pdf` |
+
+| Operation | HAL surface | Elecraft status |
+|---|---|---:|
+| Frequency read/write | `get/set_frequency_hz` | H/P for K2/KX2/KX3/K3/K3S/K4; KH1 write-only |
+| Operating mode read/write | `get/set_mode` | H/P for K2/KX2/KX3/K3/K3S/K4; KH1 write-only |
+| PTT write/read | `set_ptt`, `get_ptt`, `get_actual_tx_state` | H/P via `TX`/`RX` and `TQ`; K4 actual-RF state also via `TQX` |
+| RF power | `ControlId::RfPower` | H/P via profile-scaled `PC`; K4 uses documented `PCnnnH` range framing |
+| VFO selection / split | `ControlId::{Vfo,Split}`, `get/set_vfo_frequency_hz` | H/P via `FR`/`FT` and independent `FA`/`FB`; K3/K3S receive-selection semantics remain distinct |
+| RIT/XIT enable and offset | `ControlId::{Rit,Xit}`, offset methods | H/P via `RT`/`XT`/`RO`/`IF` |
+| Signal meter | `MeterId::Signal` | H/P via `SM` |
+| AF gain | `ControlId::AfGain` | H/P via `AG` |
+| RF gain | `ControlId::RfGain` | H/P via profile-scaled `RG` |
+| Squelch | `ControlId::Squelch` | H/P via profile-scaled `SQ` |
+| Preamp / attenuator | `ControlId::{Preamp,Attenuator}` | H/P via profile-owned `PA`/`RA` ranges |
+| Antenna selection | `ControlId::Antenna` | H/P via profile-owned `AN` connector limits for K2/KX2/KX3/K3/K3S/K4 |
+| Auto/manual notch | `ControlId::{Notch,ManualNotch,ManualNotchPosition}` | H/P for K4 via `NA$`/`NM$`; manual position is normalized from documented 150–5000 Hz |
+| Noise blanker | `ControlId::NoiseBlanker` | H/P via `NB` enable state |
+| AGC | `ControlId::Agc` | H/P via `GT` fast/slow mapping |
+| Filter bandwidth | `ControlId::Filter` | H/P via model-owned `BW`/`FW` bandwidth mapping |
+| Tuning step / VFO movement | `ControlId::TuningStep`, `move_vfo` | H/P for K4 via `VT$`; K2/K4 current-step `UP`/`DN` and K3-family indexed `UP`/`DN` movement implemented |
+| Internal tuner mode/start | `ControlId::Tuner`, `start_tuner` | H/P for K4 via `AT`/`TU3`; other models remain profile-gated |
+| Repeater shift/offset | `RepeaterSettings` | H/P for K4 via `RP`; tone fields remain unsupported |
+| Memory/channel selection | `select_memory_channel` | H/P for KX2/KX3/K3/K3S via `MC`; full record read/write remains open |
+| Raw protocol | `protocol_write_read` | H/P |
+| TX meters | `MeterId::{Power,Alc,Swr,Compression}` | K4 signal/power queries use documented `SM$`/`PO`; K3/K3S queried `BG` plus `TM0`/`TM1`; K4 ALC/compression/SWR are typed unsolicited `TM` events, not polled `SW` |
+
+Elecraft profile differences currently cover K2 versus K3-family mode tables,
+model-specific baud lists, conservative HF frequency ranges, and normalized
+S-meter limits. The model-specific declarations live in the seven modules listed
+above; shared profile validation remains in `src/elecraft/profile.rs`.
+Auto-Info event routing is now available through the shared event router. K4
+Ethernet/streaming and precise VFO-B semantic differences remain outside this
+direct transceiver scope. KH1 is intentionally limited to fixed-baud, write-only
+frequency/mode control; its display-mediated status and `FO`/`HK` FT8/CW
+operations require a separate capability surface.
+KH1 and P3/PX3/KAT/KPA/KXPA equipment are separate future profiles or station
+components and are not included in this row.
+
+### Direct CAT control backlog and evidence gate
+
+The following controls are known from the local Elecraft programmer references
+and are tracked with implementation and tester evidence separately. “Manual”
+means the command family is known enough to design against; it is not proof of
+correct code or physical behavior.
+
+| Direct CAT surface | Current Rigwright status | Required implementation evidence | Physical tester evidence |
+|---|---|---|---|
+| RF power (`PC`) | Implemented in driver; framework-level | Profile-native limits, normalized `RfPower`, read/write fixtures, TX-safety tests | Readback and safe min/max power on each model |
+| VFO-A/B and selected-VFO routing (`FA`/`FB` plus selection) | Independent `FA`/`FB` operations and `FR`/`FT` selection implemented; K3/K3S receive-selection semantics remain distinct | Explicit VFO state and command-routing tests | Both VFOs, switching, and unsolicited updates |
+| Split | Implemented in driver; framework-level | Profile-gated `ControlId::Split` and selected-VFO tests | RX/TX VFO behavior and split transitions |
+| RIT/XIT | Implemented in driver; framework-level | Signed offset/enable contract and boundary tests | Sign, range, zero, and independent operation |
+| Tuning step | K4 step selector plus K2/K4 current-step and K3-family indexed VFO movement implemented; no generic legacy step-size readback | HAL shape and model-specific value tests | Every supported step on a physical dial/navigation workflow |
+| Filters/bandwidth | Implemented as normalized bandwidth; framework-level | Named/value profile tables and readback fixtures | Accepted values and mode-dependent behavior |
+| AGC | Implemented in driver; framework-level | Model-specific control encoding and capability tests | AGC choices and readback |
+| Noise blanker/reduction | NB enable implemented; K4 `NB$`/`NR$` levels implemented; reviewed non-K4 references do not provide a lossless typed NR CAT surface | Separate enable/level controls and range tests | Level behavior and mode interaction |
+| Preamp/attenuator | Implemented in driver; framework-level | Distinct profile controls and mutual-exclusion tests | RF-path state and combinations |
+| Internal tuner | K4 mode/start implemented; KAT/KXAT accessories remain separate components and other transceiver profiles are gated | Tuner state model, explicit-start path, and failure tests | Tune start/completion/failure and TX interlock |
+| Memory/channel operations | KX2/KX3/K3/K3S selection implemented via `MC`; reviewed transceiver references do not provide lossless record read/write framing and K4 `MC` is pending | Lossless `MemoryChannel` mapping only if a documented record surface appears; otherwise explicit unsupported fields | Empty/read/write/name/mode/frequency round trips |
+| Repeater/tone | K4 shift/offset implemented; reviewed transceiver references do not expose typed tone payloads | Profile-gated `RepeaterSettings` and unsupported-field tests | Tone, offset, and model-specific repeater behavior |
+| TX status and additional meters | Power/ALC/SWR implemented where the protocol permits; K4 actual TX state via `TQX`, K3/K3S `TM` source selection, K4 `SM$`/`PO` queries, and K4 `TM` ALC/compression/power/SWR event reports implemented; voltage/current/temperature remain unavailable in the transceiver HAL | Typed status/events, normalized meter fixtures, read-only semantics | RX/TX/tune captures for power/SWR/ALC/etc. |
+| Identification and capability probing (`ID`/`OM`/status) | `ID` and decoded model-specific `OM` probes implemented for K3/K3S/KX2/KX3/K4; KH1 has no reviewed `OM` schema | Bounded probe, unknown-model, timeout, malformed-frame, and family-parser tests | Known model, firmware, and installed-option identification |
+
+Control bounds and discrete choices are part of the profile-owned surface in
+the rows above. Consumers such as QSONaut must obtain them through
+`RadioModelProfile::control_max` and `supported_control_values`; application
+code may choose presentation, labels, and safety policy but must not recreate
+vendor ranges.
+
+The tester gate is deliberate: all rows may reach `Implemented` with manual
+review and deterministic fixtures, but no Elecraft model should move from
+`Framework` to `Hardware validated` until a tester exercises the relevant CAT
+surface on physical equipment. Tester captures should be retained as fixtures
+with model, firmware, baud, transport, and operating-state metadata.
+
 ## Typed controls
 
 The following table lists every current `ControlId`. “Icom” means the selected
@@ -47,12 +183,12 @@ Icom profile exposes the operation; “Yaesu” and “Kenwood” are the curren
 profile-wide implementation claims. A model-specific exception is listed in
 the final column.
 
-| HAL control | Value | Icom CI-V | Modern Yaesu | Classic Yaesu | Kenwood | QSONaut native use |
-|---|---|---:|---:|---:|---:|---|
-| `AfGain` | normalized `U8` 0–255 | RW/P all four profiles | M, not typed | M, not typed | RW/P all three profiles | Q slider |
-| `RfGain` | normalized `U8` 0–255 | RW/P all four profiles | M, not typed | M, not typed | RW/P all three profiles | Q slider |
-| `Squelch` | normalized `U8` 0–255 | RW/P all four profiles | M, not typed | M, not typed | RW/P all three profiles | Q slider |
-| `RfPower` | normalized `U8` 0–255 | RW/P all four profiles | RW/P modern profiles; exact watts also available | M, not typed; power write intentionally absent | RW/P all three profiles; exact watts also available | Q slider and SWR sweep power |
+| HAL control | Value | Icom CI-V | Modern Yaesu | Classic Yaesu | Kenwood | Elecraft | QSONaut native use |
+|---|---|---:|---:|---:|---:|---:|---|
+| `AfGain` | normalized `U8` 0–255 | RW/P all profiled models | M, not typed | M, not typed | RW/P all three profiles | RW/P profile-native maximums | Q slider |
+| `RfGain` | normalized `U8` 0–255 | RW/P all profiled models | M, not typed | M, not typed | RW/P all three profiles | RW/P profile-native maximums; attenuation direction is profile-owned | Q slider |
+| `Squelch` | normalized `U8` 0–255 | RW/P all profiled models | M, not typed | M, not typed | RW/P all three profiles | RW/P profile-native maximums | Q slider |
+| `RfPower` | normalized `U8` 0–255 | RW/P all profiled models; exact watts also available | RW/P modern profiles; exact watts also available | M, not typed; power write intentionally absent | RW/P all three profiles; exact watts also available | RW/P profiled models; native watt limits remain model-specific | Q slider and SWR sweep power |
 | `Preamp` | model-specific `U8` | RW/P all four profiles | M, not typed | M, not typed | RW/P all three profiles | Q compact control |
 | `ExternalPreamp` | model-specific `U8` | RW/P IC-9700 only | M, not typed | M, not typed | M, not typed | Not currently used |
 | `Attenuator` | model-specific `U8` | RW/P all four profiles | M, not typed | M, not typed | M, not typed | Q compact control |
@@ -65,7 +201,7 @@ the final column.
 | `DataMode` | `Bool` | RW/P all four profiles | M, not typed | M, not typed | TS-590SG/TS-890S model behavior exists but not typed as this control | Q mode/status support |
 | `Filter` | model-specific `U8` | RW/P all four profiles | M, not typed | M, not typed | RW/P TS-590SG and TS-890S | Q filter control |
 | `Agc` | model-specific `U8` | RW/P IC-705, IC-7300, and IC-9700; manual-only on IC-7610 | RW/P modern profiles | M, not typed | RW/P TS-890S | Q compact control |
-| `Rit` | Icom `21 01`; model-specific elsewhere | R/W on all profiled Icom models | M | M | RW/P all three profiles | Icom profile implementation |
+| `Rit` | Icom `21 01`; model-specific elsewhere | R/W on all profiled Icom models; IC-7300 live RIT operations are mode-dependent and are rejected by the connected USB-D/Data configuration | M | M | RW/P all three profiles | Icom profile implementation; probe reports the IC-7300 Data-mode restriction explicitly |
 | `Xit` | Icom `21 02` where documented | R/W on IC-7300/IC-7610 profiles | M | M | RW/P all three profiles | Model-specific; not exposed on IC-705/IC-9700 |
 | `Split` | `Bool` | RW/P all four profiles | RW/P profiles with documented split | RW/P all four profiles | RW/P all three profiles | Q profile/control path, limited banner use |
 | `Tuner` | `Bool` enable/status | RW/P all four profiles | M, not typed | M, not typed | RW/P all three profiles | Q enable/disable and sweep safety |
@@ -133,16 +269,32 @@ All typed meter values are normalized to a HAL deflection level of 0–255. This
 is not a universal physical-unit conversion. For example, Icom SWR values have
 documented ratio anchors, but those anchors are not shared by Yaesu or Kenwood.
 
-| HAL meter | Icom CI-V | Modern Yaesu CAT | Classic Yaesu CAT | Kenwood | QSONaut native use |
-|---|---:|---:|---:|---:|---|
-| `Signal` | R/P via `15 02`; IC-7300 V | R/P via `RM1` | R/P via `E7`, 0-15 | R/P via `SM`, profile max 30 or 70 | Q normalized meter panel where advertised |
-| `Power` | R/P via `15 11`; IC-7300 V | R/P via `RM5` | R/P via `F7`, 0-15 | R/P via `SM` (TX), profile max 30 or 70 | Q normalized meter panel where advertised |
-| `Swr` | R/P via `15 12`; IC-7300 V | R/P via `RM6` | M, not typed | R/P via `RM`; selector and range profile-specific | Q live meter and stepped SWR chart |
-| `Alc` | R/P via `15 13`; IC-7300 V | R/P via `RM4` | M, not typed | R/P TS-890S via `RM1` | Q normalized meter panel where advertised |
-| `Compression` | R/P via `15 14`; IC-7300 V | R/P via `RM3` | M, not typed | R/P TS-890S via `RM3` | Q normalized meter panel where advertised |
-| `Current` | R/P via `15 16`; IC-7300 V | R/P via `RM7` | M, not typed | R/P TS-890S via `RM4` | Q normalized meter panel where advertised |
-| `Voltage` | R/P via `15 15`; IC-7300 V | R/P via `RM8` | M, not typed | R/P TS-890S via `RM5` | Q normalized meter panel where advertised |
-| `Temperature` | Manual/protocol surface varies; intentionally not profiled | R/P FTDX101D/MP via `RM9`; not exposed by FT-710, FTDX10, or FT-991A | M, not typed | R/P TS-890S via `RM6` | Q normalized meter panel where advertised |
+| HAL meter | Icom CI-V | Modern Yaesu CAT | Classic Yaesu CAT | Kenwood | Elecraft | QSONaut native use |
+|---|---:|---:|---:|---:|---:|---|
+| `Signal` | R/P via `15 02`; IC-7300 V | R/P via `RM1` | R/P via `E7`, 0-15 | R/P via `SM`, profile max 30 or 70 | R/P profile-native maximums | Q normalized meter panel where advertised |
+| `Power` | R/P via `15 11`; IC-7300 V | R/P via `RM5` | R/P via `F7`, 0-15 | R/P via `SM` (TX), profile max 30 or 70 | R/P `BG`/`PO`, profile-native maximums | Q normalized meter panel where advertised |
+| `Swr` | R/P via `15 12`; IC-7300 V | R/P via `RM6` | M, not typed | R/P via `RM`; selector and range profile-specific | R/P where model profile exposes it | Q live meter and stepped SWR chart |
+| `Alc` | R/P via `15 13`; IC-7300 V | R/P via `RM4` | M, not typed | R/P TS-890S via `RM1` | R/P K3/K3S and K4 event surface | Q normalized meter panel where advertised |
+| `Compression` | R/P via `15 14`; IC-7300 V | R/P via `RM3` | M, not typed | R/P TS-890S via `RM3` | R/P K4 event surface | Q normalized meter panel where advertised |
+| `Current` | R/P via `15 16`; IC-7300 V | R/P via `RM7` | M, not typed | R/P TS-890S via `RM4` | M, not typed | Q normalized meter panel where advertised |
+| `Voltage` | R/P via `15 15`; IC-7300 V | R/P via `RM8` | M, not typed | R/P TS-890S via `RM5` | M, not typed | Q normalized meter panel where advertised |
+| `Temperature` | Manual/protocol surface varies; intentionally not profiled | R/P FTDX101D/MP via `RM9`; not exposed by FT-710, FTDX10, or FT-991A | M, not typed | R/P TS-890S via `RM6` | M, not typed | Q normalized meter panel where advertised |
+
+Normalization policy: all linear HAL levels use the common 0..255 scale and
+half-up rounding in both directions. Vendor-native maxima and model-specific
+power ranges remain profile facts. Generic or undocumented meters are not
+forced into physical units; they remain normalized or unavailable.
+
+### Model normalization facts
+
+| Vendor/models | Native source | HAL treatment |
+|---|---|---|
+| Icom IC-705, IC-718, IC-7200, IC-7300, IC-7610, IC-9700 | CI-V level BCD values already encoded as 0–255 | Exact 0–255 decode; model profiles gate availability |
+| Modern Yaesu FT-710, FTDX10, FTDX101D, FTDX101MP, FT-991A | `RM` meters 0–255; `PC` power has model watt range | Exact meter values; power maps profile minimum/maximum watts to 0–255 |
+| Classic Yaesu FT-817ND, FT-818, FT-857D, FT-897D | `E7`/`F7` meter dots 0–15 | Profile-independent half-up scaling to 0–255 |
+| Kenwood TS-590SG, TS-890S, TS-2000 | `SM`/`RM` meter dots, profile maxima 30 or 70 | Half-up scaling by the selected model profile; power maps 5–100 W |
+| Elecraft K2, KX2, KX3, K3, K3S, K4 | Model-native `SM$`, `BG`, `SW`, `PO`, and profile control maxima | Half-up scaling using model maxima; K4/K3-family meter availability remains profile-gated |
+| Generic Icom/Yaesu/Kenwood adapters and DX Lab/rigctld | No authoritative model range | Expose only protocol-neutral values they can prove; no guessed physical calibration |
 
 Yaesu `RM` selector meanings are documented by the modern CAT manuals: `1`
 signal, `3` compression, `4` ALC, `5` power, `6` SWR, `7` current, and `8`

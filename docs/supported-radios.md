@@ -11,11 +11,44 @@ working end-to-end driver for that radio.
 | Vendor | Models | Status | Official command documentation |
 |---|---|---|---|
 | Icom | IC-7300 | Hardware validated | [Icom IC-7300 support](https://www.icomjapan.com/lineup/products/IC-7300/) |
-| Icom | IC-705, IC-7610, IC-9700 | Framework | [IC-705](https://www.icomjapan.com/lineup/products/IC-705/), [IC-7610 CI-V guide](https://www.icomjapan.com/support/manual/1745/), [IC-9700](https://www.icomjapan.com/lineup/products/143/) |
+| Icom | IC-705, IC-718, IC-7200, IC-7610, IC-9700 | Framework | [IC-705](https://www.icomjapan.com/lineup/products/IC-705/), [IC-7610 CI-V guide](https://www.icomjapan.com/support/manual/1745/), [IC-9700](https://www.icomjapan.com/lineup/products/143/) |
 | Yaesu | FTDX10 | Hardware validated | [FTDX10 downloads](https://www.yaesu.com/indexVS.cfm?cmd=DisplayProducts&ProdCatID=102&encProdID=1ABBC23C7EC57175A35CB0FDE7A639A0) |
 | Yaesu | FT-710, FTDX101D, FTDX101MP, FT-991A | Framework | [FT-710 CAT manual](https://yaesu.com/product-detail.aspx?CatName=HF+Transceivers%2FAmplifiers&Model=FT-710), [FTDX101MP/D CAT manual](https://www.yaesu.com/product-detail.aspx?CatName=HF+Transceivers%2FAmplifiers&Model=FTDX101D), [FT-991A CAT manual](https://www.yaesu.com/Files/4CB893D7-1018-01AF-FA97E9E9AD48B50C/FT-991A_CAT_OM_ENG_1711-D.pdf) |
 | Yaesu legacy binary CAT | FT-817ND, FT-818, FT-857D, FT-897D | Framework | [FT-817ND manual](https://www.yaesu.com/product-detail.aspx?CatName=Legacy&Model=FT-817ND), [FT-818 manual](https://public2024.yaesu.com/product-detail.aspx?CatName=Legacy&Model=FT-818), [FT-857D manual](https://www.yaesu.com/product-detail.aspx?CatName=Legacy&Model=FT-857D), [FT-897D manual](https://www.yaesu.com/product-detail.aspx?CatName=Legacy&Model=FT-897D) |
 | Kenwood | TS-590SG, TS-890S, TS-2000 | Framework | [Kenwood command-reference downloads](https://www.kenwood.com/i/products/info/amateur/software_download.html), [TS-2000 manual](https://www.kenwood.com/usa/Support/pdf/TS-2000-Owner-Manual.PDF) |
+
+## Elecraft component audit
+
+Elecraft transceiver profiles are now implemented at framework maturity. The
+local references currently available under `_manuals/elecraft` are:
+
+| Surface | Reference | Initial boundary |
+|---|---|---|
+| K2 | `KIO2 Pgmrs Ref rev E.pdf` | Transceiver profile |
+| KX2/KX3/K3/K3S | `K3S&K3&KX3&KX2 Pgmrs Ref, G5.pdf` | Shared transceiver family with profile differences |
+| K4 | `K4 Programmer's Reference, rev. D5.pdf`; `K4 Command Index Rev3.pdf` | Transceiver plus optional Ethernet/streaming capabilities |
+| KH1 | `Elecraft KH1 Programmer's Ref, rev B2.pdf` | Separate limited transceiver profile |
+| P3/PX3 | `P3_Pgmrs_Ref_Rev_A7.pdf`; `PX3_Pgmrs_Ref_A6.pdf` | Separate spectrum components |
+| KAT500 | `KAT500 Automatic Antenna Tuner Serial Command Reference.pdf` | Separate tuner component |
+| KPA500/KXPA100 | `KPA500 Programmers Ref.pdf`; `KXPA100 Amplifier Command Reference.pdf` | Separate amplifier components |
+
+The current Rigwright transceiver slice covers K2, KX2, KX3, K3, K3S, and K4
+core frequency, mode, PTT, RF power, independent VFO frequency, split context,
+RIT/XIT, receiver controls, filters, meters, antenna and K4 notch controls,
+tuner/repeater paths where documented, VFO movement, memory selection,
+identification probing, and raw-command operations. The capability matrix records
+the remaining protocol/HAL boundaries: lossless memory records, typed tone
+payloads, accessory-owned tuner surfaces, and meters not exposed by the
+transceiver protocols. All models remain framework-level until tested against
+physical equipment.
+KH1 is separately profiled for fixed-baud, write-only frequency/mode control;
+its display-mediated status and FT8/CW keying commands are not ordinary
+`Radio` operations.
+
+These documents establish command syntax and documented capabilities only.
+They do not constitute physical-radio or accessory validation. The proposed
+component boundary and implementation order are recorded in
+[`adding-elecraft.md`](adding-elecraft.md).
 
 ## Icom manual audit
 
@@ -25,8 +58,10 @@ reproducible without treating a product-page compatibility claim as evidence:
 
 | Model | Manual edition used | Profile details checked |
 |---|---|---|
+| IC-7200 | `IC-7200_ENG_CD_0b.pdf` | address `76`; CI-V baud 300–19200/Auto; HF/50 MHz ranges; commands `07`, `08`, `09`, `0F`, `10`, `11`, `14`, `16`, `1A`, `1C`; no native scope; signal/power/SWR/ALC meters |
+| IC-718 | `IC-718 ADVANCED MANUAL 2024.pdf` | address `5E`; HF/50 MHz CI-V command table; frequency/mode, VFO, split, tuning step, AGC, preamp, NB, NR, ATT, RF power, memory, and S-meter operations; no native scope or repeater surface; framework-only pending hardware testing |
 | IC-705 | `IC-705_ENG_CI-V_6.pdf`, Jan. 2023 | address `A4`; commands `0F`, `11`, `14`, `16`, `26`, `27`; WFM; 11/475 scope; 0.03–200 and 400–470 MHz scope ranges |
-| IC-7300 | `IC-7300_Full_English v6.pdf` / `.md` | address `94`; commands `0F`, `11`, `14`, `16`, `26`, `27`; 20 dB attenuator only; FM; 11/475 scope |
+| IC-7300 | `IC-7300_Full_English v6.pdf` / `.md` | address `94`; commands `0F`, `11`, `14`, `16`, `21`, `26`, `27`; 20 dB attenuator only; FM; 11/475 scope; live RIT is rejected in the connected USB-D/Data configuration |
 | IC-7610 | `IC-7610_ENG_CI-V_4.pdf`, Sep. 2025 | address `98`; commands `07 D0/D1/D2`, `0F`, `11`, `14`, `16`, `26`, `27`; main/sub; 15/689 scope; 0.03–60 MHz scope range |
 | IC-9700 | `IC-9700_ENG_CI-V_4.pdf`, Mar. 2023 | address `A2`; commands `07 D0/D1/D2`, `0F`, `11`, `16 02`, `26`, `27`; combined internal/external preamp; 144/430/1240 MHz bands; 11/475 scope |
 
@@ -128,6 +163,13 @@ model-specific 0..30 or 0..70 dot ranges. Modern Yaesu CAT profiles query the
 documented `RM` selectors and already return 0..255 values. This is normalized meter
 deflection, not a universal physical SWR-ratio conversion; the manuals do not
 define enough cross-vendor ratio calibration to infer one safely.
+
+Elecraft’s profiled K2, KX2, KX3, K3, K3S, and K4 controls and meters follow
+the same HAL normalization policy. Their model-native maxima remain in the
+Elecraft profiles, including the different K4/K3-family meter ranges; linear
+conversions use shared half-up rounding. Generic protocol adapters do not
+invent a model range or physical calibration when the connected radio is
+unknown.
 
 The model-aware `ConfiguredRadio` wrapper delegates optional controls, meters,
 clarifiers, tuner, memory, repeater, and event-router behavior to the selected

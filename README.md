@@ -1,22 +1,23 @@
 # Rigwright
 
-[![Version](https://img.shields.io/badge/version-v0.1.16-2ea44f)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-v0.1.17-2ea44f)](Cargo.toml)
 [![CI](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml)
 [![Release workflow](https://github.com/nicksbar/rigwright/actions/workflows/release.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/nicksbar/rigwright?display_name=tag&sort=semver)](https://github.com/nicksbar/rigwright/releases)
 [![Coverage gate](https://github.com/nicksbar/rigwright/actions/workflows/coverage.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/coverage.yml)
-[![Icom 86.58%](https://img.shields.io/badge/Icom-86.58%25-brightgreen)](docs/radio-capability-matrix.md)
-[![HAL 94.50%](https://img.shields.io/badge/HAL-94.50%25-brightgreen)](docs/radio-capability-matrix.md)
-[![Android 83.52%](https://img.shields.io/badge/Android-83.52%25-brightgreen)](docs/radio-capability-matrix.md)
-[![Transport 91.78%](https://img.shields.io/badge/Transport-91.78%25-brightgreen)](docs/radio-capability-matrix.md)
-[![Drivers 90.08%](https://img.shields.io/badge/Drivers-90.08%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Icom 85.65%](https://img.shields.io/badge/Icom-85.65%25-brightgreen)](docs/radio-capability-matrix.md)
+[![HAL 96.34%](https://img.shields.io/badge/HAL-96.34%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Android 84.11%](https://img.shields.io/badge/Android-84.11%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Transport 92.58%](https://img.shields.io/badge/Transport-92.58%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Drivers 88.31%](https://img.shields.io/badge/Drivers-88.31%25-brightgreen)](docs/radio-capability-matrix.md)
 [![IQ 100%](https://img.shields.io/badge/IQ-100%25-brightgreen)](docs/radio-capability-matrix.md)
 [![rigctld 94.76%](https://img.shields.io/badge/rigctld-94.76%25-brightgreen)](docs/radio-capability-matrix.md)
 [![DX Lab 95.27%](https://img.shields.io/badge/DX%20Lab-95.27%25-brightgreen)](docs/radio-capability-matrix.md)
-[![Kenwood CAT 86.28%](https://img.shields.io/badge/Kenwood%20CAT-86.28%25-brightgreen)](docs/radio-capability-matrix.md)
-[![Kenwood profile 93.28%](https://img.shields.io/badge/Kenwood%20profile-93.28%25-brightgreen)](docs/radio-capability-matrix.md)
-[![Yaesu profile 85%](https://img.shields.io/badge/Yaesu%20profile-85%25-yellow)](docs/radio-capability-matrix.md)
+[![Kenwood CAT 85.21%](https://img.shields.io/badge/Kenwood%20CAT-85.21%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Kenwood profile 93.47%](https://img.shields.io/badge/Kenwood%20profile-93.47%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Yaesu profile 86.48%](https://img.shields.io/badge/Yaesu%20profile-86.48%25-brightgreen)](docs/radio-capability-matrix.md)
 [![Classic Yaesu profile 100%](https://img.shields.io/badge/Classic%20Yaesu%20profile-100%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Elecraft 84.56%](https://img.shields.io/badge/Elecraft-84.56%25-brightgreen)](docs/radio-capability-matrix.md)
 [![CodeQL](https://github.com/nicksbar/rigwright/actions/workflows/codeql.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/codeql.yml)
 
 Rigwright is a reusable Rust radio-control HAL with native radio drivers. It was
@@ -31,9 +32,19 @@ reported through the CodeQL check and GitHub code-scanning alerts.
 
 - One async, protocol-neutral `Radio` interface for frequency, mode, PTT,
   typed controls, raw-protocol access, and capability discovery.
+- Driver-owned `RadioSession` execution with bounded, coalescing command
+  admission, desired/observed snapshots, worker refresh, events, and recovery.
 - A normalized `0..=255` HAL scale for radio controls and meter deflection,
   with vendor-specific physical units kept in the driver/profile layer.
 - Native Icom CI-V over serial, developed and exercised with the IC-7300.
+- Low-latency Icom CI-V response demultiplexing, bounded interleaved-frame
+  retention, USB echo filtering, and transport health metrics.
+- All native ASCII vendor transports own a persistent serialized session,
+  bounded response/event demultiplexing, adaptive bounded recovery timing,
+  explicit serial-line policy, and transport health metrics. Classic binary
+  Yaesu exposes its fixed line policy and transaction metrics. Vendor
+  identification and option probes are opt-in because probing can change radio
+  state or interrupt a live CAT link.
 - Additive `RadioAndroid` entry point for Icom CI-V, modern Yaesu CAT, classic
   Yaesu CAT, and Kenwood CAT over an externally supplied byte transport.
 - Serial-port discovery, CI-V framing and parsing, spectrum-scope data, and raw
@@ -41,6 +52,9 @@ reported through the CodeQL check and GitHub code-scanning alerts.
 - Strict IC-7300 USB scope assembly: ordered 11-division input produces one
   complete 475-bin sweep, with documented center-span and fixed-edge controls.
 - Captured-frame unit tests and a direct CI-V probe example.
+- Profile-driven Elecraft CAT support for K2, KX2, KX3, K3, K3S, K4, and KH1,
+  including direct controls, model-specific option probing, normalized meters,
+  and explicit accessory/protocol boundaries.
 - Profile-gated receiver controls, RF power, split, clarifiers, VFO, tuner,
   memory, repeater, event, and normalized-meter support for modern Yaesu;
   profile-gated receiver controls, RF power, split, clarifiers, VFO, tuner,
@@ -67,7 +81,9 @@ The [radio capability matrix](docs/radio-capability-matrix.md) is the canonical
 status report. It tracks every HAL operation, typed control, normalized meter,
 manual-only surface, exact model profile, and current QSONaut consumption. It
 distinguishes documented behavior from implemented, profile-gated, consumed,
-and hardware-validated behavior.
+and hardware-validated behavior. Normalized HAL controls and meter values use
+shared half-up conversion rules; model-native limits remain in profiles, while
+generic undocumented values stay explicitly approximate or unavailable.
 
 - [Radio capability matrix](docs/radio-capability-matrix.md) — detailed status,
   normalization, model exceptions, and QSONaut coverage.
@@ -75,6 +91,8 @@ and hardware-validated behavior.
   models, maturity labels, and workspace manual editions.
 - [Driver architecture](docs/architecture.md) — HAL boundaries, transport
   rules, profiles, and validation policy.
+- [Driver-owned sessions](docs/session.md) — issue #20 queue, state, event, and
+  baud-selection behavior.
 
 Only the capability matrix should be updated for ordinary support-status
 changes; the architecture and model-addition guides are design/maintenance
@@ -84,7 +102,7 @@ references.
 
 ```toml
 [dependencies]
-rigwright = "0.1.16"
+rigwright = "0.1.17"
 ```
 
 ```rust,no_run
@@ -98,8 +116,15 @@ radio.set_ptt(false).await?;
 # }
 ```
 
-Run the hardware probe with `cargo run --example ci_v_probe`. It currently uses
-`/dev/ttyUSB0` at 115200 baud; inspect the example before transmitting commands.
+Run the model-backed read-mostly hardware probe with
+`cargo run --example ci_v_probe -- /dev/ttyUSB0 115200 --log ic7300.json`. Add `--exercise` to
+move reversible settings to safe alternate values and restore the original
+state where the radio accepts the documented operation. It never keys the
+transmitter or writes memories; tuner start and scope streaming are reported as
+operator-impacting and skipped.
+
+Use `--restore-rit-off` only when recovering the known test state after an
+interrupted RIT exercise.
 
 When the model is known, prefer a profile-backed constructor so Rigwright can
 validate documented ranges, modes, controls, and scope geometry:
@@ -142,7 +167,7 @@ Use the Enhanced virtual COM port for FTDX10 CAT. The Standard port is for
 PTT/keying/digital-mode signals, not frequency and mode CAT commands.
 
 For a read-only identity/frequency/mode/PTT check, run
-`cargo run --example yaesu_probe -- FTDX10 /dev/ttyUSB0 38400`. Match the baud
+`cargo run --example yaesu_probe -- FTDX10 /dev/ttyUSB0 38400 --log yaesu.json`. Match the baud
 rate and one-stop-bit setting in the radio's CAT menu. No example command keys
 the transmitter. FTDX10 automatically reads its CAT RTS setting and adapts the
 serial flow-control mode; `--hardware-flow` remains available for adapters that
@@ -153,8 +178,11 @@ For an older FT-817ND, FT-818, FT-857D, or FT-897D, set the radio's CAT menu to
 interface. The driver configures 8N2 automatically. A read-only check is:
 
 ```text
-cargo run --example classic_yaesu_probe -- FT-857D /dev/ttyUSB0 4800
+cargo run --example classic_yaesu_probe -- FT-857D /dev/ttyUSB0 4800 --log classic-yaesu.json
 ```
+
+Add `--exercise` to modify and restore frequency, mode, split, and a double VFO toggle;
+PTT, CAT lock, and arbitrary raw writes remain skipped.
 
 The classic protocol has no identification command, so this probe can confirm
 responses but cannot prove that the configured model name is correct.
@@ -165,12 +193,19 @@ bits at 4800 baud and one stop bit at higher rates. A read-only identity and
 status probe is:
 
 ```text
-cargo run --example kenwood_probe -- TS-590SG /dev/ttyUSB0 115200
+cargo run --example kenwood_probe -- TS-590SG /dev/ttyUSB0 115200 --log kenwood.json
 ```
 
 The probe never sends `TX`. TS-590SG and TS-2000 PTT state is read from `IF`;
 TS-890S does not advertise readable PTT because its documented `TX` command is
 set/auto-information only.
+
+Every vendor probe accepts `--log PATH` and writes the same JSON report shape:
+tool/model/serial parameters, timestamp, named pass/fail/skip records, and
+transport metrics. Share the JSON file together with the console output when a
+hardware result needs investigation; it preserves the exact connection
+context and distinguishes an unsupported operation from a skipped or failed
+one.
 
 ## Tests and coverage
 
@@ -193,20 +228,25 @@ The report is written to `target/llvm-cov/html/index.html`; open that file in a
 browser to inspect line and branch coverage. For a terminal summary instead,
 run `cargo llvm-cov --locked --all-features --workspace`.
 
-Pull requests run formatting, checks, and tests in `ci.yml`. LLVM coverage runs
-as a separate `coverage.yml` workflow; it prints the test and coverage summary
-in the pull request's check details and uploads the complete HTML report as a
-workflow artifact.
+Pull requests run formatting, locked checks, strict Clippy, and the complete
+test suite in `ci.yml`. LLVM coverage runs as a separate `coverage.yml`
+workflow; it prints the test and coverage summary in the pull request's check
+details and uploads the complete HTML report as a workflow artifact.
 
-The README coverage labels are the latest measured line-coverage snapshot; the
+The README coverage labels are the latest measured line-coverage snapshot from
+251 tests; the
 workflow badge is the authoritative pass/fail result. The coverage gate is
-enforced by `scripts/check-icom-coverage.sh` and currently
-requires at least 85% Icom, 90% HAL, 80% Android, 90% transport, 85% driver,
-95% IQ, 90% rigctld, 90% DX Lab, 80% Kenwood CAT, 90% Kenwood profile, 85%
-modern Yaesu profile, and 85% classic Yaesu profile line coverage. The latest
-local run reached 85.13% overall line coverage, including 84.98% Icom CI-V,
-86.29% Kenwood CAT, 76.74% modern Yaesu CAT, 91.79% transport, and 90.09%
-configured-driver dispatch coverage. The workflow badge reports whether these
+enforced by `scripts/check-icom-coverage.sh` and
+`scripts/check-elecraft-coverage.sh`. The Elecraft gate requires at least 84%
+aggregate line coverage; the current measured Elecraft snapshot is 84.56%.
+The existing gates currently
+requires at least 85% Icom, 96% HAL, 84% Android, 92% transport, 88% driver,
+100% IQ, 94% rigctld, 95% DX Lab, 85% Kenwood CAT, 93% Kenwood profile, 86%
+modern Yaesu profile, and 100% classic Yaesu profile line coverage. The latest
+local run reached 81.96% overall line coverage, including 85.65% Icom CI-V,
+85.21% Kenwood CAT, 75.98% modern Yaesu CAT, 92.58% transport, and 88.31%
+configured-driver dispatch coverage. All current local coverage gates pass.
+The workflow badge reports whether these
 tests and gates pass; the uploaded LLVM report provides the detailed source,
 function, and line view.
 

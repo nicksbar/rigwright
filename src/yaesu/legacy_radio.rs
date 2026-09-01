@@ -3,7 +3,7 @@
 use std::{
     sync::{Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -27,10 +27,42 @@ use super::legacy_profile::{profile_for_model, YaesuLegacyProfile};
 // used by established FT-817 client integrations.
 const LEGACY_WRITE_SETTLE: Duration = Duration::from_millis(200);
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LegacyYaesuTransportMetrics {
+    pub commands_started: u64,
+    pub responses_read: u64,
+    pub response_errors: u64,
+    pub bytes_read: u64,
+    pub total_response_time: Duration,
+}
+
+/// Fixed CAT line settings required by the classic Yaesu binary protocol.
+/// Exposed so clients can render the connection requirements from the driver
+/// without duplicating vendor-specific serial knowledge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LegacyYaesuSerialPolicy {
+    pub data_bits: DataBits,
+    pub parity: Parity,
+    pub stop_bits: StopBits,
+    pub flow_control: FlowControl,
+}
+
+impl Default for LegacyYaesuSerialPolicy {
+    fn default() -> Self {
+        Self {
+            data_bits: DataBits::Eight,
+            parity: Parity::None,
+            stop_bits: StopBits::Two,
+            flow_control: FlowControl::None,
+        }
+    }
+}
+
 #[derive(Default)]
 struct TransportState {
     port: Option<Box<dyn RadioTransport>>,
     external: Option<Box<dyn RadioTransport>>,
+    metrics: LegacyYaesuTransportMetrics,
 }
 
 fn active_transport(state: &mut TransportState) -> Result<&mut dyn RadioTransport> {
@@ -109,6 +141,7 @@ impl LegacyYaesuRadio {
             transport: Arc::new(Mutex::new(TransportState {
                 port: None,
                 external: Some(Box::new(transport)),
+                metrics: LegacyYaesuTransportMetrics::default(),
             })),
         }
     }
@@ -132,6 +165,17 @@ impl LegacyYaesuRadio {
 
     pub fn profile(&self) -> Option<&'static YaesuLegacyProfile> {
         self.model.map(profile_for_model)
+    }
+
+    pub fn transport_metrics(&self) -> LegacyYaesuTransportMetrics {
+        self.transport
+            .lock()
+            .map(|state| state.metrics)
+            .unwrap_or_default()
+    }
+
+    pub fn serial_policy(&self) -> LegacyYaesuSerialPolicy {
+        LegacyYaesuSerialPolicy::default()
     }
 
     pub fn close(&self) {
@@ -230,6 +274,8 @@ impl LegacyYaesuRadio {
             .transport
             .lock()
             .map_err(|_| anyhow!("classic Yaesu CAT transport lock poisoned"))?;
+        let started = Instant::now();
+        transport.metrics.commands_started = transport.metrics.commands_started.saturating_add(1);
         if transport.port.is_none() && transport.external.is_none() {
             transport.port = Some(Box::new(SerialPortTransport(
                 serialport::new(&self.port, self.baud_rate)
@@ -266,10 +312,17 @@ impl LegacyYaesuRadio {
                 port.read_exact(&mut response)
                     .context("failed to read classic Yaesu CAT response")?;
             }
+            transport.metrics.responses_read = transport.metrics.responses_read.saturating_add(1);
+            transport.metrics.bytes_read = transport
+                .metrics
+                .bytes_read
+                .saturating_add(response_len as u64);
+            transport.metrics.total_response_time += started.elapsed();
             Ok(response)
         })();
 
         if result.is_err() {
+            transport.metrics.response_errors = transport.metrics.response_errors.saturating_add(1);
             transport.port = None;
         }
         result
@@ -351,15 +404,21 @@ impl Radio for LegacyYaesuRadio {
     }
 
     fn supports_control(&self, id: ControlId) -> bool {
-        matches!(id, ControlId::Split | ControlId::Rit)
+        self.profile()
+            .map(|profile| profile.supports_control(id))
+            .unwrap_or(matches!(id, ControlId::Split | ControlId::Rit))
     }
 
     fn supports_control_read(&self, id: ControlId) -> bool {
-        id == ControlId::Split
+        self.profile()
+            .map(|profile| profile.supports_control_read(id))
+            .unwrap_or(id == ControlId::Split)
     }
 
     fn supports_control_write(&self, id: ControlId) -> bool {
-        matches!(id, ControlId::Split | ControlId::Rit)
+        self.profile()
+            .map(|profile| profile.supports_control_write(id))
+            .unwrap_or(matches!(id, ControlId::Split | ControlId::Rit))
     }
 
     async fn set_rit_offset_hz(&self, offset_hz: i32) -> Result<()> {

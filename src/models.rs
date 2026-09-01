@@ -5,16 +5,18 @@ pub enum Manufacturer {
     Icom,
     Yaesu,
     Kenwood,
+    Elecraft,
 }
 
 impl Manufacturer {
-    pub const ALL: [Self; 3] = [Self::Icom, Self::Yaesu, Self::Kenwood];
+    pub const ALL: [Self; 4] = [Self::Icom, Self::Yaesu, Self::Kenwood, Self::Elecraft];
 
     pub const fn label(self) -> &'static str {
         match self {
             Self::Icom => "Icom",
             Self::Yaesu => "Yaesu",
             Self::Kenwood => "Kenwood",
+            Self::Elecraft => "Elecraft",
         }
     }
 }
@@ -25,6 +27,7 @@ pub enum Protocol {
     YaesuCat,
     YaesuLegacyCat,
     KenwoodCat,
+    ElecraftCat,
 }
 
 impl Protocol {
@@ -34,6 +37,7 @@ impl Protocol {
             Self::YaesuCat => "Yaesu CAT",
             Self::YaesuLegacyCat => "Classic Yaesu CAT",
             Self::KenwoodCat => "Kenwood PC control",
+            Self::ElecraftCat => "Elecraft CAT",
         }
     }
 }
@@ -95,6 +99,48 @@ pub const GENERIC_YAESU_CLASSIC_MODEL: &str = "classic CAT (generic)";
 pub const GENERIC_KENWOOD_MODEL: &str = "PC control (generic)";
 
 impl RadioModelProfile {
+    /// Serial speeds suitable for the selected model, ordered from the
+    /// conservative choice to the fastest documented choice. These are
+    /// connection options for the client; the radio's own CAT setting still
+    /// has to match unless the transport performs an explicit probe.
+    pub fn supported_baud_rates(self) -> &'static [u32] {
+        const CIV_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
+        const YAESU_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400];
+        const LEGACY_YAESU_BAUD_RATES: &[u32] = &[4_800, 9_600, 38_400];
+        const KENWOOD_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
+
+        match self.protocol {
+            Protocol::IcomCiV { .. } => IcomCivModel::from_model_name(self.model)
+                .map(crate::icom::profile::profile_for_model)
+                .map(|profile| profile.baud_rates)
+                .unwrap_or(CIV_BAUD_RATES),
+            Protocol::YaesuCat => YaesuCatModel::from_model_name(self.model)
+                .map(crate::yaesu::profile::profile_for_model)
+                .map(|profile| profile.baud_rates)
+                .unwrap_or(YAESU_BAUD_RATES),
+            Protocol::YaesuLegacyCat => YaesuLegacyModel::from_model_name(self.model)
+                .map(crate::yaesu::legacy_profile::profile_for_model)
+                .map(|profile| profile.baud_rates)
+                .unwrap_or(LEGACY_YAESU_BAUD_RATES),
+            Protocol::KenwoodCat => KenwoodCatModel::from_model_name(self.model)
+                .map(crate::kenwood::profile::profile_for_model)
+                .map(|profile| profile.baud_rates)
+                .unwrap_or(KENWOOD_BAUD_RATES),
+            Protocol::ElecraftCat => {
+                crate::elecraft::profile::ElecraftModel::from_model_name(self.model)
+                    .map(crate::elecraft::profile::profile_for_model)
+                    .map(|profile| profile.baud_rates)
+                    .unwrap_or(&[])
+            }
+        }
+    }
+
+    /// Fastest profile-advertised serial speed, useful for a default UI
+    /// selection or a future transport probe policy.
+    pub fn fastest_supported_baud_rate(self) -> Option<u32> {
+        self.supported_baud_rates().iter().copied().max()
+    }
+
     /// Root-HAL operations implemented by the selected driver profile.
     pub fn driver_capabilities(self) -> crate::RadioCapabilities {
         let can_get_ptt = match self.protocol {
@@ -120,7 +166,10 @@ impl RadioModelProfile {
     /// Operators must still match the value configured on the radio.
     pub fn preferred_baud_rate(self) -> u32 {
         match self.protocol {
-            Protocol::IcomCiV { .. } => 115_200,
+            Protocol::IcomCiV { .. } => IcomCivModel::from_model_name(self.model)
+                .map(crate::icom::profile::profile_for_model)
+                .map(|profile| profile.preferred_baud_rate)
+                .unwrap_or(115_200),
             Protocol::YaesuCat => YaesuCatModel::from_model_name(self.model)
                 .map(crate::yaesu::profile::profile_for_model)
                 .and_then(|profile| profile.baud_rates.last().copied())
@@ -133,14 +182,18 @@ impl RadioModelProfile {
                 .map(crate::kenwood::profile::profile_for_model)
                 .and_then(|profile| profile.baud_rates.last().copied())
                 .unwrap_or(9_600),
+            Protocol::ElecraftCat => {
+                crate::elecraft::profile::ElecraftModel::from_model_name(self.model)
+                    .map(crate::elecraft::profile::profile_for_model)
+                    .and_then(|profile| profile.baud_rates.first().copied())
+                    .unwrap_or(9_600)
+            }
         }
     }
 
     /// Whether the selected model's implemented driver exposes a typed HAL
     /// control. This describes Rigwright behavior, not every manual feature.
     pub fn supports_control(self, id: crate::ControlId) -> bool {
-        use crate::ControlId;
-
         match self.protocol {
             Protocol::IcomCiV { .. } => {
                 let Some(model) = IcomCivModel::from_model_name(self.model) else {
@@ -153,30 +206,12 @@ impl RadioModelProfile {
                 let Some(model) = YaesuCatModel::from_model_name(self.model) else {
                     return false;
                 };
-                let profile = crate::yaesu::profile::profile_for_model(model);
-                (id == ControlId::RfPower && profile.power_range_watts.is_some())
-                    || (id == ControlId::Split && profile.supports_split)
-                    || matches!(
-                        id,
-                        ControlId::AfGain
-                            | ControlId::RfGain
-                            | ControlId::Squelch
-                            | ControlId::Preamp
-                            | ControlId::Attenuator
-                            | ControlId::NoiseBlanker
-                            | ControlId::Notch
-                            | ControlId::ManualNotch
-                            | ControlId::Filter
-                            | ControlId::Agc
-                            | ControlId::NoiseReduction
-                            | ControlId::NoiseReductionLevel
-                            | ControlId::Rit
-                            | ControlId::Xit
-                            | ControlId::Tuner
-                            | ControlId::Vfo
-                    )
+                crate::yaesu::profile::profile_for_model(model).supports_control(id)
             }
-            Protocol::YaesuLegacyCat => id == ControlId::Split,
+            Protocol::YaesuLegacyCat => YaesuLegacyModel::from_model_name(self.model)
+                .map(crate::yaesu::legacy_profile::profile_for_model)
+                .map(|profile| profile.supports_control(id))
+                .unwrap_or(id == crate::ControlId::Split),
             Protocol::KenwoodCat => {
                 let Some(model) = KenwoodCatModel::from_model_name(self.model) else {
                     return false;
@@ -184,6 +219,120 @@ impl RadioModelProfile {
                 let profile = crate::kenwood::profile::profile_for_model(model);
                 profile.supports_control(id)
             }
+            Protocol::ElecraftCat => {
+                let Some(model) =
+                    crate::elecraft::profile::ElecraftModel::from_model_name(self.model)
+                else {
+                    return false;
+                };
+                crate::elecraft::profile::profile_for_model(model).supports_control(id)
+            }
+        }
+    }
+
+    /// Model-owned discrete values for a typed numeric control.
+    pub fn supported_control_values(self, id: crate::ControlId) -> Option<&'static [u8]> {
+        use crate::ControlId;
+
+        match self.protocol {
+            Protocol::IcomCiV { .. } => {
+                let model = IcomCivModel::from_model_name(self.model)?;
+                let profile = crate::icom::profile::profile_for_model(model);
+                match id {
+                    ControlId::Attenuator => Some(profile.attenuator_values),
+                    ControlId::Filter => Some(profile.control_capabilities.filter_values),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Maximum value for a model-owned numeric control, when the profile uses
+    /// a contiguous range rather than a discrete value table.
+    pub fn control_max(self, id: crate::ControlId) -> Option<u8> {
+        use crate::ControlId;
+
+        match self.protocol {
+            Protocol::IcomCiV { .. } => {
+                let model = IcomCivModel::from_model_name(self.model)?;
+                let profile = crate::icom::profile::profile_for_model(model);
+                match id {
+                    ControlId::Preamp => Some(profile.preamp_max_level),
+                    ControlId::Agc => Some(profile.agc_max),
+                    ControlId::NoiseReductionLevel => Some(profile.noise_reduction_level_max),
+                    _ => None,
+                }
+            }
+            Protocol::YaesuCat => {
+                let model = YaesuCatModel::from_model_name(self.model)?;
+                crate::yaesu::profile::profile_for_model(model).control_max(id)
+            }
+            Protocol::KenwoodCat => {
+                let profile = KenwoodCatModel::from_model_name(self.model)
+                    .map(crate::kenwood::profile::profile_for_model)?;
+                if let Some(spec) = profile.control(id) {
+                    spec.max_value
+                } else if id == ControlId::RfPower && profile.power_range_watts.is_some() {
+                    Some(u8::MAX)
+                } else {
+                    None
+                }
+            }
+            Protocol::ElecraftCat => {
+                let profile = crate::elecraft::profile::ElecraftModel::from_model_name(self.model)
+                    .map(crate::elecraft::profile::profile_for_model)?;
+                match id {
+                    ControlId::AfGain => profile.af_gain_max.and_then(|v| u8::try_from(v).ok()),
+                    ControlId::RfGain => profile.rf_gain_max.and_then(|v| u8::try_from(v).ok()),
+                    ControlId::Preamp => profile.preamp_max,
+                    ControlId::Attenuator => profile.attenuator_max,
+                    ControlId::NoiseBlanker => profile.noise_blanker_level_max,
+                    ControlId::NoiseReductionLevel => profile.noise_reduction_level_max,
+                    ControlId::Agc => profile.agc_max,
+                    ControlId::Filter => profile.filter_max_hz.and_then(|v| u8::try_from(v).ok()),
+                    _ => None,
+                }
+            }
+            Protocol::YaesuLegacyCat => None,
+        }
+    }
+
+    /// Convert a normalized meter reading to a documented physical value when
+    /// the selected model has an authoritative calibration. `None` means the
+    /// neutral HAL should remain in normalized units.
+    pub fn calibrated_meter_value(self, id: crate::MeterId, raw: u8) -> Option<f32> {
+        use crate::MeterId;
+
+        if !matches!(self.protocol, Protocol::IcomCiV { .. }) || self.model != "IC-7300" {
+            return None;
+        }
+        match id {
+            MeterId::Swr => {
+                let anchors = [(0_u8, 1.0_f32), (48, 1.5), (80, 2.0), (120, 3.0)];
+                Some(
+                    anchors
+                        .windows(2)
+                        .find(|window| raw <= window[1].0)
+                        .map(|window| {
+                            let (low_level, low_ratio) = window[0];
+                            let (high_level, high_ratio) = window[1];
+                            let fraction = f32::from(raw.saturating_sub(low_level))
+                                / f32::from(high_level - low_level);
+                            low_ratio + fraction * (high_ratio - low_ratio)
+                        })
+                        .unwrap_or(3.0),
+                )
+            }
+            MeterId::Voltage => {
+                let value = f32::from(raw);
+                Some(if raw <= 13 {
+                    (value * 10.0 / 13.0).clamp(0.0, 10.0)
+                } else {
+                    (10.0 + (value - 13.0) * 6.0 / (241.0 - 13.0)).min(16.0)
+                })
+            }
+            _ => None,
         }
     }
 }
@@ -191,6 +340,8 @@ impl RadioModelProfile {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IcomCivModel {
     Ic705,
+    Ic718,
+    Ic7200,
     Ic7300,
     Ic7610,
     Ic9700,
@@ -240,6 +391,8 @@ impl IcomCivModel {
     pub fn model_name(self) -> &'static str {
         match self {
             Self::Ic705 => "IC-705",
+            Self::Ic718 => "IC-718",
+            Self::Ic7200 => "IC-7200",
             Self::Ic7300 => "IC-7300",
             Self::Ic7610 => "IC-7610",
             Self::Ic9700 => "IC-9700",
@@ -249,6 +402,8 @@ impl IcomCivModel {
     pub fn from_model_name(model: &str) -> Option<Self> {
         match model.to_ascii_uppercase().as_str() {
             "IC-705" => Some(Self::Ic705),
+            "IC-718" => Some(Self::Ic718),
+            "IC-7200" => Some(Self::Ic7200),
             "IC-7300" => Some(Self::Ic7300),
             "IC-7610" => Some(Self::Ic7610),
             "IC-9700" => Some(Self::Ic9700),
@@ -365,6 +520,24 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         },
         support: SupportLevel::HardwareValidated,
         capabilities: HF_SCOPE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Icom,
+        model: "IC-7200",
+        protocol: Protocol::IcomCiV {
+            default_address: 0x76,
+        },
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Icom,
+        model: "IC-718",
+        protocol: Protocol::IcomCiV {
+            default_address: 0x5E,
+        },
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Icom,
@@ -502,6 +675,55 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         support: SupportLevel::Framework,
         capabilities: ALL_MODE_BASE,
     },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Elecraft,
+        model: "K2",
+        protocol: Protocol::ElecraftCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Elecraft,
+        model: "KX2",
+        protocol: Protocol::ElecraftCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Elecraft,
+        model: "KX3",
+        protocol: Protocol::ElecraftCat,
+        support: SupportLevel::Framework,
+        capabilities: ALL_MODE_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Elecraft,
+        model: "K3",
+        protocol: Protocol::ElecraftCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Elecraft,
+        model: "K3S",
+        protocol: Protocol::ElecraftCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Elecraft,
+        model: "K4",
+        protocol: Protocol::ElecraftCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Elecraft,
+        model: "KH1",
+        protocol: Protocol::ElecraftCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
 ];
 
 pub fn find_model(model: &str) -> Option<&'static RadioModelProfile> {
@@ -517,6 +739,21 @@ mod tests {
     #[test]
     fn model_lookup_is_case_insensitive() {
         assert_eq!(find_model("ic-7300").unwrap().model, "IC-7300");
+    }
+
+    #[test]
+    fn model_profiles_own_documented_meter_calibration() {
+        let ic7300 = find_model("IC-7300").expect("IC-7300 profile");
+        assert_eq!(
+            ic7300.calibrated_meter_value(crate::MeterId::Swr, 80),
+            Some(2.0)
+        );
+        assert_eq!(
+            ic7300.calibrated_meter_value(crate::MeterId::Voltage, 13),
+            Some(10.0)
+        );
+        let ft710 = find_model("FT-710").expect("FT-710 profile");
+        assert_eq!(ft710.calibrated_meter_value(crate::MeterId::Swr, 80), None);
     }
 
     #[test]
@@ -628,7 +865,7 @@ mod tests {
     fn public_labels_and_defaults_come_from_catalog_metadata() {
         assert_eq!(
             Manufacturer::ALL.map(Manufacturer::label),
-            ["Icom", "Yaesu", "Kenwood"]
+            ["Icom", "Yaesu", "Kenwood", "Elecraft"]
         );
         assert_eq!(find_model("FTDX10").unwrap().preferred_baud_rate(), 38_400);
         assert_eq!(find_model("FT-857D").unwrap().preferred_baud_rate(), 4_800);
@@ -637,8 +874,25 @@ mod tests {
     }
 
     #[test]
+    fn catalog_exposes_profile_baud_choices_and_fastest_option() {
+        let ic7200 = *find_model("IC-7200").unwrap();
+        let k3 = *find_model("K3").unwrap();
+        let k4 = *find_model("K4").unwrap();
+        assert_eq!(k3.supported_baud_rates(), &[4_800, 9_600, 19_200, 38_400]);
+        assert_eq!(k3.fastest_supported_baud_rate(), Some(38_400));
+        assert_eq!(k4.fastest_supported_baud_rate(), Some(115_200));
+        assert!(k4.supported_baud_rates().starts_with(&[4_800, 9_600]));
+        assert_eq!(
+            ic7200.supported_baud_rates(),
+            &[300, 1_200, 4_800, 9_600, 19_200]
+        );
+        assert_eq!(ic7200.preferred_baud_rate(), 19_200);
+    }
+
+    #[test]
     fn typed_control_support_matches_driver_profiles() {
         let ic7300 = *find_model("IC-7300").unwrap();
+        let ic7200 = *find_model("IC-7200").unwrap();
         let ic7610 = *find_model("IC-7610").unwrap();
         let ic9700 = *find_model("IC-9700").unwrap();
         let ftdx10 = *find_model("FTDX10").unwrap();
@@ -647,6 +901,8 @@ mod tests {
         let ts890s = *find_model("TS-890S").unwrap();
         assert!(ic7300.supports_control(crate::ControlId::AfGain));
         assert!(ic7300.supports_control(crate::ControlId::Filter));
+        assert_eq!(ic7200.control_max(crate::ControlId::Agc), Some(2));
+        assert!(ic7200.supports_control(crate::ControlId::TuningStep));
         assert!(!ic7610.supports_control(crate::ControlId::Agc));
         assert!(ic9700.supports_control(crate::ControlId::MainSub));
         assert!(ic9700.supports_control(crate::ControlId::ExternalPreamp));
@@ -682,5 +938,23 @@ mod tests {
                 .driver_capabilities()
                 .can_get_ptt
         );
+    }
+
+    #[test]
+    fn control_bounds_are_exposed_by_the_selected_vendor_profile() {
+        let ic7300 = *find_model("IC-7300").unwrap();
+        let ftdx10 = *find_model("FTDX10").unwrap();
+        let ts890s = *find_model("TS-890S").unwrap();
+        let k4 = *find_model("K4").unwrap();
+
+        assert_eq!(ic7300.control_max(crate::ControlId::Preamp), Some(1));
+        assert_eq!(ic7300.control_max(crate::ControlId::Agc), Some(3));
+        assert_eq!(ftdx10.control_max(crate::ControlId::Agc), Some(4));
+        assert_eq!(
+            ftdx10.control_max(crate::ControlId::NoiseReductionLevel),
+            Some(15)
+        );
+        assert_eq!(ts890s.control_max(crate::ControlId::Agc), Some(3));
+        assert_eq!(k4.control_max(crate::ControlId::Agc), Some(3));
     }
 }

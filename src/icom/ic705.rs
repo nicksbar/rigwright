@@ -56,6 +56,8 @@ const METERS: &[MeterId] = &[
 
 pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     model: crate::models::IcomCivModel::Ic705,
+    baud_rates: super::profile::DEFAULT_BAUD_RATES,
+    preferred_baud_rate: 115_200,
     default_address: 0xA4,
     frequency_ranges: FREQUENCY_RANGES,
     controls: CONTROLS,
@@ -72,6 +74,8 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     external_preamp: None,
     attenuator_values: ATTENUATOR_VALUES,
     preamp_max_level: 2,
+    agc_max: 3,
+    noise_reduction_level_max: 15,
     supports_iq_output: false,
     meters: METERS,
     control_capabilities: ControlCapabilities {

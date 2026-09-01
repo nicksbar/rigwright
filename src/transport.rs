@@ -24,6 +24,16 @@ pub trait RadioTransport: Read + Write + Send {
     fn set_hardware_flow_control(&mut self, _enabled: bool) -> std::io::Result<()> {
         Ok(())
     }
+
+    /// Set the DTR modem-control line when the underlying transport exposes it.
+    fn set_dtr(&mut self, _enabled: bool) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    /// Set the RTS modem-control line when the underlying transport exposes it.
+    fn set_rts(&mut self, _enabled: bool) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 pub(crate) struct SerialPortTransport(pub(crate) Box<dyn SerialPort>);
@@ -64,6 +74,18 @@ impl RadioTransport for SerialPortTransport {
             })
             .map_err(std::io::Error::other)
     }
+
+    fn set_dtr(&mut self, enabled: bool) -> std::io::Result<()> {
+        self.0
+            .write_data_terminal_ready(enabled)
+            .map_err(std::io::Error::other)
+    }
+
+    fn set_rts(&mut self, enabled: bool) -> std::io::Result<()> {
+        self.0
+            .write_request_to_send(enabled)
+            .map_err(std::io::Error::other)
+    }
 }
 
 impl<T> RadioTransport for T
@@ -88,6 +110,14 @@ where
             },
         )
         .map_err(std::io::Error::other)
+    }
+
+    fn set_dtr(&mut self, enabled: bool) -> std::io::Result<()> {
+        SerialPort::write_data_terminal_ready(self, enabled).map_err(std::io::Error::other)
+    }
+
+    fn set_rts(&mut self, enabled: bool) -> std::io::Result<()> {
+        SerialPort::write_request_to_send(self, enabled).map_err(std::io::Error::other)
     }
 }
 
@@ -302,12 +332,16 @@ mod tests {
         transport.write_all(&[9, 8]).unwrap();
         transport.clear_input().unwrap();
         transport.set_hardware_flow_control(true).unwrap();
+        transport.set_dtr(true).unwrap();
+        transport.set_rts(true).unwrap();
         assert_eq!(transport.input, vec![3]);
         assert_eq!(transport.output, vec![9, 8]);
 
         let mut external = ExternalTransport;
         external.clear_input().unwrap();
         external.set_hardware_flow_control(true).unwrap();
+        external.set_dtr(true).unwrap();
+        external.set_rts(true).unwrap();
     }
 
     #[test]
@@ -355,6 +389,8 @@ mod tests {
         transport.set_timeout(Duration::from_millis(250)).unwrap();
         transport.clear_input().unwrap();
         transport.set_hardware_flow_control(true).unwrap();
+        transport.set_dtr(true).unwrap();
+        transport.set_rts(true).unwrap();
     }
 
     #[test]
@@ -372,6 +408,8 @@ mod tests {
         assert!(transport.set_timeout(Duration::from_millis(1)).is_err());
         assert!(transport.clear_input().is_err());
         assert!(transport.set_hardware_flow_control(true).is_err());
+        assert!(transport.set_dtr(true).is_ok());
+        assert!(transport.set_rts(true).is_ok());
     }
 
     #[test]

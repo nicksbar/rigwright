@@ -1,5 +1,73 @@
 # Changelog
 
+## 0.1.17 — Elecraft transceiver foundation
+
+- Document the Elecraft boundary between K2/KX/K3/K4/KH1 transceivers and
+  separate P3/PX3, KAT, and KPA/KXPA station components.
+- Add a profile-driven semicolon CAT transceiver backend for K2, KX2, KX3, K3,
+  K3S, and K4 core operations.
+- Route Elecraft Auto-Info frequency, mode, PTT, AF-gain, signal-meter, and raw
+  frames through the shared Rigwright event router.
+- Add profile-scaled Elecraft RF-gain and squelch controls through the common
+  normalized HAL value range.
+- Split the K2/KX2/KX3/K3/K3S/K4 declarations into focused per-model profile
+  modules, leaving shared contracts and driver behavior separate.
+- Record the direct-CAT backlog, command-family audit, implementation evidence,
+  and physical-tester gate in the Elecraft matrix and contributor guidance.
+- Implement the first direct-CAT control slice: identification query, RF power,
+  VFO/split routing, and RIT/XIT enable and offsets.
+- Implement profile-owned preamp, attenuator, noise-blanker, and AGC controls
+  using the documented `PA`, `RA`, `NB`, and `GT` command families.
+- Implement model-owned filter bandwidth and power/ALC/SWR meter decoding via
+  the documented `BW`/`FW`, `BG`, and `SW` command families.
+- Implement K4 internal-tuner mode/status and explicit `TU3` start handling.
+- Implement K4 repeater shift/offset read/write through the documented `RP`
+  command while rejecting unsupported tone fields.
+- Add the K4 mode-qualified `VT$` tuning-step control and response matching;
+  legacy-family step writes remain explicitly profile-gated.
+- Add K4-native level-bearing noise blanker and noise reduction controls via
+  `NB$`/`NR$`, preserving configured levels when toggling either feature.
+- Add a bounded raw `OM` option probe alongside `ID`, retaining family-specific
+  option interpretation for later model capability negotiation.
+- Add KX2/KX3/K3/K3S memory-channel selection through the documented three-digit
+  `MC` command while keeping undocumented record persistence unsupported.
+- Add official-but-untested Icom IC-718 CI-V profile support from the 2024
+  Advanced Manual, including address `5E`, HF/50 MHz controls, memory, and
+  S-meter metadata.
+- Move vendor-specific control inventories, bounds, and capability decisions
+  into driver profiles while preserving generic protocol fallbacks.
+- Refresh release coverage reporting from 242 tests: 81.49% overall, 85.65%
+  Icom, 96.34% HAL, and 84.07% Elecraft; all enforced local gates pass.
+- Decode K4 unsolicited `TM` TX-meter frames into typed ALC, power, and SWR
+  events and expose the documented `TM1`/`TM0` reporting toggle.
+- Add profile-gated Elecraft antenna selection through the documented `AN`
+  command, including K4's third ATU connector.
+- Add K4 auto/manual notch controls through `NA$` and `NM$`, including
+  normalized manual-notch position handling.
+- Correct K4 meter routing to use `SM$` signal and `PO` output-power queries;
+  K4 polled SWR is no longer advertised where the manual provides `TM`
+  unsolicited metering instead.
+- Decode the K4 fixed-position `OM` option bitmap while preserving its raw
+  option string for forward-compatible probing.
+- Clarify the Elecraft completion boundaries for accessory-owned tuners,
+  undocumented memory/tone records, and event-only or unavailable meters.
+- Add explicit independent Elecraft VFO-A/VFO-B frequency read/write methods
+  using `FA`/`FB`, while keeping receive/transmit selection semantics separate.
+- Add K3/K3S transmit meter-source selection through documented `TM0`/`TM1`
+  commands, keeping it distinct from K4's streaming `TM` reports.
+- Preserve the K4 `TM` compressor field as a typed normalized compression-meter
+  event alongside ALC, forward power, and SWR.
+- Add model-specific Elecraft VFO movement through `UP`/`DN` and `UPB`/`DNB`,
+  including K3-family step-table indices and K2/K4 current-step behavior.
+- Decode documented K3/K3S/KX2/KX3 `OM` option responses while retaining the
+  raw family-specific flag string and explicit K4/KH1 schema boundary.
+- Expose K4's actual-RF transmit query through `TQX`, distinct from logical
+  `TQ` state during the documented S-meter holdoff interval.
+- Correct K4 RF-power handling to use the documented 110 W `PCnnnH` range
+  framing while preserving legacy numeric `PC` behavior on other models.
+- Keep KH1, K4 streaming/Ethernet, and tuner/amplifier/panadapter components
+  outside this initial radio slice.
+
 ## 0.1.16 — model-correct meter capabilities
 
 - Correct the IC-7300 capability profile to omit temperature, which is

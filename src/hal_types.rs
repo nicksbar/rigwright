@@ -88,6 +88,8 @@ pub enum ControlId {
     ManualNotchPosition,
     DataMode,
     Filter,
+    /// Vendor-native tuning-step selector where the protocol exposes one.
+    TuningStep,
     Agc,
     Rit,
     Xit,
@@ -99,6 +101,39 @@ pub enum ControlId {
     ExternalPreamp,
     /// Model-specific antenna connector selection.
     Antenna,
+}
+
+impl ControlId {
+    /// Complete inventory used by consumers that need to discover a driver's
+    /// typed control surface. Drivers still decide which entries they support.
+    pub const ALL: &'static [Self] = &[
+        Self::AfGain,
+        Self::RfGain,
+        Self::Squelch,
+        Self::RfPower,
+        Self::Preamp,
+        Self::Attenuator,
+        Self::NoiseBlanker,
+        Self::NoiseReduction,
+        Self::NoiseReductionLevel,
+        Self::IpPlus,
+        Self::Notch,
+        Self::ManualNotch,
+        Self::ManualNotchPosition,
+        Self::DataMode,
+        Self::Filter,
+        Self::TuningStep,
+        Self::Agc,
+        Self::Rit,
+        Self::Xit,
+        Self::Split,
+        Self::Tuner,
+        Self::RawCiV,
+        Self::Vfo,
+        Self::MainSub,
+        Self::ExternalPreamp,
+        Self::Antenna,
+    ];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -121,6 +156,21 @@ pub enum MeterId {
     Temperature,
 }
 
+impl MeterId {
+    /// Complete inventory used by consumers that need to discover a driver's
+    /// normalized meter surface.
+    pub const ALL: &'static [Self] = &[
+        Self::Signal,
+        Self::Power,
+        Self::Swr,
+        Self::Alc,
+        Self::Compression,
+        Self::Current,
+        Self::Voltage,
+        Self::Temperature,
+    ];
+}
+
 /// Normalize a vendor meter-dot value to the HAL's common 0..=255 scale.
 ///
 /// The value represents meter deflection, not a physical SWR ratio. Drivers
@@ -132,9 +182,18 @@ pub fn normalize_meter_level(value: u16, vendor_max: u16) -> Option<u8> {
     Some((((u32::from(value) * 255) + u32::from(vendor_max) / 2) / u32::from(vendor_max)) as u8)
 }
 
+/// Convert a HAL 0..=255 level to a documented vendor range using the same
+/// half-up rounding policy as [`normalize_meter_level`].
+pub fn denormalize_meter_level(level: u8, vendor_max: u16) -> Option<u16> {
+    if vendor_max == 0 {
+        return None;
+    }
+    Some(((u32::from(level) * u32::from(vendor_max) + 127) / 255) as u16)
+}
+
 #[cfg(test)]
 mod meter_tests {
-    use super::normalize_meter_level;
+    use super::{denormalize_meter_level, normalize_meter_level};
 
     #[test]
     fn normalizes_vendor_meter_ranges() {
@@ -146,6 +205,21 @@ mod meter_tests {
         assert_eq!(normalize_meter_level(255, 255), Some(255));
         assert_eq!(normalize_meter_level(31, 30), None);
         assert_eq!(normalize_meter_level(0, 0), None);
+        assert_eq!(denormalize_meter_level(0, 30), Some(0));
+        assert_eq!(denormalize_meter_level(128, 30), Some(15));
+        assert_eq!(denormalize_meter_level(255, 30), Some(30));
+        assert_eq!(denormalize_meter_level(128, 0), None);
+        for maximum in [1, 3, 15, 30, 70, 250, 999] {
+            let tolerance = (255 / maximum) + 1;
+            for level in u8::MIN..=u8::MAX {
+                let native = denormalize_meter_level(level, maximum).unwrap();
+                let round_trip = normalize_meter_level(native, maximum).unwrap();
+                assert!(
+                    u16::from(round_trip).abs_diff(u16::from(level)) <= tolerance,
+                    "maximum={maximum}, level={level}, native={native}, round_trip={round_trip}, tolerance={tolerance}"
+                );
+            }
+        }
     }
 }
 

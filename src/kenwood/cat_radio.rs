@@ -1,6 +1,7 @@
 //! Model-neutral transport for Kenwood semicolon-terminated PC control.
 
 use std::{
+    collections::VecDeque,
     io::ErrorKind,
     sync::{Arc, Mutex},
     thread,
@@ -15,8 +16,8 @@ use crate::{
     events::{RadioEvent, RadioEventRouter},
     hal::{Mode, Radio, RadioCapabilities},
     hal_types::{
-        normalize_meter_level, ControlId, ControlValue, MemoryChannel, MeterId, RepeaterSettings,
-        RepeaterShift, ToneMode, ToneSettings,
+        denormalize_meter_level, normalize_meter_level, ControlId, ControlValue, MemoryChannel,
+        MeterId, RepeaterSettings, RepeaterShift, ToneMode, ToneSettings,
     },
     models::KenwoodCatModel,
     protocol::ascii_cat,
@@ -30,12 +31,47 @@ use super::profile::{
 
 const RESPONSE_TIMEOUT: Duration = Duration::from_millis(1_200);
 const MAX_FRAME_LEN: usize = 512;
+const MAX_RETAINED_FRAMES: usize = 128;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KenwoodTransportMetrics {
+    pub commands_started: u64,
+    pub responses_matched: u64,
+    pub response_timeouts: u64,
+    pub bytes_read: u64,
+    pub frames_received: u64,
+    pub frames_retained: u64,
+    pub frames_dropped: u64,
+    pub total_response_time: Duration,
+    pub consecutive_timeouts: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KenwoodSerialPolicy {
+    pub hardware_flow_control: bool,
+    pub dtr: Option<bool>,
+    pub rts: Option<bool>,
+    pub startup_settle: Duration,
+}
+
+impl Default for KenwoodSerialPolicy {
+    fn default() -> Self {
+        Self {
+            hardware_flow_control: false,
+            dtr: None,
+            rts: None,
+            startup_settle: Duration::from_millis(50),
+        }
+    }
+}
 
 #[derive(Default)]
 struct TransportState {
     port: Option<Box<dyn RadioTransport>>,
     external: Option<Box<dyn RadioTransport>>,
     pending: Vec<u8>,
+    retained: VecDeque<Vec<u8>>,
+    metrics: KenwoodTransportMetrics,
 }
 
 fn active_transport(state: &mut TransportState) -> Result<&mut dyn RadioTransport> {
@@ -61,6 +97,7 @@ pub struct KenwoodCatRadio {
     baud_rate: u32,
     transport: Arc<Mutex<TransportState>>,
     event_router: RadioEventRouter,
+    serial_policy: KenwoodSerialPolicy,
 }
 
 impl std::fmt::Debug for KenwoodCatRadio {
@@ -115,8 +152,11 @@ impl KenwoodCatRadio {
                 port: None,
                 external: Some(Box::new(transport)),
                 pending: Vec::new(),
+                retained: VecDeque::new(),
+                metrics: KenwoodTransportMetrics::default(),
             })),
             event_router: RadioEventRouter::default(),
+            serial_policy: KenwoodSerialPolicy::default(),
         }
     }
 
@@ -131,6 +171,7 @@ impl KenwoodCatRadio {
             baud_rate,
             transport: Arc::new(Mutex::new(TransportState::default())),
             event_router: RadioEventRouter::default(),
+            serial_policy: KenwoodSerialPolicy::default(),
         }
     }
 
@@ -140,6 +181,18 @@ impl KenwoodCatRadio {
 
     pub fn baud_rate(&self) -> u32 {
         self.baud_rate
+    }
+
+    pub fn transport_metrics(&self) -> KenwoodTransportMetrics {
+        self.transport
+            .lock()
+            .map(|state| state.metrics)
+            .unwrap_or_default()
+    }
+
+    pub fn with_serial_policy(mut self, policy: KenwoodSerialPolicy) -> Self {
+        self.serial_policy = policy;
+        self
     }
 
     /// Enable or disable Kenwood Auto Information output on this connection.
@@ -699,7 +752,10 @@ impl KenwoodCatRadio {
         F: FnMut(&[u8]) -> bool,
     {
         validate_complete_command(request)?;
-        self.with_transport(Duration::from_millis(150), |state| {
+        let started = Instant::now();
+        let response_timeout = self.response_timeout();
+        self.with_transport(response_timeout, |state| {
+            state.metrics.commands_started = state.metrics.commands_started.saturating_add(1);
             active_transport(state)?
                 .write_all(request)
                 .context("failed to write Kenwood CAT command")?;
@@ -707,10 +763,19 @@ impl KenwoodCatRadio {
                 .flush()
                 .context("failed to flush Kenwood CAT command")?;
 
-            let deadline = Instant::now() + RESPONSE_TIMEOUT;
+            if let Some(index) = state.retained.iter().position(|frame| matcher(frame)) {
+                let frame = state.retained.remove(index).expect("retained frame index");
+                state.metrics.responses_matched = state.metrics.responses_matched.saturating_add(1);
+                state.metrics.total_response_time += started.elapsed();
+                state.metrics.consecutive_timeouts = 0;
+                return Ok(frame);
+            }
+
+            let deadline = Instant::now() + response_timeout;
             let mut buffer = [0_u8; 256];
             while Instant::now() < deadline {
                 for frame in take_complete_frames(&mut state.pending) {
+                    state.metrics.frames_received = state.metrics.frames_received.saturating_add(1);
                     match frame.as_slice() {
                         b"?;" => bail!("Kenwood CAT rejected {}", display_command(request)),
                         b"E;" => bail!(
@@ -721,13 +786,33 @@ impl KenwoodCatRadio {
                             "Kenwood CAT receive-buffer overrun after {}",
                             display_command(request)
                         ),
-                        _ if matcher(&frame) => return Ok(frame),
-                        _ => self.publish_unsolicited(&frame),
+                        _ if matcher(&frame) => {
+                            state.metrics.responses_matched =
+                                state.metrics.responses_matched.saturating_add(1);
+                            state.metrics.total_response_time += started.elapsed();
+                            state.metrics.consecutive_timeouts = 0;
+                            return Ok(frame);
+                        }
+                        _ => {
+                            self.publish_unsolicited(&frame);
+                            if state.retained.len() >= MAX_RETAINED_FRAMES {
+                                state.retained.pop_front();
+                                state.metrics.frames_dropped =
+                                    state.metrics.frames_dropped.saturating_add(1);
+                            }
+                            state.retained.push_back(frame);
+                            state.metrics.frames_retained =
+                                state.metrics.frames_retained.saturating_add(1);
+                        }
                     }
                 }
 
                 match active_transport(state)?.read(&mut buffer) {
-                    Ok(count) if count > 0 => state.pending.extend_from_slice(&buffer[..count]),
+                    Ok(count) if count > 0 => {
+                        state.metrics.bytes_read =
+                            state.metrics.bytes_read.saturating_add(count as u64);
+                        state.pending.extend_from_slice(&buffer[..count])
+                    }
                     Ok(_) => {}
                     Err(error) if error.kind() == ErrorKind::TimedOut => {}
                     Err(error) => return Err(error).context("failed to read Kenwood CAT response"),
@@ -735,13 +820,25 @@ impl KenwoodCatRadio {
                 if state.pending.len() > MAX_FRAME_LEN * 4 {
                     bail!("Kenwood CAT receive buffer exceeded safety limit");
                 }
-                thread::sleep(Duration::from_millis(5));
+                thread::sleep(Duration::from_millis(1));
             }
+            state.metrics.response_timeouts = state.metrics.response_timeouts.saturating_add(1);
+            state.metrics.consecutive_timeouts =
+                state.metrics.consecutive_timeouts.saturating_add(1);
             bail!(
                 "timed out waiting for Kenwood CAT response to {}",
                 display_command(request)
             )
         })
+    }
+
+    fn response_timeout(&self) -> Duration {
+        let consecutive = self
+            .transport
+            .lock()
+            .map(|state| state.metrics.consecutive_timeouts)
+            .unwrap_or(0);
+        RESPONSE_TIMEOUT.mul_f32(1.0_f32 + consecutive.min(2) as f32)
     }
 
     fn with_transport<T, F>(&self, timeout: Duration, operation: F) -> Result<T>
@@ -773,11 +870,23 @@ impl KenwoodCatRadio {
                     .data_bits(DataBits::Eight)
                     .parity(Parity::None)
                     .stop_bits(stop_bits)
-                    .flow_control(FlowControl::None)
+                    .flow_control(if self.serial_policy.hardware_flow_control {
+                        FlowControl::Hardware
+                    } else {
+                        FlowControl::None
+                    })
                     .timeout(timeout)
                     .open()
                     .with_context(|| format!("failed to open Kenwood CAT port {}", self.port))?,
             )));
+            if let Some(enabled) = self.serial_policy.dtr {
+                active_transport(&mut state)?.set_dtr(enabled)?;
+            }
+            if let Some(enabled) = self.serial_policy.rts {
+                active_transport(&mut state)?.set_rts(enabled)?;
+            }
+            active_transport(&mut state)?.clear_input()?;
+            thread::sleep(self.serial_policy.startup_settle);
         }
         active_transport(&mut state)?
             .set_timeout(timeout)
@@ -830,8 +939,8 @@ impl KenwoodCatRadio {
         if !(minimum..=maximum).contains(&watts) {
             bail!("CAT power response is outside the profiled range: {watts} W");
         }
-        let span = u32::from(maximum - minimum);
-        Ok((((u32::from(watts - minimum) * 255) + span / 2) / span) as u8)
+        normalize_meter_level(watts - minimum, maximum - minimum)
+            .context("Kenwood RF power range cannot be normalized")
     }
 
     fn normalized_to_watts(&self, level: u8) -> Result<u16> {
@@ -839,8 +948,9 @@ impl KenwoodCatRadio {
             .selected_profile()?
             .power_range_watts
             .context("RF power control is not profiled for this Kenwood model")?;
-        let span = u32::from(maximum - minimum);
-        Ok(minimum + (((u32::from(level) * span) + 127) / 255) as u16)
+        Ok(minimum
+            + denormalize_meter_level(level, maximum - minimum)
+                .context("Kenwood RF power range cannot be denormalized")?)
     }
 }
 
@@ -1145,13 +1255,11 @@ impl Radio for KenwoodCatRadio {
 
     fn supports_control(&self, id: ControlId) -> bool {
         self.profile().is_some_and(|profile| {
-            ((matches!(
-                id,
-                ControlId::AfGain | ControlId::RfGain | ControlId::Squelch
-            )) || (id == ControlId::RfPower && profile.power_range_watts.is_some()))
-                || profile.control(id).is_some()
-                || id == ControlId::Vfo
-                || id == ControlId::Split
+            profile.supports_control(id)
+                || matches!(
+                    id,
+                    ControlId::AfGain | ControlId::RfGain | ControlId::Squelch
+                )
         })
     }
 
@@ -1889,5 +1997,13 @@ mod tests {
         assert!(writes.lock().unwrap().iter().any(|frame| frame == b"FT0;"));
         assert!(futures::executor::block_on(radio.set_frequency_hz(145_000_000)).is_ok());
         assert!(futures::executor::block_on(radio.set_frequency_hz(1_301_000_000)).is_err());
+    }
+
+    #[test]
+    fn power_controls_use_the_shared_hal_rounding_policy() {
+        let radio =
+            KenwoodCatRadio::new_for_model(KenwoodCatModel::Ts590Sg, "test", 9_600).unwrap();
+        assert_eq!(radio.watts_to_normalized(53).unwrap(), 129);
+        assert_eq!(radio.normalized_to_watts(128).unwrap(), 53);
     }
 }

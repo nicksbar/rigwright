@@ -73,6 +73,8 @@ pub struct KenwoodCatProfile {
     pub modes: &'static [KenwoodModeSpec],
     pub mode_command: KenwoodModeCommand,
     pub split_command: KenwoodSplitCommand,
+    pub supports_vfo: bool,
+    pub supports_split: bool,
     /// `IF;` exposes RX/TX state on the older command family.
     pub supports_if_status: bool,
     pub power_range_watts: Option<(u16, u16)>,
@@ -153,7 +155,8 @@ impl KenwoodCatProfile {
     pub fn supports_control(self, id: ControlId) -> bool {
         self.control(id).is_some()
             || (id == ControlId::RfPower && self.power_range_watts.is_some())
-            || matches!(id, ControlId::Split | ControlId::Vfo)
+            || (id == ControlId::Vfo && self.supports_vfo)
+            || (id == ControlId::Split && self.supports_split)
     }
 }
 
@@ -456,6 +459,8 @@ pub const TS590SG_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
         supports_data_flag: true,
     },
     split_command: KenwoodSplitCommand::ReceiverTransmitterVfo,
+    supports_vfo: true,
+    supports_split: true,
     supports_if_status: true,
     power_range_watts: Some((5, 100)),
     meter_max: 30,
@@ -479,6 +484,8 @@ pub const TS890S_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     modes: TS890_MODES,
     mode_command: KenwoodModeCommand::Om,
     split_command: KenwoodSplitCommand::Tb,
+    supports_vfo: true,
+    supports_split: true,
     supports_if_status: false,
     power_range_watts: Some((5, 100)),
     meter_max: 70,
@@ -504,6 +511,8 @@ pub const TS2000_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
         supports_data_flag: false,
     },
     split_command: KenwoodSplitCommand::ReceiverTransmitterVfo,
+    supports_vfo: true,
+    supports_split: true,
     supports_if_status: true,
     power_range_watts: Some((5, 100)),
     meter_max: 30,
@@ -581,6 +590,10 @@ mod tests {
         assert!(TS590SG_PROFILE.control(ControlId::Filter).is_some());
         assert!(TS890S_PROFILE.control(ControlId::Agc).is_some());
         assert!(TS2000_PROFILE.control(ControlId::Filter).is_none());
+        for profile in [TS590SG_PROFILE, TS890S_PROFILE, TS2000_PROFILE] {
+            assert!(profile.supports_control(ControlId::Vfo));
+            assert!(profile.supports_control(ControlId::Split));
+        }
     }
 
     #[test]

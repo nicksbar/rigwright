@@ -8,6 +8,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::{
+    elecraft::ElecraftRadio,
     icom::{CiVTransport, IcomCiVRadio},
     kenwood::KenwoodCatRadio,
     yaesu::{LegacyYaesuRadio, YaesuCatRadio},
@@ -29,6 +30,7 @@ enum AndroidRadioFamily {
     Yaesu(YaesuCatRadio),
     YaesuLegacy(LegacyYaesuRadio),
     Kenwood(KenwoodCatRadio),
+    Elecraft(ElecraftRadio),
 }
 
 impl RadioAndroid {
@@ -101,6 +103,22 @@ impl RadioAndroid {
         }
     }
 
+    /// Create an Elecraft transceiver over an Android-provided transport.
+    pub fn new_elecraft<T>(
+        model: Option<crate::ElecraftModel>,
+        baud_rate: u32,
+        transport: T,
+    ) -> Result<Self>
+    where
+        T: RadioTransport + 'static,
+    {
+        Ok(Self {
+            inner: AndroidRadioFamily::Elecraft(ElecraftRadio::with_external_transport(
+                model, baud_rate, transport,
+            )?),
+        })
+    }
+
     /// Return the underlying Icom driver when this instance is Icom CI-V.
     pub fn icom(&self) -> Option<&IcomCiVRadio> {
         match &self.inner {
@@ -115,6 +133,7 @@ impl RadioAndroid {
             AndroidRadioFamily::Yaesu(radio) => radio,
             AndroidRadioFamily::YaesuLegacy(radio) => radio,
             AndroidRadioFamily::Kenwood(radio) => radio,
+            AndroidRadioFamily::Elecraft(radio) => radio,
         }
     }
 }
@@ -369,6 +388,10 @@ mod tests {
                 9_600,
                 NoopTransport,
             )),
+            Box::new(
+                RadioAndroid::new_elecraft(Some(crate::ElecraftModel::K4), 9_600, NoopTransport)
+                    .unwrap(),
+            ),
         ];
 
         assert!(radios

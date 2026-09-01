@@ -27,6 +27,8 @@ jobs:
           set -o pipefail
           cargo llvm-cov --locked --all-features --workspace --summary-only | tee coverage-summary.txt
           bash scripts/check-icom-coverage.sh coverage-summary.txt
+      - name: Enforce Elecraft coverage threshold
+        run: bash scripts/check-elecraft-coverage.sh coverage-summary.txt
       - name: Enforce changed production-file coverage
         env:
           GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -46,6 +48,7 @@ jobs:
             if [[ -f coverage-summary.txt ]]; then
               cat coverage-summary.txt
               bash scripts/check-icom-coverage.sh coverage-summary.txt
+              bash scripts/check-elecraft-coverage.sh coverage-summary.txt
             else
               echo 'Coverage summary was not generated.'
             fi

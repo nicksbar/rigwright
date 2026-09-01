@@ -1,6 +1,7 @@
 //! Model-neutral transport for modern Yaesu ASCII CAT radios.
 
 use std::{
+    collections::VecDeque,
     io::ErrorKind,
     sync::{Arc, Mutex},
     thread,
@@ -15,8 +16,8 @@ use crate::{
     events::{RadioEvent, RadioEventRouter, RadioEventSubscription},
     hal::{Mode, Radio, RadioCapabilities},
     hal_types::{
-        ControlId, ControlValue, MemoryChannel, MeterId, RepeaterSettings, RepeaterShift, ToneMode,
-        ToneSettings, TunerStatus,
+        denormalize_meter_level, normalize_meter_level, ControlId, ControlValue, MemoryChannel,
+        MeterId, RepeaterSettings, RepeaterShift, ToneMode, ToneSettings, TunerStatus,
     },
     models::YaesuCatModel,
     protocol::ascii_cat,
@@ -28,12 +29,47 @@ use super::profile::{profile_for_model, YaesuCatProfile};
 const RESPONSE_TIMEOUT: Duration = Duration::from_millis(1_200);
 const MAX_FRAME_LEN: usize = 512;
 const RM_RESPONSE_PAYLOAD_LEN: usize = 7;
+const MAX_RETAINED_FRAMES: usize = 128;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct YaesuTransportMetrics {
+    pub commands_started: u64,
+    pub responses_matched: u64,
+    pub response_timeouts: u64,
+    pub bytes_read: u64,
+    pub frames_received: u64,
+    pub frames_retained: u64,
+    pub frames_dropped: u64,
+    pub total_response_time: Duration,
+    pub consecutive_timeouts: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct YaesuSerialPolicy {
+    pub hardware_flow_control: bool,
+    pub dtr: Option<bool>,
+    pub rts: Option<bool>,
+    pub startup_settle: Duration,
+}
+
+impl Default for YaesuSerialPolicy {
+    fn default() -> Self {
+        Self {
+            hardware_flow_control: false,
+            dtr: None,
+            rts: None,
+            startup_settle: Duration::from_millis(50),
+        }
+    }
+}
 
 #[derive(Default)]
 struct TransportState {
     port: Option<Box<dyn RadioTransport>>,
     external: Option<Box<dyn RadioTransport>>,
     pending: Vec<u8>,
+    retained: VecDeque<Vec<u8>>,
+    metrics: YaesuTransportMetrics,
 }
 
 fn active_transport(state: &mut TransportState) -> Result<&mut dyn RadioTransport> {
@@ -59,6 +95,7 @@ pub struct YaesuCatRadio {
     baud_rate: u32,
     hardware_flow_control: Arc<Mutex<bool>>,
     cat_rts_detected: Arc<Mutex<bool>>,
+    serial_policy: Arc<Mutex<YaesuSerialPolicy>>,
     transport: Arc<Mutex<TransportState>>,
     event_router: RadioEventRouter,
 }
@@ -143,9 +180,15 @@ impl YaesuCatRadio {
                 port: None,
                 external: Some(Box::new(transport)),
                 pending: Vec::new(),
+                retained: VecDeque::new(),
+                metrics: YaesuTransportMetrics::default(),
             })),
             hardware_flow_control: Arc::new(Mutex::new(false)),
             cat_rts_detected: Arc::new(Mutex::new(false)),
+            serial_policy: Arc::new(Mutex::new(YaesuSerialPolicy {
+                hardware_flow_control: false,
+                ..Default::default()
+            })),
             event_router: RadioEventRouter::default(),
         }
     }
@@ -157,6 +200,7 @@ impl YaesuCatRadio {
             baud_rate,
             hardware_flow_control: Arc::new(Mutex::new(false)),
             cat_rts_detected: Arc::new(Mutex::new(false)),
+            serial_policy: Arc::new(Mutex::new(YaesuSerialPolicy::default())),
             transport: Arc::new(Mutex::new(TransportState::default())),
             event_router: RadioEventRouter::default(),
         }
@@ -168,6 +212,26 @@ impl YaesuCatRadio {
 
     pub fn baud_rate(&self) -> u32 {
         self.baud_rate
+    }
+
+    pub fn transport_metrics(&self) -> YaesuTransportMetrics {
+        self.transport
+            .lock()
+            .map(|state| state.metrics)
+            .unwrap_or_default()
+    }
+
+    pub fn with_serial_policy(self, policy: YaesuSerialPolicy) -> Result<Self> {
+        *self
+            .serial_policy
+            .lock()
+            .map_err(|_| anyhow!("Yaesu CAT serial policy lock poisoned"))? = policy;
+        *self
+            .hardware_flow_control
+            .lock()
+            .map_err(|_| anyhow!("Yaesu CAT flow-control state lock poisoned"))? =
+            policy.hardware_flow_control;
+        Ok(self)
     }
 
     /// Enable Yaesu CAT auto-information and return a subscription for the
@@ -497,7 +561,10 @@ impl YaesuCatRadio {
         F: FnMut(&[u8]) -> bool,
     {
         validate_complete_command(request)?;
-        self.with_transport(Duration::from_millis(150), |state| {
+        let started = Instant::now();
+        let response_timeout = self.response_timeout();
+        self.with_transport(response_timeout, |state| {
+            state.metrics.commands_started = state.metrics.commands_started.saturating_add(1);
             active_transport(state)?
                 .write_all(request)
                 .context("failed to write Yaesu CAT command")?;
@@ -505,21 +572,41 @@ impl YaesuCatRadio {
                 .flush()
                 .context("failed to flush Yaesu CAT command")?;
 
-            let deadline = Instant::now() + RESPONSE_TIMEOUT;
+            if let Some(index) = state.retained.iter().position(|frame| matcher(frame)) {
+                let frame = state.retained.remove(index).expect("retained frame index");
+                state.metrics.responses_matched = state.metrics.responses_matched.saturating_add(1);
+                state.metrics.total_response_time += started.elapsed();
+                return Ok(frame);
+            }
+
+            let deadline = Instant::now() + response_timeout;
             let mut buffer = [0_u8; 256];
             while Instant::now() < deadline {
                 for frame in take_complete_frames(&mut state.pending) {
+                    state.metrics.frames_received = state.metrics.frames_received.saturating_add(1);
                     if frame == b"?;" {
                         bail!("Yaesu CAT rejected command {}", display_command(request));
                     }
                     if matcher(&frame) {
+                        state.metrics.responses_matched =
+                            state.metrics.responses_matched.saturating_add(1);
+                        state.metrics.total_response_time += started.elapsed();
                         return Ok(frame);
                     }
                     self.publish_unsolicited(&frame);
+                    if state.retained.len() >= MAX_RETAINED_FRAMES {
+                        state.retained.pop_front();
+                        state.metrics.frames_dropped =
+                            state.metrics.frames_dropped.saturating_add(1);
+                    }
+                    state.retained.push_back(frame);
+                    state.metrics.frames_retained = state.metrics.frames_retained.saturating_add(1);
                 }
 
                 match active_transport(state)?.read(&mut buffer) {
                     Ok(count) if count > 0 => {
+                        state.metrics.bytes_read =
+                            state.metrics.bytes_read.saturating_add(count as u64);
                         state.pending.extend_from_slice(&buffer[..count]);
                         if state.pending.len() > MAX_FRAME_LEN * 4 {
                             bail!("Yaesu CAT receive buffer exceeded safety limit");
@@ -529,13 +616,25 @@ impl YaesuCatRadio {
                     Err(error) if error.kind() == ErrorKind::TimedOut => {}
                     Err(error) => return Err(error).context("failed to read Yaesu CAT response"),
                 }
-                thread::sleep(Duration::from_millis(5));
+                thread::sleep(Duration::from_millis(1));
             }
+            state.metrics.response_timeouts = state.metrics.response_timeouts.saturating_add(1);
+            state.metrics.consecutive_timeouts =
+                state.metrics.consecutive_timeouts.saturating_add(1);
             bail!(
                 "timed out waiting for Yaesu CAT response to {}",
                 display_command(request)
             )
         })
+    }
+
+    fn response_timeout(&self) -> Duration {
+        let consecutive = self
+            .transport
+            .lock()
+            .map(|state| state.metrics.consecutive_timeouts)
+            .unwrap_or(0);
+        RESPONSE_TIMEOUT.mul_f32(1.0_f32 + consecutive.min(2) as f32)
     }
 
     fn with_transport<T, F>(&self, timeout: Duration, operation: F) -> Result<T>
@@ -557,25 +656,32 @@ impl YaesuCatRadio {
             .lock()
             .map_err(|_| anyhow!("Yaesu CAT transport lock poisoned"))?;
         if state.port.is_none() && state.external.is_none() {
-            state.port =
-                Some(Box::new(SerialPortTransport(
-                    serialport::new(&self.port, self.baud_rate)
-                        .data_bits(DataBits::Eight)
-                        .parity(Parity::None)
-                        .stop_bits(StopBits::One)
-                        .flow_control(
-                            if *self.hardware_flow_control.lock().map_err(|_| {
-                                anyhow!("Yaesu CAT flow-control state lock poisoned")
-                            })? {
-                                FlowControl::Hardware
-                            } else {
-                                FlowControl::None
-                            },
-                        )
-                        .timeout(timeout)
-                        .open()
-                        .with_context(|| format!("failed to open Yaesu CAT port {}", self.port))?,
-                )));
+            let policy = *self
+                .serial_policy
+                .lock()
+                .map_err(|_| anyhow!("Yaesu CAT serial policy lock poisoned"))?;
+            state.port = Some(Box::new(SerialPortTransport(
+                serialport::new(&self.port, self.baud_rate)
+                    .data_bits(DataBits::Eight)
+                    .parity(Parity::None)
+                    .stop_bits(StopBits::One)
+                    .flow_control(if policy.hardware_flow_control {
+                        FlowControl::Hardware
+                    } else {
+                        FlowControl::None
+                    })
+                    .timeout(timeout)
+                    .open()
+                    .with_context(|| format!("failed to open Yaesu CAT port {}", self.port))?,
+            )));
+            if let Some(enabled) = policy.dtr {
+                active_transport(&mut state)?.set_dtr(enabled)?;
+            }
+            if let Some(enabled) = policy.rts {
+                active_transport(&mut state)?.set_rts(enabled)?;
+            }
+            active_transport(&mut state)?.clear_input()?;
+            thread::sleep(policy.startup_settle);
         }
         active_transport(&mut state)?
             .set_timeout(timeout)
@@ -928,29 +1034,8 @@ impl Radio for YaesuCatRadio {
     }
 
     fn supports_control(&self, id: ControlId) -> bool {
-        self.profile().is_some_and(|profile| {
-            (id == ControlId::RfPower && profile.power_range_watts.is_some())
-                || (id == ControlId::Split && profile.supports_split)
-                || matches!(
-                    id,
-                    ControlId::AfGain
-                        | ControlId::RfGain
-                        | ControlId::Squelch
-                        | ControlId::Preamp
-                        | ControlId::Attenuator
-                        | ControlId::NoiseBlanker
-                        | ControlId::NoiseReduction
-                        | ControlId::NoiseReductionLevel
-                        | ControlId::Notch
-                        | ControlId::ManualNotch
-                        | ControlId::Filter
-                        | ControlId::Agc
-                        | ControlId::Rit
-                        | ControlId::Xit
-                        | ControlId::Tuner
-                        | ControlId::Vfo
-                )
-        })
+        self.profile()
+            .is_some_and(|profile| profile.supports_control(id))
     }
 
     fn supports_control_read(&self, id: ControlId) -> bool {
@@ -1110,8 +1195,8 @@ impl YaesuCatRadio {
         if !(minimum..=maximum).contains(&watts) {
             bail!("CAT power response is outside the profiled range: {watts} W");
         }
-        let span = u32::from(maximum - minimum);
-        Ok((((u32::from(watts - minimum) * 255) + span / 2) / span) as u8)
+        normalize_meter_level(watts - minimum, maximum - minimum)
+            .context("Yaesu RF power range cannot be normalized")
     }
 
     fn normalized_to_watts(&self, level: u8) -> Result<u16> {
@@ -1119,8 +1204,9 @@ impl YaesuCatRadio {
             .selected_profile()?
             .power_range_watts
             .context("RF power control is not profiled for this Yaesu model")?;
-        let span = u32::from(maximum - minimum);
-        Ok(minimum + (((u32::from(level) * span) + 127) / 255) as u16)
+        Ok(minimum
+            + denormalize_meter_level(level, maximum - minimum)
+                .context("Yaesu RF power range cannot be denormalized")?)
     }
 }
 
@@ -1140,11 +1226,11 @@ fn parse_payload<'a>(frame: &'a [u8], command: &str) -> Result<&'a str> {
 }
 
 fn normalize_percent(value: u8) -> u8 {
-    ((u16::from(value) * 255 + 50) / 100) as u8
+    normalize_meter_level(u16::from(value), 100).expect("percent range is non-zero")
 }
 
 fn denormalize_percent(value: u8) -> u8 {
-    ((u16::from(value) * 100 + 127) / 255) as u8
+    denormalize_meter_level(value, 100).expect("percent range is non-zero") as u8
 }
 
 fn decode_repeater_shift(payload: &str) -> Result<RepeaterShift> {
@@ -1887,8 +1973,16 @@ mod tests {
         assert_eq!(ftdx10.normalized_to_watts(255).unwrap(), 100);
         assert_eq!(ftdx10.watts_to_normalized(5).unwrap(), 0);
         assert_eq!(ftdx10.watts_to_normalized(100).unwrap(), 255);
+        assert_eq!(ftdx10.watts_to_normalized(53).unwrap(), 129);
+        assert_eq!(ftdx10.normalized_to_watts(128).unwrap(), 53);
 
         let mp = YaesuCatRadio::new_for_model(YaesuCatModel::Ftdx101Mp, "test", 38_400).unwrap();
         assert_eq!(mp.normalized_to_watts(255).unwrap(), 200);
+    }
+
+    #[test]
+    fn percent_controls_use_the_shared_hal_rounding_policy() {
+        assert_eq!(normalize_percent(50), 128);
+        assert_eq!(denormalize_percent(128), 50);
     }
 }

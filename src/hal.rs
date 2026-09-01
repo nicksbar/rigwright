@@ -126,6 +126,22 @@ pub trait Radio: Send + Sync {
     fn supports_control_write(&self, id: ControlId) -> bool {
         self.supports_control(id)
     }
+    /// Discover every typed control advertised by this driver.
+    fn supported_controls(&self) -> Vec<ControlId> {
+        ControlId::ALL
+            .iter()
+            .copied()
+            .filter(|id| self.supports_control(*id))
+            .collect()
+    }
+    /// Discover every normalized meter advertised by this driver.
+    fn supported_meters(&self) -> Vec<MeterId> {
+        MeterId::ALL
+            .iter()
+            .copied()
+            .filter(|id| self.supports_meter(*id))
+            .collect()
+    }
     async fn start_tuner(&self) -> Result<()> {
         anyhow::bail!("antenna tuner control is not supported by this radio")
     }
@@ -335,11 +351,14 @@ mod tests {
         assert!(!radio.supports_control(ControlId::RfPower));
         assert!(!radio.supports_control_read(ControlId::RfPower));
         assert!(!radio.supports_control_write(ControlId::RfPower));
+        assert!(radio.supported_controls().is_empty());
+        assert!(radio.supported_meters().is_empty());
         assert!(futures::executor::block_on(radio.start_tuner()).is_err());
         assert!(futures::executor::block_on(radio.get_tuner_status())
             .unwrap()
             .is_none());
         assert!(!radio.capabilities().can_get_frequency);
+        let _ = NullRadio::default();
     }
 
     #[test]

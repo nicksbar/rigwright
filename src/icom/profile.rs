@@ -173,6 +173,10 @@ pub enum MemoryLayout {
 pub struct IcomCivProfile {
     /// Model represented by this profile.
     pub model: crate::models::IcomCivModel,
+    /// CI-V rates documented by the model's manual.
+    pub baud_rates: &'static [u32],
+    /// Preferred starting rate when Auto is not available.
+    pub preferred_baud_rate: u32,
     /// Factory-default CI-V address. Applications may override it.
     pub default_address: u8,
     /// Conservative CAT-tunable frequency ranges from the model manual.
@@ -191,6 +195,10 @@ pub struct IcomCivProfile {
     pub attenuator_values: &'static [u8],
     /// Highest valid preamp level for this model.
     pub preamp_max_level: u8,
+    /// Highest valid AGC preset for this model.
+    pub agc_max: u8,
+    /// Highest valid noise-reduction level for this model.
+    pub noise_reduction_level_max: u8,
     /// Whether the model exposes documented I/Q output. This is protocol/model
     /// metadata only; it does not claim that Rigwright has an openable stream.
     pub supports_iq_output: bool,
@@ -203,6 +211,10 @@ pub struct IcomCivProfile {
     pub supports_repeater_settings: bool,
     pub supports_memory_channels: bool,
 }
+
+/// Conservative CI-V defaults used by current Icom profiles unless a model
+/// documents a narrower serial menu.
+pub const DEFAULT_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
 
 impl IcomCivProfile {
     pub fn supports_frequency(self, hz: u64) -> bool {
@@ -235,6 +247,8 @@ impl IcomCivProfile {
 pub fn profile_for_model(model: crate::models::IcomCivModel) -> &'static IcomCivProfile {
     match model {
         crate::models::IcomCivModel::Ic705 => &crate::icom::ic705::CIV_PROFILE,
+        crate::models::IcomCivModel::Ic718 => &crate::icom::ic718::CIV_PROFILE,
+        crate::models::IcomCivModel::Ic7200 => &crate::icom::ic7200::CIV_PROFILE,
         crate::models::IcomCivModel::Ic7300 => &crate::icom::ic7300::CIV_PROFILE,
         crate::models::IcomCivModel::Ic7610 => &crate::icom::ic7610::CIV_PROFILE,
         crate::models::IcomCivModel::Ic9700 => &crate::icom::ic9700::CIV_PROFILE,
@@ -250,13 +264,20 @@ mod tests {
     fn every_supported_model_has_profile_and_scope_commands() {
         for model in [
             IcomCivModel::Ic705,
+            IcomCivModel::Ic718,
+            IcomCivModel::Ic7200,
             IcomCivModel::Ic7300,
             IcomCivModel::Ic7610,
             IcomCivModel::Ic9700,
         ] {
             let profile = profile_for_model(model);
             assert_eq!(profile.model, model);
-            assert!(profile.scope.is_some());
+            assert!(!profile.baud_rates.is_empty());
+            assert!(profile.baud_rates.contains(&profile.preferred_baud_rate));
+            assert!(profile.noise_reduction_level_max > 0);
+            if profile.supports_control(ControlId::Agc) {
+                assert!(profile.agc_max > 0);
+            }
             assert!(!profile.controls.is_empty());
         }
     }
@@ -279,6 +300,7 @@ mod tests {
     fn every_profile_declares_special_controls_meters_and_memory_layout() {
         for model in [
             IcomCivModel::Ic705,
+            IcomCivModel::Ic7200,
             IcomCivModel::Ic7300,
             IcomCivModel::Ic7610,
             IcomCivModel::Ic9700,
@@ -292,7 +314,9 @@ mod tests {
             assert!(profile.supports_control(ControlId::DataMode));
             assert!(profile.supports_control(ControlId::Filter));
             assert!(profile.supports_control(ControlId::Vfo));
-            assert!(profile.supports_repeater_settings);
+            if model != IcomCivModel::Ic7200 {
+                assert!(profile.supports_repeater_settings);
+            }
             assert!(profile.supports_memory_channels);
             for spec in profile.controls {
                 assert!(
