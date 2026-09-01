@@ -42,5 +42,59 @@ client can present the fastest suitable option. Automatic probing is a future
 transport concern because it must be negotiated before the session can issue
 normal CAT traffic.
 
+## Performance and safety behaviors
+
+These behaviors are what make the driver feel fast and trustworthy on a live
+radio. They are on by default and need no client wiring.
+
+### Batched core-state reads (fewer round trips)
+
+`Radio::read_core_state()` returns frequency, mode, and PTT in as few
+protocol round trips as the backend allows. The modern Yaesu driver answers
+frequency and mode from the single `IF;` frame and PTT from `TX;`, so a full
+core refresh costs two round trips instead of three (`FA;`/`MD;`/`TX;`). It
+falls back to the individual reads when `IF;` is unavailable. The session
+`Refresh` operation uses this automatically.
+
+### Trusting a live event stream (free refreshes)
+
+CI-V radios push unsolicited frequency/mode/PTT events. When
+`Radio::event_stream_age()` reports a fresh stream and the session already
+holds observed core state, a `Refresh` is served from that streamed state
+instead of re-polling the wire. A healthy Icom link therefore refreshes
+without extra CAT traffic; a stalled stream falls back to polling. This is
+why a streaming radio feels instant.
+
+### Optimistic state on writes
+
+A successful `set_frequency`/`set_mode`/`set_ptt` updates the observed state
+immediately, before any confirmation poll, and the radio's own event echo
+confirms it. Combined with coalescing, dragging a VFO issues only the latest
+intent.
+
+### Link health and scope keep-alive
+
+`Radio::link_health()` returns a protocol-neutral `LinkHealth` (commands,
+matched/timeout responses, consecutive-timeout backlog, mean latency, dropped
+frames) with an `is_degraded()` heuristic, so an app can render "radio link
+degraded: 3 consecutive timeouts" instead of a bare error. For Icom scopes,
+`IcomCiVRadio::scope_stream_health()` reports sweep cadence and an
+`is_stalled()` signal so the UI can re-arm a frozen waterfall.
+
+### Retained-frame recovery
+
+Both serial drivers retain recent unsolicited/out-of-order frames and match
+them against later queries, so a reply that arrives slightly late (or
+interleaved with scope data) is still used instead of timing out. This is a
+large part of why cross-vendor behavior feels bulletproof.
+
+### PTT safety watchdog
+
+`SessionConfig::max_tx_hold` (default 180s) bounds any continuous transmit
+hold. When the ceiling elapses the worker issues `SetPtt(false)` directly,
+bypassing the command queue, and publishes `SessionEvent::PttWatchdogTripped`.
+This protects the radio and operator if the client crashes or stalls while
+transmitting. Set it to `None` to disable.
+
 This layer is Rigwright-only. QSONaut and QSONoid are not changed by the issue
 #20 implementation, and no shared modem repository is required.
