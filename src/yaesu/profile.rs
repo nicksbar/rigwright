@@ -45,7 +45,7 @@ pub struct YaesuCatProfile {
     /// `EX` menu selector that reads the radio's CAT RTS (hardware flow
     /// control) setting, when the model documents one. The selector is the
     /// model's own `EX` menu address, not a shared value: the FTDX10 and
-    /// FTDX101D/MP use the hierarchical `PP II SS` form (CAT RTS = `030310`),
+    /// FTDX101D/MP use the hierarchical `PP II SS` form (CAT RTS = `030313`),
     /// while the FT-991A uses the flat `PPP` menu number (CAT RTS = menu
     /// `033`). The FT-710 has no CAT RTS menu at all (its standard-port RTS
     /// is a PTT source via `RPTT SELECT`), so it leaves this `None`.
@@ -234,8 +234,8 @@ pub const FTDX101D_PROFILE: YaesuCatProfile = YaesuCatProfile {
     supports_split: true,
     supports_repeater_settings: true,
     supports_memory_channels: true,
-    // FTDX101D CAT RTS is menu 03-03-10, read as hierarchical `EX030310;`.
-    cat_rts_menu: Some("030310"),
+    // FTDX101D CAT RTS is menu 03-03-13, read as hierarchical `EX030313;`.
+    cat_rts_menu: Some("030313"),
 };
 
 pub const FTDX101MP_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -250,8 +250,8 @@ pub const FTDX101MP_PROFILE: YaesuCatProfile = YaesuCatProfile {
     supports_split: true,
     supports_repeater_settings: true,
     supports_memory_channels: true,
-    // FTDX101MP CAT RTS is menu 03-03-10, read as hierarchical `EX030310;`.
-    cat_rts_menu: Some("030310"),
+    // FTDX101MP CAT RTS is menu 03-03-13, read as hierarchical `EX030313;`.
+    cat_rts_menu: Some("030313"),
 };
 
 pub const FT991A_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -267,7 +267,7 @@ pub const FT991A_PROFILE: YaesuCatProfile = YaesuCatProfile {
     supports_repeater_settings: true,
     supports_memory_channels: true,
     // FT-991A CAT RTS is the flat menu 033, read as `EX033;` (not the
-    // hierarchical `030310` used by the FTDX10/FTDX101 family).
+    // hierarchical selectors used by the FTDX10/FTDX101 family).
     cat_rts_menu: Some("033"),
 };
 
@@ -345,15 +345,15 @@ mod tests {
             profile_for_model(YaesuCatModel::Ft991A).cat_rts_menu,
             Some("033")
         );
-        // FTDX10 and FTDX101D/MP share the hierarchical 03-03-10 selector.
-        for model in [
-            YaesuCatModel::Ftdx10,
-            YaesuCatModel::Ftdx101D,
-            YaesuCatModel::Ftdx101Mp,
-        ] {
+        // FTDX10 uses 03-03-10; FTDX101D/MP use 03-03-13.
+        assert_eq!(
+            profile_for_model(YaesuCatModel::Ftdx10).cat_rts_menu,
+            Some("030310")
+        );
+        for model in [YaesuCatModel::Ftdx101D, YaesuCatModel::Ftdx101Mp] {
             assert_eq!(
                 profile_for_model(model).cat_rts_menu,
-                Some("030310"),
+                Some("030313"),
                 "{} uses the hierarchical EX selector",
                 model.model_name()
             );

@@ -556,7 +556,8 @@ impl YaesuCatRadio {
     /// Some models expose a CAT RTS (hardware flow control) setting through
     /// their `EX` menu. Read it once over CAT and adapt the serial adapter
     /// before issuing ordinary queries. The `EX` selector and its reply
-    /// layout are model-specific (hierarchical `030310` on FTDX10/FTDX101,
+    /// layout are model-specific (hierarchical `030310` on FTDX10 and
+    /// `030313` on FTDX101,
     /// flat menu `033` on FT-991A), so the probe is driven by the profile's
     /// `cat_rts_menu`. Models with no CAT RTS menu (FT-710) skip the probe
     /// and retain their configured/default transport behavior.
@@ -572,7 +573,7 @@ impl YaesuCatRadio {
         };
         // The probe reply is the echoed `EX` selector plus a single value
         // digit; the selector length is model-specific (6 for the
-        // hierarchical `030310`, 3 for the flat FT-991A `033`).
+        // hierarchical selectors, 3 for the flat FT-991A `033`).
         let probe_payload_len = menu.len() + 1;
         if self
             .cat_rts_detected
@@ -1764,7 +1765,7 @@ mod tests {
     #[test]
     fn ft991a_rts_probe_uses_the_flat_ex033_selector_and_applies_flow_control() {
         // The FT-991A documents CAT RTS as flat menu 033 (answer `EX033<v>;`),
-        // not the hierarchical `030310` used by the FTDX10/FTDX101 family.
+        // not the hierarchical selectors used by the FTDX10/FTDX101 family.
         let output = Arc::new(Mutex::new(Vec::new()));
         let flow_control = Arc::new(Mutex::new(Vec::new()));
         let radio = YaesuCatRadio::with_external_transport(
@@ -1814,7 +1815,7 @@ mod tests {
     }
 
     #[test]
-    fn ftdx101_rts_probe_uses_the_hierarchical_ex030310_selector() {
+    fn ftdx101_rts_probe_uses_the_hierarchical_ex030313_selector() {
         let output = Arc::new(Mutex::new(Vec::new()));
         let flow_control = Arc::new(Mutex::new(Vec::new()));
         let radio = YaesuCatRadio::with_external_transport(
@@ -1822,7 +1823,7 @@ mod tests {
             38_400,
             FlowControlTransport {
                 scripted: ScriptedTransport {
-                    input: b"EX0303101;VS0;FA014250000;".to_vec(),
+                    input: b"EX0303131;VS0;FA014250000;".to_vec(),
                     output: Arc::clone(&output),
                 },
                 flow_control: Arc::clone(&flow_control),
@@ -1833,7 +1834,7 @@ mod tests {
             futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
             14_250_000
         );
-        assert_eq!(&*output.lock().unwrap(), b"EX030310;VS;FA;");
+        assert_eq!(&*output.lock().unwrap(), b"EX030313;VS;FA;");
         assert_eq!(&*flow_control.lock().unwrap(), &[true]);
     }
 
