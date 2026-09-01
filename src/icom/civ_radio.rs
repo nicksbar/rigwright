@@ -76,6 +76,10 @@ impl Default for IcomSerialPolicy {
 struct IcomTransportState {
     retained_frames: VecDeque<Vec<u8>>,
     metrics: IcomTransportMetrics,
+    /// The last time a typed unsolicited CI-V event (frequency, mode, PTT,
+    /// meter) arrived. Used to trust the live event stream instead of
+    /// polling, and to drive scope/link keep-alive heuristics.
+    last_event_at: Option<Instant>,
 }
 
 /// Compatibility name for the shared byte transport used by CI-V.
@@ -96,6 +100,31 @@ struct ScopeStreamReader {
     completed: VecDeque<Vec<u8>>,
     division_frames: u64,
     completed_sweeps: u64,
+    /// When the last complete scope sweep was assembled. Drives the scope
+    /// keep-alive health signal so the UI can recover a stalled waterfall.
+    last_sweep_at: Option<Instant>,
+}
+
+/// A point-in-time snapshot of CI-V scope/waterfall stream health.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScopeStreamHealth {
+    /// Total scope division frames ingested.
+    pub division_frames: u64,
+    /// Total complete sweeps assembled.
+    pub completed_sweeps: u64,
+    /// Sweeps dropped because a frame broke framing or geometry.
+    pub dropped_sweeps: u64,
+    /// How long ago the last complete sweep arrived; `None` if the scope has
+    /// never produced a sweep on this connection.
+    pub last_sweep_age: Option<Duration>,
+}
+
+impl ScopeStreamHealth {
+    /// True when the scope has produced sweeps before but none recently,
+    /// indicating a stalled waterfall the UI may want to recover.
+    pub fn is_stalled(&self, max_age: Duration) -> bool {
+        self.completed_sweeps > 0 && self.last_sweep_age.is_some_and(|age| age > max_age)
+    }
 }
 
 impl ScopeStreamReader {
@@ -116,6 +145,7 @@ impl ScopeStreamReader {
             self.division_frames = self.division_frames.wrapping_add(1);
             if let Some(sweep) = self.assembler.push(&frame, geometry) {
                 self.completed_sweeps = self.completed_sweeps.wrapping_add(1);
+                self.last_sweep_at = Some(Instant::now());
                 self.completed.push_back(sweep);
             }
         }
@@ -584,6 +614,47 @@ impl IcomCiVRadio {
         self.transport_state
             .lock()
             .map(|state| state.metrics)
+            .unwrap_or_default()
+    }
+
+    /// Record that a typed CI-V event just arrived from the radio.
+    fn note_event_received(&self) {
+        if let Ok(mut state) = self.transport_state.lock() {
+            state.last_event_at = Some(Instant::now());
+        }
+    }
+
+    /// How long ago the radio last pushed a typed CI-V event (frequency,
+    /// mode, PTT, or meter). `None` means no unsolicited event has been seen
+    /// on this connection. A fresh value indicates the radio's event stream
+    /// is live, so observed state can be trusted without polling.
+    pub fn event_stream_age(&self) -> Option<Duration> {
+        self.transport_state
+            .lock()
+            .ok()
+            .and_then(|state| state.last_event_at)
+            .map(|instant| instant.elapsed())
+    }
+
+    /// True when the radio's unsolicited event stream is live (an event was
+    /// seen within `freshness`), so core state can come from events rather
+    /// than fresh polls.
+    pub fn event_stream_is_live(&self, freshness: Duration) -> bool {
+        self.event_stream_age().is_some_and(|age| age <= freshness)
+    }
+
+    /// A point-in-time snapshot of scope/waterfall stream health. Use
+    /// `ScopeStreamHealth::is_stalled` to detect a waterfall that was flowing
+    /// but has stopped, so the UI can re-arm the scope stream.
+    pub fn scope_stream_health(&self) -> ScopeStreamHealth {
+        self.scope_stream_reader
+            .lock()
+            .map(|reader| ScopeStreamHealth {
+                division_frames: reader.division_frames,
+                completed_sweeps: reader.completed_sweeps,
+                dropped_sweeps: reader.assembler.dropped_sweeps,
+                last_sweep_age: reader.last_sweep_at.map(|instant| instant.elapsed()),
+            })
             .unwrap_or_default()
     }
 
@@ -1189,6 +1260,7 @@ impl IcomCiVRadio {
                         }
 
                         publish_civ_event(&self.event_router, &frame);
+                        self.note_event_received();
 
                         if matcher(&frame) {
                             return Ok(frame);
@@ -1975,6 +2047,27 @@ impl Radio for IcomCiVRadio {
 
     async fn get_ptt(&self) -> Result<bool> {
         self.get_ptt_blocking()
+    }
+
+    fn link_health(&self) -> crate::hal::LinkHealth {
+        let metrics = self.transport_metrics();
+        let avg_response = if metrics.responses_matched > 0 {
+            Some(metrics.total_response_time / metrics.responses_matched as u32)
+        } else {
+            None
+        };
+        crate::hal::LinkHealth {
+            commands_started: Some(metrics.commands_started),
+            responses_matched: Some(metrics.responses_matched),
+            response_timeouts: Some(metrics.response_timeouts),
+            consecutive_timeouts: Some(metrics.consecutive_timeouts),
+            avg_response,
+            frames_dropped: Some(metrics.frames_dropped),
+        }
+    }
+
+    fn event_stream_age(&self) -> Option<Duration> {
+        self.event_stream_age()
     }
 
     async fn get_power(&self) -> Result<bool> {
@@ -3586,6 +3679,71 @@ mod tests {
         assert_eq!(sweeps.len(), 2);
         assert!(sweeps[0].iter().all(|value| *value == 20));
         assert!(sweeps[1].iter().all(|value| *value == 80));
+    }
+
+    #[test]
+    fn scope_stream_health_reports_sweep_cadence_and_stall() {
+        fn frame(division: usize, level: u8) -> Vec<u8> {
+            let mut frame = vec![
+                0xFE,
+                0xFE,
+                0xE0,
+                0x94,
+                0x27,
+                0x00,
+                0x00,
+                decimal_to_bcd(division as u8),
+                0x11,
+            ];
+            if division == 1 {
+                frame.extend_from_slice(&[0x00; 12]);
+            } else {
+                let count = if division == 11 { 25 } else { 50 };
+                frame.extend(std::iter::repeat_n(level, count));
+            }
+            frame.push(0xFD);
+            frame
+        }
+        let geometry = Some(crate::models::IcomScopeGeometry {
+            divisions: 11,
+            bins: 475,
+            full_chunk_bins: 50,
+            last_chunk_bins: 25,
+            bin_max: 160,
+            supports_main_sub_scope: false,
+        });
+
+        // Before any sweep, the stream is neither live nor stalled.
+        let mut reader = ScopeStreamReader::default();
+        let mut bytes = Vec::new();
+        for division in 1..=11 {
+            bytes.extend(frame(division, 40));
+        }
+        reader.push_bytes(&bytes, 0x94, 0xE0, geometry);
+        assert_eq!(reader.completed_sweeps, 1);
+        assert!(reader.last_sweep_at.is_some());
+
+        // A just-completed sweep is fresh, not stalled.
+        let age = reader.last_sweep_at.unwrap().elapsed();
+        let health = ScopeStreamHealth {
+            division_frames: reader.division_frames,
+            completed_sweeps: reader.completed_sweeps,
+            dropped_sweeps: reader.assembler.dropped_sweeps,
+            last_sweep_age: Some(age),
+        };
+        assert!(!health.is_stalled(Duration::from_secs(5)));
+
+        // A stale last-sweep timestamp with prior sweeps is stalled.
+        let stalled = ScopeStreamHealth {
+            completed_sweeps: 4,
+            last_sweep_age: Some(Duration::from_secs(60)),
+            ..ScopeStreamHealth::default()
+        };
+        assert!(stalled.is_stalled(Duration::from_secs(5)));
+
+        // No sweeps ever means "never started", not "stalled".
+        let never = ScopeStreamHealth::default();
+        assert!(!never.is_stalled(Duration::from_secs(5)));
     }
 
     #[test]

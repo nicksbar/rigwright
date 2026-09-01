@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.1.19 — performance, link health, and a PTT safety watchdog
+
+### Fixed
+- Drive the modern-Yaesu CAT RTS / hardware-flow-control probe from each
+  model profile's own `EX` menu selector instead of an FTDX10-only hardcoded
+  address. Add a `cat_rts_menu` field to `YaesuCatProfile` that records the
+  model's documented CAT RTS `EX` selector and reply layout.
+- Probe CAT RTS on the FT-991A using its flat menu number `033`
+  (`EX033;` → `EX033<v>;`), fixing CAT timeouts when the radio's menu 033
+  CAT RTS is enabled (the factory default) while the host port was opened
+  without RTS/CTS flow control.
+- Extend the probe to the FTDX101D/MP, which use the manual's hierarchical
+  `030313` selector (FTDX10 uses `030310`), and skip the probe entirely on the
+  FT-710, whose manual
+  documents no CAT RTS menu (its standard-port RTS is a PTT source via
+  `RPTT SELECT`).
+- Add per-model regression tests asserting each radio's unique `EX` probe
+  request bytes and flow-control behavior.
+
+### Added
+- Batched core-state reads. A new `CoreState` and `Radio::read_core_state()`
+  return frequency, mode, and PTT in as few round trips as the backend
+  allows. The modern Yaesu driver answers frequency and mode from the single
+  `IF;` frame and PTT from `TX;` (two round trips instead of three), with a
+  fallback to the individual reads. The session `Refresh` uses it
+  automatically.
+- Event-stream trust. A new `Radio::event_stream_age()` hook plus Icom
+  last-event tracking let the session serve a `Refresh` from streamed
+  observed state when the radio's unsolicited event stream is live, so a
+  healthy Icom link refreshes without extra CAT traffic and a stalled stream
+  falls back to polling.
+- Link health. A protocol-neutral `LinkHealth` (`Radio::link_health()`,
+  `RadioSession::link_health()`) surfaces commands, matched/timeout
+  responses, consecutive-timeout backlog, mean response latency, and dropped
+  frames, with an `is_degraded()` heuristic for operator-facing status.
+- Scope keep-alive. `ScopeStreamHealth` and
+  `IcomCiVRadio::scope_stream_health()` report sweep cadence and an
+  `is_stalled()` signal so the UI can detect and recover a frozen waterfall.
+- PTT safety watchdog. `SessionConfig::max_tx_hold` (default 180s) bounds any
+  continuous transmit hold; on expiry the worker forces `SetPtt(false)`
+  directly (bypassing the queue) and publishes
+  `SessionEvent::PttWatchdogTripped`.
+
 ## 0.1.18 — Release and CI maintenance
 
 - Restrict release automation to manually pushed `vMAJOR.MINOR.PATCH` tags.

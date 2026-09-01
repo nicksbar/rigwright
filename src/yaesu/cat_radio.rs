@@ -16,8 +16,9 @@ use crate::{
     events::{RadioEvent, RadioEventRouter, RadioEventSubscription},
     hal::{Mode, Radio, RadioCapabilities},
     hal_types::{
-        denormalize_meter_level, normalize_meter_level, ControlId, ControlValue, MemoryChannel,
-        MeterId, RepeaterSettings, RepeaterShift, ToneMode, ToneSettings, TunerStatus,
+        denormalize_meter_level, normalize_meter_level, ControlId, ControlValue, CoreState,
+        MemoryChannel, MeterId, RepeaterSettings, RepeaterShift, ToneMode, ToneSettings,
+        TunerStatus,
     },
     models::YaesuCatModel,
     protocol::ascii_cat,
@@ -288,6 +289,97 @@ impl YaesuCatRadio {
         self.query(command, parameters, 0)
     }
 
+    /// Read the radio's core operating state in as few round trips as the
+    /// protocol allows. Modern Yaesu models answer `IF;` with the VFO-A
+    /// frequency and the operating mode in a single frame, so a full core
+    /// refresh costs `IF;` + `TX;` instead of separate `FA;`/`MD;`/`TX;`
+    /// reads. Falls back to the individual reads when `IF;` is unavailable
+    /// or malformed, so callers always get a best-effort snapshot.
+    pub fn read_core_state(&self) -> Result<CoreState> {
+        let mut state = CoreState::default();
+        match self.read_if_status() {
+            Ok(Some((frequency_hz, mode))) => {
+                state.frequency_hz = Some(frequency_hz);
+                state.mode = Some(mode);
+            }
+            Ok(None) | Err(_) => {
+                // `IF;` is unavailable or returned an unexpected shape; fall
+                // back to the per-value reads so a partial answer never
+                // leaves the caller with nothing.
+                state.frequency_hz = self.frequency_hz_via_fa().ok();
+                state.mode = self.mode_via_md().ok();
+            }
+        }
+        state.ptt = self.ptt_via_tx().ok();
+        if state.frequency_hz.is_none() && state.mode.is_none() && state.ptt.is_none() {
+            bail!("Yaesu core state read returned no usable values");
+        }
+        Ok(state)
+    }
+
+    /// Parse the `IF;` information frame into (frequency_hz, mode). The frame
+    /// payload is 25 characters: P1 memory (3), P2 VFO-A frequency (9), P3
+    /// clarifier (5), P4 (1), P5 (1), P6 mode (1), P7 (1), P8 (1), P9 fixed
+    /// `00` (2), P10 (1). Returns `Ok(None)` when the radio does not answer
+    /// with a recognizable `IF` frame so the caller can fall back.
+    fn read_if_status(&self) -> Result<Option<(u64, Mode)>> {
+        let response = match self.query("IF", None, 25) {
+            Ok(response) => response,
+            Err(_) => return Ok(None),
+        };
+        let payload = match parse_payload(&response, "IF") {
+            Ok(payload) => payload,
+            Err(_) => return Ok(None),
+        };
+        if payload.len() != 25 {
+            return Ok(None);
+        }
+        let frequency_hz: u64 = match payload[3..12].parse() {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        };
+        let mode_code = payload.chars().nth(19).expect("length checked above");
+        let mode = match self.profile() {
+            Some(profile) => profile.decode_mode(mode_code).ok(),
+            None => decode_common_mode(mode_code).ok(),
+        };
+        let Some(mode) = mode else {
+            return Ok(None);
+        };
+        Ok(Some((frequency_hz, mode)))
+    }
+
+    fn frequency_hz_via_fa(&self) -> Result<u64> {
+        let command = active_vfo_command(self.active_vfo_selector()?);
+        parse_payload(&self.query(command, None, 9)?, command)?
+            .parse()
+            .context("invalid Yaesu FA response")
+    }
+
+    fn mode_via_md(&self) -> Result<Mode> {
+        let selector = self.active_vfo_selector()?;
+        let selector_text = selector.to_string();
+        let response = self.query("MD", Some(&selector_text), 2)?;
+        let payload = parse_payload(&response, "MD")?;
+        let mut chars = payload.chars();
+        if chars.next() != Some(char::from(b'0' + selector)) {
+            bail!("unexpected Yaesu MD receiver selector: {payload}");
+        }
+        let code = chars.next().context("missing Yaesu MD mode code")?;
+        match self.profile() {
+            Some(profile) => profile.decode_mode(code),
+            None => decode_common_mode(code),
+        }
+    }
+
+    fn ptt_via_tx(&self) -> Result<bool> {
+        match parse_payload(&self.query("TX", None, 1)?, "TX")? {
+            "0" => Ok(false),
+            "1" | "2" => Ok(true),
+            value => bail!("invalid Yaesu TX response: {value}"),
+        }
+    }
+
     pub fn get_power_watts(&self) -> Result<u16> {
         let profile = self.selected_profile()?;
         profile
@@ -461,14 +553,28 @@ impl YaesuCatRadio {
         })
     }
 
-    /// FTDX10 exposes its CAT RTS setting as EX 03-03-10. Read it once over
-    /// CAT and adapt the serial adapter before issuing ordinary queries.
-    /// Other Yaesu profiles do not share this menu address and retain their
-    /// configured/default transport behavior.
+    /// Some models expose a CAT RTS (hardware flow control) setting through
+    /// their `EX` menu. Read it once over CAT and adapt the serial adapter
+    /// before issuing ordinary queries. The `EX` selector and its reply
+    /// layout are model-specific (hierarchical `030310` on FTDX10 and
+    /// `030313` on FTDX101,
+    /// flat menu `033` on FT-991A), so the probe is driven by the profile's
+    /// `cat_rts_menu`. Models with no CAT RTS menu (FT-710) skip the probe
+    /// and retain their configured/default transport behavior.
     fn ensure_cat_rts_detected(&self, command: &str) -> Result<()> {
-        if command.eq_ignore_ascii_case("EX") || self.model != Some(YaesuCatModel::Ftdx10) {
+        if command.eq_ignore_ascii_case("EX") {
             return Ok(());
         }
+        let Some(profile) = self.profile() else {
+            return Ok(());
+        };
+        let Some(menu) = profile.cat_rts_menu else {
+            return Ok(());
+        };
+        // The probe reply is the echoed `EX` selector plus a single value
+        // digit; the selector length is model-specific (6 for the
+        // hierarchical selectors, 3 for the flat FT-991A `033`).
+        let probe_payload_len = menu.len() + 1;
         if self
             .cat_rts_detected
             .lock()
@@ -478,13 +584,13 @@ impl YaesuCatRadio {
             return Ok(());
         }
 
-        let response = match self.query("EX", Some("030310"), 7) {
+        let response = match self.query("EX", Some(menu), probe_payload_len) {
             Ok(response) => response,
             Err(first_error) => {
                 // If CAT RTS is already enabled on the radio, a no-flow
                 // control probe may never receive a response. Reopen with
-                // RTS/CTS and retry the menu read. Some FTDX10 firmware and
-                // USB bridge combinations do not answer this EX menu query,
+                // RTS/CTS and retry the menu read. Some firmware and USB
+                // bridge combinations do not answer this EX menu query,
                 // even though ordinary CAT commands still work. In that
                 // case the probe is advisory: keep the bounded retry, cache
                 // detection as unavailable, and let the requested command
@@ -492,7 +598,7 @@ impl YaesuCatRadio {
                 self.enable_hardware_flow_control().with_context(|| {
                     format!("failed to apply Yaesu CAT RTS/CTS after initial probe: {first_error}")
                 })?;
-                match self.query("EX", Some("030310"), 7) {
+                match self.query("EX", Some(menu), probe_payload_len) {
                     Ok(response) => response,
                     Err(_) => {
                         *self
@@ -506,10 +612,10 @@ impl YaesuCatRadio {
         };
         let payload = parse_payload(&response, "EX")?;
         anyhow::ensure!(
-            payload.starts_with("030310") && payload.len() == 7,
+            payload.starts_with(menu) && payload.len() == probe_payload_len,
             "unexpected Yaesu CAT RTS response payload: {payload}"
         );
-        let enabled = match payload.as_bytes()[6] {
+        let enabled = match payload.as_bytes()[menu.len()] {
             b'0' => false,
             b'1' => true,
             value => bail!("unexpected Yaesu CAT RTS value: {}", char::from(value)),
@@ -747,10 +853,7 @@ impl Radio for YaesuCatRadio {
     }
 
     async fn get_frequency_hz(&self) -> Result<u64> {
-        let command = active_vfo_command(self.active_vfo_selector()?);
-        parse_payload(&self.query(command, None, 9)?, command)?
-            .parse()
-            .context("invalid Yaesu FA response")
+        self.frequency_hz_via_fa()
     }
 
     async fn set_frequency_hz(&self, hz: u64) -> Result<()> {
@@ -772,19 +875,7 @@ impl Radio for YaesuCatRadio {
     async fn get_mode(&self) -> Result<Mode> {
         // Modern Yaesu uses the selected VFO selector in MD reads and writes:
         // MD0; / MD1; select the mode for VFO-A / VFO-B respectively.
-        let selector = self.active_vfo_selector()?;
-        let selector_text = selector.to_string();
-        let response = self.query("MD", Some(&selector_text), 2)?;
-        let payload = parse_payload(&response, "MD")?;
-        let mut chars = payload.chars();
-        if chars.next() != Some(char::from(b'0' + selector)) {
-            bail!("unexpected Yaesu MD receiver selector: {payload}");
-        }
-        let code = chars.next().context("missing Yaesu MD mode code")?;
-        match self.profile() {
-            Some(profile) => profile.decode_mode(code),
-            None => decode_common_mode(code),
-        }
+        self.mode_via_md()
     }
 
     async fn set_mode(&self, mode: Mode) -> Result<()> {
@@ -801,10 +892,29 @@ impl Radio for YaesuCatRadio {
     }
 
     async fn get_ptt(&self) -> Result<bool> {
-        match parse_payload(&self.query("TX", None, 1)?, "TX")? {
-            "0" => Ok(false),
-            "1" | "2" => Ok(true),
-            value => bail!("invalid Yaesu TX response: {value}"),
+        self.ptt_via_tx()
+    }
+
+    async fn read_core_state(&self) -> Result<CoreState> {
+        // Modern Yaesu collapses frequency+mode into the `IF;` frame, so a
+        // full core refresh costs `IF;` + `TX;` instead of three round trips.
+        YaesuCatRadio::read_core_state(self)
+    }
+
+    fn link_health(&self) -> crate::hal::LinkHealth {
+        let metrics = self.transport_metrics();
+        let avg_response = if metrics.responses_matched > 0 {
+            Some(metrics.total_response_time / metrics.responses_matched as u32)
+        } else {
+            None
+        };
+        crate::hal::LinkHealth {
+            commands_started: Some(metrics.commands_started),
+            responses_matched: Some(metrics.responses_matched),
+            response_timeouts: Some(metrics.response_timeouts),
+            consecutive_timeouts: Some(metrics.consecutive_timeouts),
+            avg_response,
+            frames_dropped: Some(metrics.frames_dropped),
         }
     }
 
@@ -1650,6 +1760,158 @@ mod tests {
             14_250_000
         );
         assert_eq!(&*output.lock().unwrap(), b"EX030310;EX030310;VS;FB;");
+    }
+
+    #[test]
+    fn ft991a_rts_probe_uses_the_flat_ex033_selector_and_applies_flow_control() {
+        // The FT-991A documents CAT RTS as flat menu 033 (answer `EX033<v>;`),
+        // not the hierarchical selectors used by the FTDX10/FTDX101 family.
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let flow_control = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ft991A),
+            38_400,
+            FlowControlTransport {
+                scripted: ScriptedTransport {
+                    input: b"EX0331;VS0;FA014250000;".to_vec(),
+                    output: Arc::clone(&output),
+                },
+                flow_control: Arc::clone(&flow_control),
+            },
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        // The probe issues the model-specific `EX033;`, then enables RTS/CTS
+        // because the radio reports CAT RTS enabled.
+        assert_eq!(&*output.lock().unwrap(), b"EX033;VS;FA;");
+        assert_eq!(&*flow_control.lock().unwrap(), &[true]);
+    }
+
+    #[test]
+    fn ft991a_rts_probe_observes_disabled_setting_without_enabling_flow_control() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let flow_control = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ft991A),
+            38_400,
+            FlowControlTransport {
+                scripted: ScriptedTransport {
+                    input: b"EX0330;VS0;FA014250000;".to_vec(),
+                    output: Arc::clone(&output),
+                },
+                flow_control: Arc::clone(&flow_control),
+            },
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        assert_eq!(&*output.lock().unwrap(), b"EX033;VS;FA;");
+        assert!(flow_control.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn ftdx101_rts_probe_uses_the_hierarchical_ex030313_selector() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let flow_control = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx101D),
+            38_400,
+            FlowControlTransport {
+                scripted: ScriptedTransport {
+                    input: b"EX0303131;VS0;FA014250000;".to_vec(),
+                    output: Arc::clone(&output),
+                },
+                flow_control: Arc::clone(&flow_control),
+            },
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        assert_eq!(&*output.lock().unwrap(), b"EX030313;VS;FA;");
+        assert_eq!(&*flow_control.lock().unwrap(), &[true]);
+    }
+
+    #[test]
+    fn ft710_skips_the_cat_rts_probe_because_the_model_has_no_such_menu() {
+        // The FT-710 documents no CAT RTS menu (RTS on its standard port is a
+        // PTT source via RPTT SELECT), so ordinary queries must not be
+        // preceded by any EX probe.
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ft710),
+            38_400,
+            ScriptedTransport {
+                input: b"VS0;FA014250000;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_250_000
+        );
+        assert_eq!(&*output.lock().unwrap(), b"VS;FA;");
+    }
+
+    #[test]
+    fn core_state_read_collapses_frequency_and_mode_into_one_if_frame() {
+        // `IF;` returns VFO-A frequency and mode in one frame; PTT comes from
+        // `TX;`. The whole core refresh costs two round trips instead of
+        // three, and issues no `FA;`/`MD;` reads at all. Payload layout:
+        // mem(3)=000, freq(9)=014250000, clar(5)=+0000, P4=0, P5=0, mode=C
+        // (DATA-USB), P7=0, P8=0, P9=00, P10=0.
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ft991A),
+            38_400,
+            ScriptedTransport {
+                input: b"EX0330;IF000014250000+000000C00000;TX0;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        );
+
+        let state = YaesuCatRadio::read_core_state(&radio).unwrap();
+        assert_eq!(state.frequency_hz, Some(14_250_000));
+        assert_eq!(state.mode, Some(Mode::Data));
+        assert_eq!(state.ptt, Some(false));
+        assert_eq!(&*output.lock().unwrap(), b"EX033;IF;TX;");
+    }
+
+    #[test]
+    fn core_state_read_falls_back_to_individual_reads_when_if_is_unanswered() {
+        // When `IF;` produces no usable frame, the reader falls back to the
+        // individual FA/MD/TX reads so a partial answer never yields nothing.
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            UnansweredRtsProbeTransport {
+                input: Vec::new(),
+                output: Arc::clone(&output),
+            },
+        );
+
+        let state = YaesuCatRadio::read_core_state(&radio).unwrap();
+        assert_eq!(state.frequency_hz, Some(14_250_000));
+        // The fallback path drives the individual reads after `IF;` fails.
+        // This scripted radio sits on VFO-B (`VS1`), so the frequency read is
+        // `FB;` rather than `FA;`, followed by the mode read `MD1;`.
+        let written = output.lock().unwrap().clone();
+        assert!(
+            written.windows(3).any(|w| w == b"FB;"),
+            "expected FB frequency read: {written:?}"
+        );
+        assert!(
+            written.windows(4).any(|w| w == b"MD1;"),
+            "expected MD mode read: {written:?}"
+        );
     }
 
     #[test]

@@ -2,11 +2,12 @@
 
 pub use crate::events::RadioEventRouter;
 pub use crate::hal_types::{
-    BaseMode, ControlId, ControlValue, DtmfSequence, MemoryChannel, MeterId, Mode, OperatingMode,
-    RepeaterSettings, RepeaterShift, ToneSettings, TunerStatus,
+    BaseMode, ControlId, ControlValue, CoreState, DtmfSequence, MemoryChannel, MeterId, Mode,
+    OperatingMode, RepeaterSettings, RepeaterShift, ToneSettings, TunerStatus,
 };
 use anyhow::Result;
 use async_trait::async_trait;
+use std::time::Duration;
 
 /// Operations a backend can actually perform.
 ///
@@ -24,6 +25,42 @@ pub struct RadioCapabilities {
     pub can_get_power: bool,
     pub can_set_power: bool,
     pub can_raw_protocol: bool,
+}
+
+/// A protocol-neutral snapshot of link health, derived from the transport
+/// counters each driver already maintains. All fields are optional so drivers
+/// surface only what they measure; `None` means "not instrumented", never
+/// "zero". Applications can render this directly ("radio link degraded: 3
+/// consecutive timeouts") without knowing the vendor protocol.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct LinkHealth {
+    /// Commands issued to the radio.
+    pub commands_started: Option<u64>,
+    /// Commands that received a matched response.
+    pub responses_matched: Option<u64>,
+    /// Commands that timed out waiting for a response.
+    pub response_timeouts: Option<u64>,
+    /// Current run of consecutive timeouts (reset on any success).
+    pub consecutive_timeouts: Option<u32>,
+    /// Mean response latency across matched responses.
+    pub avg_response: Option<Duration>,
+    /// Framing/parse-level events dropped from the retain buffer.
+    pub frames_dropped: Option<u64>,
+}
+
+impl LinkHealth {
+    /// True when the link shows signs of trouble worth surfacing to the
+    /// operator: any consecutive-timeout backlog or a timeout on a nontrivial
+    /// share of commands.
+    pub fn is_degraded(&self) -> bool {
+        if self.consecutive_timeouts.unwrap_or(0) > 0 {
+            return true;
+        }
+        match (self.response_timeouts, self.commands_started) {
+            (Some(timeouts), Some(started)) if started >= 8 => timeouts * 4 >= started,
+            _ => false,
+        }
+    }
 }
 
 #[async_trait]
@@ -47,6 +84,37 @@ pub trait Radio: Send + Sync {
     async fn set_ptt(&self, enabled: bool) -> Result<()>;
     async fn get_ptt(&self) -> Result<bool> {
         anyhow::bail!("reading PTT state is not supported by this radio")
+    }
+    /// Read the radio's core operating state (frequency, mode, PTT) in as few
+    /// protocol round trips as the backend allows. The default issues the
+    /// individual reads; backends with a combined status frame (such as the
+    /// Yaesu `IF;` response) override this to collapse the refresh round
+    /// trips. Fields that cannot be read are left `None`.
+    async fn read_core_state(&self) -> Result<CoreState> {
+        let frequency_hz = self.get_frequency_hz().await.ok();
+        let mode = self.get_mode().await.ok();
+        let ptt = self.get_ptt().await.ok();
+        if frequency_hz.is_none() && mode.is_none() && ptt.is_none() {
+            anyhow::bail!("radio refresh returned no readable core state")
+        }
+        Ok(CoreState {
+            frequency_hz,
+            mode,
+            ptt,
+        })
+    }
+    /// A point-in-time snapshot of link health derived from the driver's
+    /// transport counters. The default returns an empty (uninstrumented)
+    /// snapshot; serial backends override it with their measured counters.
+    fn link_health(&self) -> LinkHealth {
+        LinkHealth::default()
+    }
+    /// How long ago the radio last pushed a typed unsolicited event, when the
+    /// backend has a live event stream. `None` means the backend does not
+    /// track (or has not seen) unsolicited events. The session uses this to
+    /// trust recently-streamed state instead of re-polling on every refresh.
+    fn event_stream_age(&self) -> Option<Duration> {
+        None
     }
     async fn get_power(&self) -> Result<bool> {
         anyhow::bail!("reading radio power state is not supported by this radio")
@@ -359,6 +427,53 @@ mod tests {
             .is_none());
         assert!(!radio.capabilities().can_get_frequency);
         let _ = NullRadio::default();
+    }
+
+    #[test]
+    fn link_health_flags_consecutive_timeouts_as_degraded() {
+        let healthy = LinkHealth::default();
+        assert!(!healthy.is_degraded());
+
+        let backlog = LinkHealth {
+            consecutive_timeouts: Some(2),
+            ..LinkHealth::default()
+        };
+        assert!(backlog.is_degraded());
+    }
+
+    #[test]
+    fn link_health_flags_a_high_timeout_rate_once_traffic_is_meaningful() {
+        // Below the minimum traffic floor, a couple of timeouts on a fresh
+        // link should not raise a degradation alarm.
+        let quiet = LinkHealth {
+            commands_started: Some(4),
+            response_timeouts: Some(2),
+            ..LinkHealth::default()
+        };
+        assert!(!quiet.is_degraded());
+
+        // Once enough commands have run, a >=25% timeout rate is degraded.
+        let lossy = LinkHealth {
+            commands_started: Some(20),
+            response_timeouts: Some(5),
+            ..LinkHealth::default()
+        };
+        assert!(lossy.is_degraded());
+
+        let solid = LinkHealth {
+            commands_started: Some(20),
+            response_timeouts: Some(1),
+            ..LinkHealth::default()
+        };
+        assert!(!solid.is_degraded());
+    }
+
+    #[test]
+    fn default_link_health_is_uninstrumented() {
+        let radio = MinimalRadio;
+        let health = radio.link_health();
+        assert_eq!(health, LinkHealth::default());
+        assert!(!health.is_degraded());
     }
 
     #[test]

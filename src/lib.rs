@@ -24,16 +24,16 @@ pub use elecraft::profile::ElecraftModel;
 pub use elecraft::transport::{ElecraftSerialPolicy, ElecraftTransportMetrics};
 pub use elecraft::ElecraftRadio;
 pub use events::{RadioEvent, RadioEventRouter, RadioEventSubscription, SubscriptionId};
-pub use hal::{NullRadio, Radio, RadioCapabilities, RadioStatus};
+pub use hal::{LinkHealth, NullRadio, Radio, RadioCapabilities, RadioStatus};
 pub use hal_types::{
-    denormalize_meter_level, normalize_meter_level, BaseMode, ControlId, ControlValue,
+    denormalize_meter_level, normalize_meter_level, BaseMode, ControlId, ControlValue, CoreState,
     DtmfSequence, MemoryChannel, MeterId, Mode, OperatingMode, RepeaterSettings, RepeaterShift,
     ToneMode, ToneSettings, TunerStatus,
 };
 pub use icom::civ_radio::{
     enumerate_serial_port_descriptors, enumerate_serial_ports, IcomCiVRadio, IcomProbeResult,
     IcomReceiver, IcomSerialPolicy, IcomTransportMetrics, IcomVfo, ScopeConfiguration,
-    SerialPortDescriptor,
+    ScopeStreamHealth, SerialPortDescriptor,
 };
 pub use iq::{decode_interleaved_iq, IqSampleBlock, IqSampleFormat};
 pub use kenwood::cat_radio::{KenwoodSerialPolicy, KenwoodTransportMetrics};

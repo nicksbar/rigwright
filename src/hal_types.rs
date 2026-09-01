@@ -1,5 +1,15 @@
 //! Protocol-neutral HAL value types.
 
+/// A best-effort snapshot of a radio's core operating state, read in as few
+/// protocol round trips as the backend allows. Each field is optional because
+/// a degraded link may only recover part of the state.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CoreState {
+    pub frequency_hz: Option<u64>,
+    pub mode: Option<Mode>,
+    pub ptt: Option<bool>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mode {
     #[default]
