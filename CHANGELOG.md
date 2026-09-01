@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.18 — Release and CI maintenance
+
+- Restrict release automation to manually pushed `vMAJOR.MINOR.PATCH` tags.
+- Verify the pushed tag matches the crate version before creating a GitHub
+  release or publishing to crates.io.
+- Preserve the v0.1.17 driver, normalization, and coverage fixes in the next
+  crate release.
+
 ## 0.1.17 — Elecraft transceiver foundation
 
 - Document the Elecraft boundary between K2/KX/K3/K4/KH1 transceivers and
