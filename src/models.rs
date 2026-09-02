@@ -143,21 +143,57 @@ impl RadioModelProfile {
 
     /// Root-HAL operations implemented by the selected driver profile.
     pub fn driver_capabilities(self) -> crate::RadioCapabilities {
-        let can_get_ptt = match self.protocol {
-            Protocol::KenwoodCat => KenwoodCatModel::from_model_name(self.model)
-                .map(crate::kenwood::profile::profile_for_model)
-                .is_some_and(|profile| profile.supports_if_status),
-            _ => true,
+        let (
+            can_get_frequency,
+            can_set_frequency,
+            can_get_mode,
+            can_set_mode,
+            can_get_ptt,
+            can_set_ptt,
+        ) = match self.protocol {
+            Protocol::ElecraftCat => {
+                let Some(model) =
+                    crate::elecraft::profile::ElecraftModel::from_model_name(self.model)
+                else {
+                    return crate::RadioCapabilities {
+                        can_raw_protocol: true,
+                        ..Default::default()
+                    };
+                };
+                let profile = crate::elecraft::profile::profile_for_model(model);
+                (
+                    profile.can_get_frequency,
+                    profile.can_set_frequency,
+                    profile.can_get_mode,
+                    profile.can_set_mode,
+                    profile.can_get_ptt,
+                    profile.can_set_ptt,
+                )
+            }
+            _ => (
+                true,
+                true,
+                true,
+                true,
+                match self.protocol {
+                    Protocol::KenwoodCat => KenwoodCatModel::from_model_name(self.model)
+                        .map(crate::kenwood::profile::profile_for_model)
+                        .is_some_and(|profile| profile.supports_if_status),
+                    _ => true,
+                },
+                true,
+            ),
         };
         crate::RadioCapabilities {
-            can_get_frequency: true,
-            can_set_frequency: true,
-            can_get_mode: true,
-            can_set_mode: true,
+            can_get_frequency,
+            can_set_frequency,
+            can_get_mode,
+            can_set_mode,
             can_get_ptt,
-            can_set_ptt: true,
+            can_set_ptt,
             can_get_power: matches!(self.protocol, Protocol::YaesuCat | Protocol::KenwoodCat),
-            can_set_power: !matches!(self.protocol, Protocol::YaesuLegacyCat),
+            can_set_power: !matches!(self.protocol, Protocol::YaesuLegacyCat)
+                && !matches!(self.protocol, Protocol::ElecraftCat),
             can_raw_protocol: true,
         }
     }
@@ -890,6 +926,18 @@ mod tests {
     }
 
     #[test]
+    fn elecraft_catalog_preserves_limited_kh1_readability() {
+        let kh1 = find_model("KH1").expect("KH1 profile");
+        let capabilities = kh1.driver_capabilities();
+        assert!(!capabilities.can_get_frequency);
+        assert!(capabilities.can_set_frequency);
+        assert!(!capabilities.can_get_mode);
+        assert!(capabilities.can_set_mode);
+        assert!(!capabilities.can_get_ptt);
+        assert!(!capabilities.can_set_ptt);
+    }
+
+    #[test]
     fn typed_control_support_matches_driver_profiles() {
         let ic7300 = *find_model("IC-7300").unwrap();
         let ic7200 = *find_model("IC-7200").unwrap();
@@ -927,7 +975,7 @@ mod tests {
                 "missing Yaesu control {control:?}"
             );
         }
-        assert!(!ft991a.supports_control(crate::ControlId::Split));
+        assert!(ft991a.supports_control(crate::ControlId::Split));
         assert!(ft857d.supports_control(crate::ControlId::Split));
         assert!(ts890s.supports_control(crate::ControlId::RfPower));
         assert!(ts890s.supports_control(crate::ControlId::AfGain));

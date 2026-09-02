@@ -19,7 +19,8 @@ pub const PROFILE: ElecraftProfile = ElecraftProfile {
     power_max_watts: Some(110),
     antenna_max: Some(3),
     preamp_max: Some(2),
-    attenuator_max: Some(30),
+    // RA$ accepts 0/3/6/9/12/15/18/21 dB plus an enabled flag.
+    attenuator_max: Some(21),
     supports_notch: true,
     supports_manual_notch: true,
     supports_noise_blanker: true,

@@ -263,7 +263,8 @@ pub const FT991A_PROFILE: YaesuCatProfile = YaesuCatProfile {
     controls: COMMON_CONTROLS,
     control_maxes: CONTROL_MAXES,
     power_range_watts: Some((5, 100)),
-    supports_split: false,
+    // The FT-991A CAT manual lists ST (SPLIT) as supported.
+    supports_split: true,
     supports_repeater_settings: true,
     supports_memory_channels: true,
     // FT-991A CAT RTS is the flat menu 033, read as `EX033;` (not the
@@ -334,6 +335,13 @@ mod tests {
             assert!(profile.supports_repeater_settings);
             assert!(profile.supports_memory_channels);
         }
+    }
+
+    #[test]
+    fn ft991a_exposes_documented_split_control() {
+        let profile = profile_for_model(YaesuCatModel::Ft991A);
+        assert!(profile.supports_split);
+        assert!(profile.supports_control(ControlId::Split));
     }
 
     #[test]

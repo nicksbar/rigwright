@@ -121,6 +121,10 @@ impl ElecraftRadio {
     /// produce unsolicited frames while another command is being queried;
     /// those frames are routed through `Radio::event_router()`.
     pub fn set_auto_info(&self, mode: u8) -> Result<()> {
+        anyhow::ensure!(
+            !matches!(self.model, Some(ElecraftModel::Kh1)),
+            "Elecraft KH1 does not document Auto-Info"
+        );
         anyhow::ensure!(mode <= 3, "Elecraft Auto-Info mode must be 0..=3");
         self.set("AI", &mode.to_string())
     }
@@ -142,7 +146,12 @@ impl ElecraftRadio {
     /// `OM` probe should be added by callers when they need option-aware
     /// identification; this method deliberately returns the raw CAT reply.
     pub fn identify(&self) -> Result<Vec<u8>> {
-        self.query("ID")
+        if self.model == Some(ElecraftModel::Kh1) {
+            // KH1 responds with `KH1;`, not an `I...` response frame.
+            self.query_with_response_prefix("I", "")
+        } else {
+            self.query("ID")
+        }
     }
 
     /// Query the model option bitmap used by K2/K3-family and K4 CAT.
@@ -187,6 +196,10 @@ impl ElecraftRadio {
     /// Query actual K4 RF transmit state, excluding the documented S-meter
     /// holdoff interval. Other Elecraft models use their ordinary `TQ` query.
     pub fn get_actual_tx_state(&self) -> Result<bool> {
+        anyhow::ensure!(
+            self.model != Some(ElecraftModel::Kh1),
+            "Elecraft KH1 does not document TX-state query"
+        );
         let command = if self.model == Some(ElecraftModel::K4) {
             "TQX"
         } else {
@@ -645,6 +658,9 @@ impl Radio for ElecraftRadio {
         let Some(profile) = self.profile() else {
             return Ok(None);
         };
+        if !profile.supports_control(id) {
+            return Ok(None);
+        }
         let command = match id {
             ControlId::AfGain => "AG",
             ControlId::RfGain => "RG",
@@ -657,6 +673,7 @@ impl Radio for ElecraftRadio {
             ControlId::Split => return Ok(Some(ControlValue::Bool(self.is_split()?))),
             ControlId::Rit | ControlId::Xit => "IF",
             ControlId::Preamp => "PA",
+            ControlId::Attenuator if profile.model == ElecraftModel::K4 => "RA$",
             ControlId::Attenuator => "RA",
             ControlId::NoiseBlanker => "NB",
             ControlId::Agc => "GT",
@@ -711,6 +728,28 @@ impl Radio for ElecraftRadio {
             anyhow::ensure!(value <= 5, "Elecraft tuning-step index is out of range");
             return Ok(Some(ControlValue::U8(value as u8)));
         }
+        if id == ControlId::Attenuator && profile.model == ElecraftModel::K4 {
+            let response = self.query("RA$")?;
+            let text = std::str::from_utf8(&response)?;
+            let payload = text
+                .strip_prefix("RA$")
+                .and_then(|value| value.strip_suffix(';'))
+                .context("unexpected K4 attenuator response")?;
+            anyhow::ensure!(payload.len() == 3, "invalid K4 attenuator response");
+            let level = payload[..2].parse::<u8>()?;
+            anyhow::ensure!(
+                matches!(level, 0 | 3 | 6 | 9 | 12 | 15 | 18 | 21),
+                "invalid K4 attenuator level"
+            );
+            anyhow::ensure!(
+                matches!(&payload[2..], "0" | "1"),
+                "invalid K4 attenuator state"
+            );
+            return Ok(Some(ControlValue::U8(
+                crate::normalize_meter_level(u16::from(level), 21)
+                    .context("K4 attenuator exceeds normalized range")?,
+            )));
+        }
         if matches!(id, ControlId::Rit | ControlId::Xit) {
             let (_, rit, xit) = Self::parse_if_state(&self.query(command)?)?;
             return Ok(Some(ControlValue::Bool(if id == ControlId::Rit {
@@ -764,6 +803,11 @@ impl Radio for ElecraftRadio {
         let profile = self
             .profile()
             .context("Elecraft controls require a selected model")?;
+        anyhow::ensure!(
+            profile.supports_control(id),
+            "Elecraft control {id:?} is not supported by {}",
+            profile.model.model_name()
+        );
         match (id, value) {
             (ControlId::RfPower, ControlValue::U8(value)) => {
                 self.set("PC", &Self::encode_power(profile, value)?)
@@ -858,8 +902,24 @@ impl Radio for ElecraftRadio {
             }
             (id @ (ControlId::Preamp | ControlId::Attenuator), ControlValue::U8(value)) => self
                 .set(
-                    if id == ControlId::Preamp { "PA" } else { "RA" },
-                    &Self::encode_control(profile, id, value)?,
+                    if id == ControlId::Preamp {
+                        "PA"
+                    } else if profile.model == ElecraftModel::K4 {
+                        "RA$"
+                    } else {
+                        "RA"
+                    },
+                    &if id == ControlId::Attenuator && profile.model == ElecraftModel::K4 {
+                        let native = crate::denormalize_meter_level(value, 21)
+                            .context("K4 attenuator has an invalid normalized range")?;
+                        // The HAL value is continuous, while K4 hardware is
+                        // quantized to 3 dB. Choose the nearest documented
+                        // step rather than emitting an invalid CAT value.
+                        let native = ((native + 1) / 3 * 3).min(21);
+                        format!("{native:02}1")
+                    } else {
+                        Self::encode_control(profile, id, value)?
+                    },
                 ),
             (ControlId::Xit, ControlValue::Bool(enabled)) if profile.supports_rit_xit => {
                 self.set("XT", if enabled { "1" } else { "0" })
@@ -1569,6 +1629,26 @@ mod tests {
     }
 
     #[test]
+    fn k4_attenuator_uses_documented_dollar_frame_and_three_db_steps() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::K4),
+            9_600,
+            MemoryTransport {
+                input: b"RA$091;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            block_on(radio.get_control(ControlId::Attenuator)).unwrap(),
+            Some(ControlValue::U8(109))
+        );
+        block_on(radio.set_control(ControlId::Attenuator, ControlValue::U8(128))).unwrap();
+        assert_eq!(&*output.lock().unwrap(), b"RA$;RA$121;");
+    }
+
+    #[test]
     fn direct_cat_filter_uses_model_owned_command_and_bandwidth_range() {
         let output = Arc::new(Mutex::new(Vec::new()));
         let radio = ElecraftRadio::with_external_transport(
@@ -1673,5 +1753,28 @@ mod tests {
         assert!(block_on(radio.get_mode()).is_err());
         assert!(block_on(radio.set_ptt(true)).is_err());
         assert_eq!(&*output.lock().unwrap(), b"FA1400000;MD2;");
+    }
+
+    #[test]
+    fn kh1_uses_i_identification_and_rejects_undocumented_queries() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = ElecraftRadio::with_external_transport(
+            Some(ElecraftModel::Kh1),
+            9_600,
+            MemoryTransport {
+                input: b"KH1;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        )
+        .unwrap();
+        assert_eq!(radio.identify().unwrap(), b"KH1;".to_vec());
+        assert!(!radio.supports_control(ControlId::Squelch));
+        assert_eq!(
+            block_on(radio.get_control(ControlId::Squelch)).unwrap(),
+            None
+        );
+        assert!(radio.set_auto_info(1).is_err());
+        assert!(radio.get_actual_tx_state().is_err());
+        assert_eq!(&*output.lock().unwrap(), b"I;");
     }
 }
