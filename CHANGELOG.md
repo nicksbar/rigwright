@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.20 — Elecraft component boundaries and profile-accurate catalog
+
+### Added
+- Establish the next release branch for the Elecraft work documented from
+  the local K2/KX/K3/K4/KH1, P3/PX3, KAT, and KPA/KXPA references.
+- Keep transceivers in the `Radio` HAL while reserving station-component
+  interfaces for panadapters, antenna tuners, and amplifiers; these devices
+  are not additional radio variants.
+
+### Fixed
+- Correct IC-7300 scope wave-data output control to use the documented
+  `27 20` command family, explicitly request the first `27 00` waveform, and
+  tolerate firmware that accepts scope-setting writes without an ACK.
+- Derive catalog driver capabilities from the selected Elecraft profile so
+  KH1's documented write-only frequency/mode surface is not advertised as
+  readable CAT state.
+- Use the KH1 `I;` identification exchange and reject undocumented KH1
+  Auto-Info, TX-state, and typed-control operations.
+- Model the K4 `RA$nnm;` attenuator exchange with its documented 0–21 dB,
+  3 dB-step range and quantize normalized HAL writes to valid CAT values.
+- Restore FT-991A split capability: its CAT manual documents the `ST`
+  split command alongside the other modern Yaesu profiles.
+
 ## 0.1.19 — performance, link health, and a PTT safety watchdog
 
 ### Fixed

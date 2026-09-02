@@ -1942,17 +1942,14 @@ impl IcomCiVRadio {
         &self,
         timeout: Duration,
     ) -> Result<Option<Vec<u8>>> {
-        let result = self
-            .drain_scope_waveform_sweeps_blocking(timeout)
-            .map(|sweeps| sweeps.into_iter().next());
-        result
+        self.drain_scope_waveform_sweeps_blocking(timeout)
+            .map(|sweeps| sweeps.into_iter().next())
     }
 
     fn drain_scope_waveform_sweeps_blocking(&self, timeout: Duration) -> Result<Vec<Vec<u8>>> {
-        let result = self.with_serial_port(Duration::from_millis(25), |port| {
+        self.with_serial_port(Duration::from_millis(25), |port| {
             self.read_stream_scope_sweeps(port, timeout)
-        });
-        result
+        })
     }
 
     fn read_stream_scope_bins(

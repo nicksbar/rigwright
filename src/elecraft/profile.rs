@@ -149,6 +149,7 @@ impl ElecraftProfile {
                 ControlId::Vfo => self.supports_vfo_b,
                 ControlId::Split => self.supports_split,
                 ControlId::Rit | ControlId::Xit => self.supports_rit_xit,
+                ControlId::Squelch => self.squelch_max > 0,
                 _ => true,
             },
             _ => false,
