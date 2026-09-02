@@ -1112,6 +1112,30 @@ impl IcomCiVRadio {
             .map_err(|_| anyhow::anyhow!("radio serial port lock poisoned"))?;
 
         if guard.is_none() {
+            let configured_port = self.port.trim();
+            if configured_port.is_empty() {
+                let candidates = enumerate_serial_ports().unwrap_or_default();
+                let mut failures = Vec::new();
+                for candidate in candidates {
+                    match self.open_specific_port_with_timeout(&candidate, timeout) {
+                        Ok(mut transport) => match operation(&mut *transport) {
+                            Ok(value) => {
+                                *guard = Some(transport);
+                                return Ok(value);
+                            }
+                            Err(error) => {
+                                failures.push(format!("{candidate}: {error}"));
+                                continue;
+                            }
+                        },
+                        Err(error) => failures.push(format!("{candidate}: {error}")),
+                    }
+                }
+                return Err(anyhow!(
+                    "failed to find a responsive CI-V radio on Auto port (tried: {})",
+                    failures.join("; ")
+                ));
+            }
             *guard = Some(self.open_port_with_timeout(timeout)?);
         }
 
@@ -1133,39 +1157,9 @@ impl IcomCiVRadio {
 
         let mut failures = Vec::new();
         for candidate in &candidates {
-            let open_result = serialport::new(candidate, self.baud_rate)
-                .timeout(timeout)
-                .open();
-            match open_result {
-                Ok(mut port) => {
-                    port.set_flow_control(if self.serial_policy.hardware_flow_control {
-                        serialport::FlowControl::Hardware
-                    } else {
-                        serialport::FlowControl::None
-                    })
-                    .map_err(std::io::Error::other)
-                    .context("failed to configure Icom CI-V flow control")?;
-                    if let Some(enabled) = self.serial_policy.dtr {
-                        port.write_data_terminal_ready(enabled)
-                            .map_err(std::io::Error::other)
-                            .context("failed to configure Icom CI-V DTR")?;
-                    }
-                    if let Some(enabled) = self.serial_policy.rts {
-                        port.write_request_to_send(enabled)
-                            .map_err(std::io::Error::other)
-                            .context("failed to configure Icom CI-V RTS")?;
-                    }
-                    port.clear(serialport::ClearBuffer::Input)
-                        .map_err(std::io::Error::other)
-                        .context("failed to clear initial Icom CI-V input")?;
-                    thread::sleep(self.serial_policy.startup_settle);
-                    eprintln!("[rigwright] opened serial port: {candidate}");
-                    return Ok(Box::new(SerialPortTransport(port)));
-                }
-                Err(err) => {
-                    eprintln!("[rigwright] failed to open serial port: {candidate}: {err}");
-                    failures.push(format!("{candidate}: {err}"));
-                }
+            match self.open_specific_port_with_timeout(candidate, timeout) {
+                Ok(port) => return Ok(port),
+                Err(err) => failures.push(format!("{candidate}: {err}")),
             }
         }
 
@@ -1178,6 +1172,40 @@ impl IcomCiVRadio {
             },
             failures.join("; ")
         ))
+    }
+
+    fn open_specific_port_with_timeout(
+        &self,
+        candidate: &str,
+        timeout: Duration,
+    ) -> Result<Box<dyn RadioTransport>> {
+        let mut port = serialport::new(candidate, self.baud_rate)
+            .timeout(timeout)
+            .open()
+            .with_context(|| format!("failed to open serial port: {candidate}"))?;
+        port.set_flow_control(if self.serial_policy.hardware_flow_control {
+            serialport::FlowControl::Hardware
+        } else {
+            serialport::FlowControl::None
+        })
+        .map_err(std::io::Error::other)
+        .context("failed to configure Icom CI-V flow control")?;
+        if let Some(enabled) = self.serial_policy.dtr {
+            port.write_data_terminal_ready(enabled)
+                .map_err(std::io::Error::other)
+                .context("failed to configure Icom CI-V DTR")?;
+        }
+        if let Some(enabled) = self.serial_policy.rts {
+            port.write_request_to_send(enabled)
+                .map_err(std::io::Error::other)
+                .context("failed to configure Icom CI-V RTS")?;
+        }
+        port.clear(serialport::ClearBuffer::Input)
+            .map_err(std::io::Error::other)
+            .context("failed to clear initial Icom CI-V input")?;
+        thread::sleep(self.serial_policy.startup_settle);
+        eprintln!("[rigwright] opened serial port: {candidate}");
+        Ok(Box::new(SerialPortTransport(port)))
     }
 
     fn close_serial_port(&self) {
@@ -1363,6 +1391,20 @@ impl IcomCiVRadio {
 
     pub(crate) fn transact_ack(&self, payload: &[u8]) -> Result<()> {
         self.transact(payload, false).map(|_| ())
+    }
+
+    fn transact_scope_setting(&self, payload: &[u8]) -> Result<()> {
+        match self.transact_ack(payload) {
+            Ok(()) => Ok(()),
+            Err(error) if error.to_string().contains("did not acknowledge") => {
+                // IC-7300 scope setting writes are accepted without an ACK on
+                // some CI-V firmware/configuration combinations. The scope
+                // waveform is the authoritative confirmation; continue to
+                // the output-enable command and validate by waiting for data.
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn set_frequency_blocking(&self, hz: u64) -> Result<()> {
@@ -1819,17 +1861,19 @@ impl IcomCiVRadio {
                 model.model_name()
             );
         }
-        self.transact_ack(scope.enable_command)?;
-        self.transact_ack(scope.stream_command)?;
-        self.try_scope_waveform_bins_stream_blocking(timeout)?
-            .context("scope output enabled but no complete scope sweep arrived")
+        self.transact_scope_setting(scope.enable_command)?;
+        self.transact_scope_setting(scope.stream_command)?;
+        // The IC-7300 manual distinguishes enabling scope output (27 20)
+        // from requesting waveform data (27 00). Request the first sweep
+        // explicitly; subsequent frames may then arrive continuously.
+        self.request_scope_waveform_bins_blocking_timeout(timeout)
     }
 
     fn disable_spectrum_stream_blocking(&self) -> Result<()> {
         let scope = profile_for_model(self.selected_model()?)
             .scope
             .context("native CI-V scope streaming is not implemented for this model")?;
-        self.transact_ack(scope.disable_stream_command)?;
+        self.transact_scope_setting(scope.disable_stream_command)?;
         self.close_serial_port();
         Ok(())
     }
@@ -1872,10 +1916,14 @@ impl IcomCiVRadio {
     }
 
     fn request_scope_waveform_bins_blocking(&self) -> Result<Vec<u8>> {
+        self.request_scope_waveform_bins_blocking_timeout(Duration::from_millis(1_500))
+    }
+
+    fn request_scope_waveform_bins_blocking_timeout(&self, timeout: Duration) -> Result<Vec<u8>> {
         let request = self.build_frame_payload(&[0x27, 0x00]);
         let result = self.with_serial_port(Duration::from_millis(700), |port| {
             self.write_frame(port, &request)?;
-            self.read_stream_scope_bins(port, Duration::from_millis(1_500))
+            self.read_stream_scope_bins(port, timeout)
         });
         match result {
             Ok(Some(bins)) => Ok(bins),
@@ -1886,10 +1934,7 @@ impl IcomCiVRadio {
                     .unwrap_or_default();
                 anyhow::bail!("no complete {bins}-bin scope sweep arrived")
             }
-            Err(err) => {
-                self.close_serial_port();
-                Err(err)
-            }
+            Err(err) => Err(err),
         }
     }
 
@@ -1900,9 +1945,6 @@ impl IcomCiVRadio {
         let result = self
             .drain_scope_waveform_sweeps_blocking(timeout)
             .map(|sweeps| sweeps.into_iter().next());
-        if result.is_err() {
-            self.close_serial_port();
-        }
         result
     }
 
@@ -1910,9 +1952,6 @@ impl IcomCiVRadio {
         let result = self.with_serial_port(Duration::from_millis(25), |port| {
             self.read_stream_scope_sweeps(port, timeout)
         });
-        if result.is_err() {
-            self.close_serial_port();
-        }
         result
     }
 
@@ -4161,12 +4200,12 @@ mod tests {
             .lock()
             .unwrap()
             .iter()
-            .any(|frame| frame.ends_with(&[0x27, 0x11, 0x01, 0xFD])));
+            .any(|frame| frame.ends_with(&[0x27, 0x20, 0x01, 0xFD])));
         assert!(writes
             .lock()
             .unwrap()
             .iter()
-            .any(|frame| frame.ends_with(&[0x27, 0x11, 0x00, 0xFD])));
+            .any(|frame| frame.ends_with(&[0x27, 0x20, 0x00, 0xFD])));
     }
 
     #[test]

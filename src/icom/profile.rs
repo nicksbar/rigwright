@@ -340,7 +340,6 @@ mod tests {
     fn profile_commands_match_documented_ci_v_operations() {
         for model in [
             IcomCivModel::Ic705,
-            IcomCivModel::Ic7300,
             IcomCivModel::Ic7610,
             IcomCivModel::Ic9700,
         ] {
@@ -349,6 +348,13 @@ mod tests {
             assert_eq!(scope.stream_command, &[0x27, 0x11, 0x01]);
             assert_eq!(scope.disable_stream_command, &[0x27, 0x11, 0x00]);
         }
+
+        let ic7300 = profile_for_model(IcomCivModel::Ic7300)
+            .scope
+            .expect("IC-7300 scope profile");
+        assert_eq!(ic7300.enable_command, &[0x27, 0x10, 0x01]);
+        assert_eq!(ic7300.stream_command, &[0x27, 0x20, 0x01]);
+        assert_eq!(ic7300.disable_stream_command, &[0x27, 0x20, 0x00]);
 
         let ic7610 = profile_for_model(IcomCivModel::Ic7610)
             .main_sub
