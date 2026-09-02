@@ -95,7 +95,7 @@ Enhanced CAT port; the other modern Yaesu profiles remain framework-level.
 | FTDX10 | `FTDX10_CAT_OM_ENG_2308-F.pdf`, Aug. 2023 | ID `0761`; `FA` 9-digit 0.03-75 MHz range; `MD0`; `TX0/1/2`; `PC` 5-100 W; `ST0/1/2`; 4800-38400 baud |
 | FTDX101D | `FTDX101MP_D_CAT_OM_ENG_2308-L.pdf`, Aug. 2023 | ID `0681`; `FA` 9-digit 0.03-75 MHz range; `MD`; `TX`; `PC` 5-100 W; `ST`; 4800-38400 baud |
 | FTDX101MP | `FTDX101MP_D_CAT_OM_ENG_2308-L.pdf`, Aug. 2023 | ID `0682`; common modern commands; distinct `PC` 5-200 W maximum |
-| FT-991A | `FT-991A_CAT_OM_ENG_1711-D.pdf`, Nov. 2017 | ID `0670`; `FA` 9-digit 0.03-470 MHz range; model-specific `MD` table including C4FM; `TX`; `PC` 5-100 W; no `ST` profile; 4800-38400 baud |
+| FT-991A | `FT-991A_CAT_OM_ENG_1711-D.pdf`, Nov. 2017 | ID `0670`; `FA` 9-digit 0.03-470 MHz range; model-specific `MD` table including C4FM; `TX`; `PC` 5-100 W; `ST` split; 4800-38400 baud |
 
 The shared modern driver implements persistent serial transport, response
 matching in the presence of auto-information frames, frequency, mode, readable

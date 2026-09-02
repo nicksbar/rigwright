@@ -2,6 +2,8 @@
 
 ## 0.1.20 — Elecraft component boundaries and profile-accurate catalog
 
+Issue #24: publish and maintain the support/evidence contract for consumers.
+
 ### Added
 - Establish the next release branch for the Elecraft work documented from
   the local K2/KX/K3/K4/KH1, P3/PX3, KAT, and KPA/KXPA references.

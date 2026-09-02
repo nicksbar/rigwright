@@ -62,8 +62,8 @@ reported through the CodeQL check and GitHub code-scanning alerts.
   model-specific Icom controls including IP+, notch, tuner, memory, repeater,
   main/sub, external preamp, and normalized meters where documented.
 
-Only the IC-7300 is regularly hardware-tested. Other profiles are not yet
-claimed as hardware validated. Modern Yaesu models use a profile-driven ASCII
+The IC-7300 and FTDX10 are regularly hardware-tested. Other profiles are not
+yet claimed as hardware validated. Modern Yaesu models use a profile-driven ASCII
 CAT engine with model IDs, ranges, mode maps, readable PTT, RF power, and split
 gating. Classic Yaesu models use a separate profile-driven five-byte 8N2 engine
 with readable PTT, split, and status. Kenwood models use a

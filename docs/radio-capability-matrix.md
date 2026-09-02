@@ -14,6 +14,34 @@ implementation, profile, application, and validation claims:
 | **—** | Not available, not applicable, or intentionally not claimed. |
 | **R** | Read-only telemetry. **W** means writable control. **RW** means both. |
 
+## Support and evidence contract
+
+The catalog and vendor profiles are the implementation source of truth. The
+matrix is the maintained, human-readable projection of that source; it must
+not introduce a capability that is absent from the selected profile or driver.
+
+These dimensions are intentionally separate:
+
+| Dimension | Meaning | Evidence location |
+|---|---|---|
+| Cataloged | The model is selectable in `POPULAR_RADIOS` with protocol and maturity metadata. | `src/models.rs` |
+| Profiled | The vendor profile declares ranges, modes, controls, meters, and root capabilities. | Vendor profile modules under `src/` |
+| Software-tested | Deterministic parser, profile, boundary, or fake-transport tests pass. | Vendor tests and the locked test suite |
+| Hardware-validated | A physical radio was exercised and reviewed with model, firmware, transport, baud, and operating-state context. | Matrix row plus retained probe/capture evidence |
+| Consumed | A consumer actually uses the typed surface in a workflow. | Consumer integration and this matrix |
+
+`M`, `H`, and `P` describe documentation, HAL exposure, and profile gating;
+they do not mean that a physical radio has been tested. `V` is reserved for
+reviewed physical evidence. A passing unit test is software evidence, not
+hardware evidence. Unsupported and read-only behavior must be represented
+explicitly rather than inferred from a missing row.
+
+Probe reports use the shared `ProbeLog` record shape: model, connection
+parameters, timestamp, named `pass`/`fail`/`skip` records, and transport
+metrics. Reports are diagnostic evidence, not automatic promotion to `V`;
+review must confirm the selected model, firmware, transport, baud, and
+operating state and remove unnecessary private details before sharing.
+
 `M` alone is not a support claim. Vendor manuals describe many functions that
 are not yet safe to expose generically because command selectors, payloads,
 units, or model behavior differ.
@@ -257,7 +285,7 @@ and `RawCiV` where the selected profile permits them.
 | IC-9700 | IC-705 set plus external preamp and main/sub |
 | FTDX10 | Full modern typed-control set, repeater controls, full memory records; hardware-validated CAT path |
 | FT-710, FTDX101D, FTDX101MP | Full modern typed-control set, repeater controls, full memory records |
-| FT-991A | Full modern typed-control set, repeater controls, full memory records; split remains manual-only in the current profile |
+| FT-991A | Full modern typed-control set, repeater controls, full memory records, and profile-gated split |
 | FT-817ND, FT-818, FT-857D, FT-897D | Split (read/write), RIT/clarifier and repeater shift/tone/offset (write-only), VFO toggle, CAT lock |
 | TS-590SG | AF/RF gain, squelch, RF power, preamp, NB, NR, notch, filter A/B, RIT/XIT, VFO, split, tuner, signal/power/SWR/ALC/COMP meters, AI, and memory records |
 | TS-890S | AF/RF gain, squelch, RF power, preamp, NB, NR, notch, filter A/B/C, AGC, RIT/XIT, VFO, split, tuner, signal/power/SWR/ALC/COMP/current/voltage/temperature meters, AI, and memory records |
