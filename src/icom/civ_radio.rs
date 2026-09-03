@@ -1864,7 +1864,7 @@ impl IcomCiVRadio {
         self.transact_scope_setting(scope.enable_command)?;
         self.transact_scope_setting(scope.stream_command)?;
         // USB CI-V scope output is unsolicited once enabled. Some IC-7300
-        // firmware accepts 27 10/27 20 but NAKs an immediate 27 00 request;
+        // firmware accepts 27 10/27 11 but NAKs an immediate 27 00 request;
         // lifecycle start must therefore consume the native stream instead
         // of requiring a request/response waveform exchange. The explicit
         // request_scope_waveform_bins API remains available separately for
