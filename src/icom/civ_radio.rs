@@ -1863,10 +1863,14 @@ impl IcomCiVRadio {
         }
         self.transact_scope_setting(scope.enable_command)?;
         self.transact_scope_setting(scope.stream_command)?;
-        // The IC-7300 manual distinguishes enabling scope output (27 20)
-        // from requesting waveform data (27 00). Request the first sweep
-        // explicitly; subsequent frames may then arrive continuously.
-        self.request_scope_waveform_bins_blocking_timeout(timeout)
+        // USB CI-V scope output is unsolicited once enabled. Some IC-7300
+        // firmware accepts 27 10/27 20 but NAKs an immediate 27 00 request;
+        // lifecycle start must therefore consume the native stream instead
+        // of requiring a request/response waveform exchange. The explicit
+        // request_scope_waveform_bins API remains available separately for
+        // radios/firmware that implement that form.
+        self.try_scope_waveform_bins_stream_blocking(timeout)?
+            .context("scope output enabled but no complete scope sweep arrived")
     }
 
     fn disable_spectrum_stream_blocking(&self) -> Result<()> {

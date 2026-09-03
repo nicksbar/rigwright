@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.21 — resilient IC-7300 scope streaming
+
+### Fixed
+- Start IC-7300 scope lifecycle from unsolicited USB CI-V waveform output;
+  some firmware accepts the scope enable commands but NAKs an immediate
+  `27 00` request even though the continuous stream is available.
+
 ## 0.1.20 — Elecraft component boundaries and profile-accurate catalog
 
 Issue #24: publish and maintain the support/evidence contract for consumers.
