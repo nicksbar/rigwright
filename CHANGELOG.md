@@ -4,8 +4,8 @@
 
 ### Fixed
 - Start IC-7300 scope lifecycle from unsolicited USB CI-V waveform output;
-  some firmware accepts the scope enable commands but NAKs an immediate
-  `27 00` request even though the continuous stream is available.
+  use the USB scope-data selector `27 11`, which produces divisions on the
+  tested IC-7300 path where `27 20` did not.
 
 ## 0.1.20 — Elecraft component boundaries and profile-accurate catalog
 

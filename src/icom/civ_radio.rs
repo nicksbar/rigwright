@@ -4201,12 +4201,12 @@ mod tests {
             .lock()
             .unwrap()
             .iter()
-            .any(|frame| frame.ends_with(&[0x27, 0x20, 0x01, 0xFD])));
+            .any(|frame| frame.ends_with(&[0x27, 0x11, 0x01, 0xFD])));
         assert!(writes
             .lock()
             .unwrap()
             .iter()
-            .any(|frame| frame.ends_with(&[0x27, 0x20, 0x00, 0xFD])));
+            .any(|frame| frame.ends_with(&[0x27, 0x11, 0x00, 0xFD])));
     }
 
     #[test]
