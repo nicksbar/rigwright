@@ -125,7 +125,8 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     supports_repeater_settings: true,
     supports_memory_channels: true,
     filter_bandwidths: &[],
-    swr_sweep_setup: None,
+    swr_sweep_setup: Some(super::profile::SWR_SWEEP_SETUP),
+    meter_presentation: Some(super::profile::swr_meter_presentation),
 };
 
 #[cfg(test)]

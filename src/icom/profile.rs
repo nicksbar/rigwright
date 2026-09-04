@@ -212,11 +212,44 @@ pub struct IcomCivProfile {
     pub supports_memory_channels: bool,
     pub filter_bandwidths: &'static [(Mode, u8, u32)],
     pub swr_sweep_setup: Option<SwrSweepSetup>,
+    pub meter_presentation: Option<fn(MeterId, u8) -> Option<MeterPresentation>>,
 }
 
 /// Conservative CI-V defaults used by current Icom profiles unless a model
 /// documents a narrower serial menu.
 pub const DEFAULT_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
+
+/// Low-power carrier setup shared by the Icom models whose CI-V manuals
+/// document both RTTY operation and SWR meter readback.
+pub const SWR_SWEEP_SETUP: SwrSweepSetup = SwrSweepSetup {
+    carrier_mode: Mode::Rtty,
+    rf_power: 77,
+};
+
+/// CI-V SWR calibration documented by the IC-705, IC-7300, IC-7610, and
+/// IC-9700 command references.
+pub(crate) fn swr_meter_presentation(id: MeterId, raw: u8) -> Option<MeterPresentation> {
+    (id == MeterId::Swr).then(|| {
+        let anchors = [(0_u8, 1.0_f32), (48, 1.5), (80, 2.0), (120, 3.0)];
+        let value = anchors
+            .windows(2)
+            .find(|window| raw <= window[1].0)
+            .map(|window| {
+                let (low_level, low_ratio) = window[0];
+                let (high_level, high_ratio) = window[1];
+                low_ratio
+                    + f32::from(raw.saturating_sub(low_level)) / f32::from(high_level - low_level)
+                        * (high_ratio - low_ratio)
+            })
+            .unwrap_or(3.0);
+        MeterPresentation {
+            value,
+            unit: ":1",
+            precision: 2,
+            upper_bound: Some(3.0),
+        }
+    })
+}
 
 impl IcomCivProfile {
     pub fn supports_frequency(self, hz: u64) -> bool {
@@ -253,47 +286,7 @@ impl IcomCivProfile {
     }
 
     pub fn meter_presentation(self, id: MeterId, raw: u8) -> Option<MeterPresentation> {
-        if self.model != crate::models::IcomCivModel::Ic7300 {
-            return None;
-        }
-        match id {
-            MeterId::Swr => {
-                let anchors = [(0_u8, 1.0_f32), (48, 1.5), (80, 2.0), (120, 3.0)];
-                let value = anchors
-                    .windows(2)
-                    .find(|window| raw <= window[1].0)
-                    .map(|window| {
-                        let (low_level, low_ratio) = window[0];
-                        let (high_level, high_ratio) = window[1];
-                        low_ratio
-                            + f32::from(raw.saturating_sub(low_level))
-                                / f32::from(high_level - low_level)
-                                * (high_ratio - low_ratio)
-                    })
-                    .unwrap_or(3.0);
-                Some(MeterPresentation {
-                    value,
-                    unit: ":1",
-                    precision: 2,
-                    upper_bound: Some(3.0),
-                })
-            }
-            MeterId::Voltage => {
-                let value = f32::from(raw);
-                let value = if raw <= 13 {
-                    value * 10.0 / 13.0
-                } else {
-                    10.0 + (value - 13.0) * 6.0 / (241.0 - 13.0)
-                };
-                Some(MeterPresentation {
-                    value: value.clamp(0.0, 16.0),
-                    unit: "V",
-                    precision: 1,
-                    upper_bound: Some(16.0),
-                })
-            }
-            _ => None,
-        }
+        self.meter_presentation.and_then(|present| present(id, raw))
     }
 }
 
@@ -347,6 +340,24 @@ mod tests {
         assert!(profile_for_model(IcomCivModel::Ic9700)
             .external_preamp
             .is_some());
+    }
+
+    #[test]
+    fn swr_sweep_is_enabled_only_for_profiles_with_documented_ci_v_swr() {
+        for model in [
+            IcomCivModel::Ic705,
+            IcomCivModel::Ic7200,
+            IcomCivModel::Ic7300,
+            IcomCivModel::Ic7610,
+            IcomCivModel::Ic9700,
+        ] {
+            let profile = profile_for_model(model);
+            assert!(profile.swr_sweep_setup.is_some());
+            assert!(profile.meter_presentation(MeterId::Swr, 48).is_some());
+        }
+        let ic718 = profile_for_model(IcomCivModel::Ic718);
+        assert!(ic718.swr_sweep_setup.is_none());
+        assert!(ic718.meter_presentation(MeterId::Swr, 48).is_none());
     }
 
     #[test]

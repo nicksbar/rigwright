@@ -5,7 +5,7 @@ use super::profile::{
 };
 use crate::controls::ControlId;
 use crate::hal_types::MeterId;
-use crate::hal_types::{Mode, SwrSweepSetup};
+use crate::hal_types::Mode;
 use anyhow::Result;
 
 const FREQUENCY_RANGES: &[(u64, u64)] = &[(30_000, 74_800_000)];
@@ -109,10 +109,8 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     supports_repeater_settings: true,
     supports_memory_channels: true,
     filter_bandwidths: FILTER_BANDWIDTHS,
-    swr_sweep_setup: Some(SwrSweepSetup {
-        carrier_mode: Mode::Rtty,
-        rf_power: 77,
-    }),
+    swr_sweep_setup: Some(super::profile::SWR_SWEEP_SETUP),
+    meter_presentation: Some(super::profile::swr_meter_presentation),
 };
 
 /// IC-7300-specific scope configuration operations.

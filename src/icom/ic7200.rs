@@ -5,7 +5,8 @@
 //! no physical IC-7200 has been tested by Rigwright yet.
 
 use super::profile::{
-    ControlCapabilities, ControlEncoding, ControlSpec, IcomCivProfile, MemoryLayout,
+    swr_meter_presentation, ControlCapabilities, ControlEncoding, ControlSpec, IcomCivProfile,
+    MemoryLayout, SWR_SWEEP_SETUP,
 };
 use crate::controls::ControlId;
 use crate::hal_types::MeterId;
@@ -95,7 +96,8 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     supports_repeater_settings: false,
     supports_memory_channels: true,
     filter_bandwidths: &[],
-    swr_sweep_setup: None,
+    swr_sweep_setup: Some(SWR_SWEEP_SETUP),
+    meter_presentation: Some(swr_meter_presentation),
 };
 
 #[cfg(test)]

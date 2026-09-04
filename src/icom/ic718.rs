@@ -93,6 +93,7 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     supports_memory_channels: true,
     filter_bandwidths: &[],
     swr_sweep_setup: None,
+    meter_presentation: None,
 };
 
 #[cfg(test)]
