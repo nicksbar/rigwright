@@ -326,6 +326,12 @@ impl Radio for NullRadio {
             .2 = enabled;
         Ok(())
     }
+    fn swr_sweep_setup(&self) -> Option<crate::SwrSweepSetup> {
+        Some(crate::SwrSweepSetup {
+            carrier_mode: Mode::Rtty,
+            rf_power: 77,
+        })
+    }
     async fn get_ptt(&self) -> Result<bool> {
         Ok(self
             .state
