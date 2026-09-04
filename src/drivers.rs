@@ -446,6 +446,12 @@ impl Radio for ConfiguredRadio {
             _ => false,
         }
     }
+    fn supports_iq_output(&self) -> bool {
+        match self {
+            Self::Icom(r) => r.supports_iq_output(),
+            _ => false,
+        }
+    }
     fn scope_metadata(&self) -> Option<crate::ScopeMetadata> {
         match self {
             Self::Icom(r) => r.scope_metadata(),
@@ -464,6 +470,9 @@ impl Radio for ConfiguredRadio {
     fn supported_control_values(&self, id: crate::ControlId) -> Option<&'static [u8]> {
         match self {
             Self::Icom(r) => r.supported_control_values(id),
+            Self::Yaesu(r) => r.supported_control_values(id),
+            Self::Kenwood(r) => r.supported_control_values(id),
+            Self::Elecraft(r) => r.supported_control_values(id),
             _ => None,
         }
     }
@@ -472,6 +481,8 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.meter_poll_spec(id),
             Self::Yaesu(r) => r.meter_poll_spec(id),
             Self::LegacyYaesu(r) => r.meter_poll_spec(id),
+            Self::Kenwood(r) => r.meter_poll_spec(id),
+            Self::Elecraft(r) => r.meter_poll_spec(id),
             _ => None,
         }
     }
@@ -481,6 +492,8 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.meter_metadata(id),
             Self::Yaesu(r) => r.meter_metadata(id),
             Self::LegacyYaesu(r) => r.meter_metadata(id),
+            Self::Kenwood(r) => r.meter_metadata(id),
+            Self::Elecraft(r) => r.meter_metadata(id),
             _ => None,
         }
     }
@@ -524,6 +537,7 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.get_repeater_settings(),
             Self::Yaesu(r) => r.get_repeater_settings(),
             Self::Kenwood(r) => r.get_repeater_settings(),
+            Self::Elecraft(r) => r.get_repeater_settings().await,
             Self::LegacyYaesu(r) => r.get_repeater_settings().await,
             _ => bail!("repeater settings are not available for this driver"),
         }
@@ -533,6 +547,7 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.set_repeater_settings(settings),
             Self::Yaesu(r) => r.set_repeater_settings(settings),
             Self::Kenwood(r) => r.set_repeater_settings(settings),
+            Self::Elecraft(r) => r.set_repeater_settings(settings).await,
             Self::LegacyYaesu(r) => r.set_repeater_settings(settings).await,
             _ => bail!("repeater settings are not available for this driver"),
         }
@@ -572,6 +587,7 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.select_memory_channel(channel),
             Self::Yaesu(r) => r.select_memory_channel(channel),
             Self::Kenwood(r) => r.select_memory_channel(channel),
+            Self::Elecraft(r) => r.select_memory_channel(channel).await,
             Self::LegacyYaesu(r) => r.select_memory_channel(channel).await,
             _ => bail!("memory channels are not available for this driver"),
         }
@@ -657,6 +673,7 @@ impl Radio for ConfiguredRadio {
             Self::Yaesu(r) => r.supports_repeater_settings(),
             Self::Kenwood(r) => r.supports_repeater_settings(),
             Self::LegacyYaesu(r) => r.supports_repeater_settings(),
+            Self::Elecraft(r) => r.supports_repeater_settings(),
             _ => false,
         }
     }
@@ -916,6 +933,7 @@ mod tests {
         assert!(icom.supports_meter(crate::MeterId::Voltage));
         assert!(icom.supports_meter(crate::MeterId::Current));
         assert!(!icom.supports_meter(crate::MeterId::Temperature));
+        assert!(!icom.supports_iq_output());
         assert!(icom.event_router().is_some());
 
         let ic9700 = open_model("IC-9700", "/dev/null", 115_200, 0xE0).unwrap();
@@ -949,6 +967,16 @@ mod tests {
         assert!(kenwood.event_router().is_some());
         assert!(kenwood.supports_repeater_settings());
         assert!(kenwood.supports_memory_channels());
+
+        let ic7610 = open_model("IC-7610", "/dev/null", 115_200, 0xE0).unwrap();
+        assert!(ic7610.supports_iq_output());
+
+        let elecraft = open_model("K4", "/dev/null", 38_400, 0xE0).unwrap();
+        assert!(elecraft.supports_repeater_settings());
+        assert!(elecraft
+            .supported_control_values(crate::ControlId::Attenuator)
+            .is_some());
+        assert!(elecraft.meter_metadata(crate::MeterId::Signal).is_some());
 
         let generic = open_model(GENERIC_KENWOOD_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
         assert!(!generic.supports_control(crate::ControlId::RfPower));

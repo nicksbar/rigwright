@@ -92,12 +92,13 @@ integration. No qsonaut-modems or qsonaut-third-party change is required.
 | Raw protocol | `protocol_write_read` | H/P | H/P | H/P | H/P | Not a normal UI control |
 | Tuner start/status | `start_tuner`, `get_tuner_status` | H/P/V for profiled Icoms | H/P | H/P | H/P | Q: tuner and SWR sweep workflow |
 | Spectrum waveform | backend-specific scope API | H/P; model geometry differs | — | — | — | — for transceivers; P3/PX3 are separate components |
-| I/Q stream | model/backend-specific | Shared I/Q sample block decoder only; IC-7610 documents USB I/Q output, but Rigwright does not yet own/open that transport | — | — | — | Not currently consumed |
+| I/Q stream | `supports_iq_output` plus model/backend-specific transport | Shared I/Q sample block decoder; IC-7610 reports documented I/Q capability, but Rigwright does not yet own/open that USB transport | — | — | — | Not currently consumed |
 
 ### Universal HAL caveat
 
 The method names are universal; the hardware support is not. Applications must
-check `Radio::capabilities()`, `supports_control()`, and `supports_meter()` as
+check `Radio::capabilities()`, `supports_control()`, `supports_meter()`, and
+`supports_iq_output()` as
 appropriate. A generic vendor driver deliberately reports no optional typed
 controls or meters until a concrete model profile is selected.
 

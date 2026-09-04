@@ -127,6 +127,12 @@ pub trait Radio: Send + Sync {
     fn supports_scope(&self) -> bool {
         false
     }
+    /// Whether the selected model documents a native I/Q output surface.
+    /// This reports model capability only; a driver may still require a
+    /// separate USB/audio transport before samples can be opened.
+    fn supports_iq_output(&self) -> bool {
+        false
+    }
     fn scope_metadata(&self) -> Option<ScopeMetadata> {
         None
     }

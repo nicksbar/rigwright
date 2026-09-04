@@ -264,6 +264,10 @@ impl Radio for RadioAndroid {
         self.radio().supports_scope()
     }
 
+    fn supports_iq_output(&self) -> bool {
+        self.radio().supports_iq_output()
+    }
+
     fn scope_metadata(&self) -> Option<crate::ScopeMetadata> {
         self.radio().scope_metadata()
     }

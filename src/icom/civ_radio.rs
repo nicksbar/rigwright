@@ -2296,6 +2296,11 @@ impl Radio for IcomCiVRadio {
         self.supports_scope()
     }
 
+    fn supports_iq_output(&self) -> bool {
+        self.model
+            .is_some_and(|model| profile_for_model(model).supports_iq_output)
+    }
+
     async fn set_scope_configuration(&self, config: ScopeConfiguration) -> Result<()> {
         IcomCiVRadio::set_scope_configuration(self, config).await
     }
