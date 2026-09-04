@@ -55,14 +55,6 @@ impl std::fmt::Debug for KenwoodMemorySpec {
     }
 }
 
-fn ts590_read_parameters(channel: u16) -> String {
-    format!("0{channel:03}")
-}
-
-fn ts890_read_parameters(channel: u16) -> String {
-    format!("{channel:03}")
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KenwoodModeSpec {
     pub code: char,
@@ -269,6 +261,28 @@ impl KenwoodCatProfile {
                 (id == ControlId::RfPower && self.power_range_watts.is_some()).then_some(u8::MAX)
             })
     }
+}
+
+pub(crate) fn parse_memory_field<T>(value: &str, label: &str) -> Result<T>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    value
+        .trim()
+        .parse()
+        .map_err(|error| anyhow::anyhow!("invalid {label}: {error}"))
+}
+
+pub(crate) fn memory_char(payload: &str, context: &str) -> Result<char> {
+    let mut chars = payload.chars();
+    let value = chars
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("missing {context}"))?;
+    if chars.next().is_some() {
+        bail!("unexpected {context}: {payload}");
+    }
+    Ok(value)
 }
 
 const fn mode(code: char, mode: Mode, preferred: bool) -> KenwoodModeSpec {
@@ -580,16 +594,7 @@ pub const TS590SG_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     controls: crate::kenwood::ts590sg::CONTROLS,
     extra_meters: crate::kenwood::ts590sg::METERS,
     rit_xit_layout: KenwoodRitXitLayout::IfStatus,
-    memory: Some(KenwoodMemorySpec {
-        channel_max: 119,
-        select_vfo: 2,
-        select_command: "MC",
-        read_command: "MR",
-        write_command: "MW",
-        read_parameters: ts590_read_parameters,
-        decode: crate::kenwood::cat_radio::decode_ts590_memory,
-        encode: crate::kenwood::cat_radio::encode_ts590_memory,
-    }),
+    memory: Some(crate::kenwood::ts590sg::MEMORY),
     ai_on_value: "2",
     sm_payload_len: 5,
     sm_value_start: 1,
@@ -614,16 +619,7 @@ pub const TS890S_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     controls: crate::kenwood::ts890s::CONTROLS,
     extra_meters: crate::kenwood::ts890s::METERS,
     rit_xit_layout: KenwoodRitXitLayout::RfAndFunctionState,
-    memory: Some(KenwoodMemorySpec {
-        channel_max: 119,
-        select_vfo: 3,
-        select_command: "MN",
-        read_command: "MA0",
-        write_command: "MA0",
-        read_parameters: ts890_read_parameters,
-        decode: crate::kenwood::cat_radio::decode_ts890_memory,
-        encode: crate::kenwood::cat_radio::encode_ts890_memory,
-    }),
+    memory: Some(crate::kenwood::ts890s::MEMORY),
     ai_on_value: "2",
     sm_payload_len: 4,
     sm_value_start: 0,

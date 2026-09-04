@@ -1264,173 +1264,6 @@ fn parse_bool_payload(frame: &[u8], command: &str) -> Result<bool> {
     }
 }
 
-pub(crate) fn decode_ts890_memory(
-    payload: &str,
-    profile: &KenwoodCatProfile,
-) -> Result<MemoryChannel> {
-    anyhow::ensure!(payload.len() >= 36, "TS-890S MA0 response is too short");
-    let channel = parse_field::<u16>(&payload[0..3], "memory channel")?;
-    let frequency_hz = parse_field::<u64>(&payload[3..14], "memory frequency")?;
-    let mode = profile.decode_mode(one_char(&payload[14..15], "memory mode")?)?;
-    let tone_mode = match &payload[16..17] {
-        "0" => ToneMode::Off,
-        "1" => ToneMode::Encode,
-        "2" | "3" => ToneMode::EncodeDecode,
-        value => bail!("invalid TS-890S memory tone mode: {value}"),
-    };
-    let tone_index = parse_field::<u8>(&payload[19..21], "memory CTCSS index")?;
-    let tx_frequency = parse_field::<u64>(&payload[21..32], "memory transmit frequency")?;
-    // MA0 P10 is FM narrow/normal, not repeater-shift direction. Split is
-    // represented independently by P11 and the TX frequency in P8.
-    let shift = RepeaterShift::Simplex;
-    let name = payload[36..].trim().to_owned();
-    Ok(MemoryChannel {
-        channel,
-        name: (!name.is_empty()).then_some(name),
-        frequency_hz,
-        transmit_frequency_hz: (tx_frequency != 0).then_some(tx_frequency),
-        mode,
-        repeater: RepeaterSettings {
-            shift,
-            offset_hz: None,
-            tone: ToneSettings {
-                mode: tone_mode,
-                index: tone_index,
-                frequency_tenths_hz: None,
-                dtcs_code: None,
-                dtcs_reverse: None,
-            },
-        },
-    })
-}
-
-pub(crate) fn encode_ts890_memory(
-    channel: MemoryChannel,
-    profile: &KenwoodCatProfile,
-) -> Result<String> {
-    anyhow::ensure!(
-        channel.frequency_hz <= 99_999_999_999,
-        "Kenwood memory frequency does not fit the documented 11-digit field"
-    );
-    anyhow::ensure!(
-        matches!(channel.repeater.shift, RepeaterShift::Simplex),
-        "Kenwood MA0 memory writes require simplex; split memory needs a separate TX frequency"
-    );
-    let mode = profile.encode_mode(channel.mode)?;
-    let tone_type = match channel.repeater.tone.mode {
-        ToneMode::Off => '0',
-        ToneMode::Encode => '1',
-        ToneMode::EncodeDecode => '2',
-        ToneMode::Dtcs => anyhow::bail!("DTCS is not supported by this Kenwood profile"),
-    };
-    anyhow::ensure!(
-        channel.repeater.tone.index <= 41,
-        "Kenwood CTCSS index must be 0..=41"
-    );
-    let tx_frequency = channel
-        .transmit_frequency_hz
-        .unwrap_or(channel.frequency_hz);
-    anyhow::ensure!(
-        tx_frequency <= 99_999_999_999,
-        "Kenwood transmit memory frequency does not fit the documented 11-digit field"
-    );
-    let name = channel.name.unwrap_or_default();
-    anyhow::ensure!(
-        name.is_ascii() && name.len() <= 10,
-        "Kenwood channel name must be ASCII and at most 10 characters"
-    );
-    Ok(format!(
-        "{:03}{:011}{mode}0{tone_type}00{:02}{:011}{mode}000{name}",
-        channel.channel, channel.frequency_hz, channel.repeater.tone.index, tx_frequency,
-    ))
-}
-
-pub(crate) fn decode_ts590_memory(
-    payload: &str,
-    profile: &KenwoodCatProfile,
-) -> Result<MemoryChannel> {
-    // MR payload: P1, three-digit channel, 11-digit frequency, mode/data,
-    // tone fields, filter state, and an optional eight-character name.
-    anyhow::ensure!(payload.len() >= 39, "TS-590SG MR response is too short");
-    let split = payload.as_bytes()[0] == b'1';
-    let channel = parse_field::<u16>(&payload[1..4], "memory channel")?;
-    let frequency_hz = parse_field::<u64>(&payload[4..15], "memory frequency")?;
-    let mode = profile.decode_mode(one_char(&payload[15..16], "memory mode")?)?;
-    let tone_mode = match &payload[17..18] {
-        "0" => ToneMode::Off,
-        "1" => ToneMode::Encode,
-        "2" | "3" => ToneMode::EncodeDecode,
-        value => bail!("invalid TS-590SG memory tone mode: {value}"),
-    };
-    let tone_index = parse_field::<u8>(&payload[20..22], "memory CTCSS index")?;
-    let name = payload[39..].trim().to_owned();
-    Ok(MemoryChannel {
-        channel,
-        name: (!name.is_empty()).then_some(name),
-        frequency_hz,
-        transmit_frequency_hz: split.then_some(frequency_hz),
-        mode,
-        repeater: RepeaterSettings {
-            shift: RepeaterShift::Simplex,
-            offset_hz: None,
-            tone: ToneSettings {
-                mode: tone_mode,
-                index: tone_index,
-                frequency_tenths_hz: None,
-                dtcs_code: None,
-                dtcs_reverse: None,
-            },
-        },
-    })
-}
-
-pub(crate) fn encode_ts590_memory(
-    channel: MemoryChannel,
-    profile: &KenwoodCatProfile,
-) -> Result<String> {
-    let mode = profile.encode_mode(channel.mode)?;
-    anyhow::ensure!(
-        channel.repeater.tone.index <= 41,
-        "Kenwood tone index must be 0..=41"
-    );
-    let split = channel.transmit_frequency_hz.is_some();
-    let frequency = channel
-        .transmit_frequency_hz
-        .unwrap_or(channel.frequency_hz);
-    anyhow::ensure!(
-        frequency <= 99_999_999_999,
-        "Kenwood memory frequency does not fit the documented 11-digit field"
-    );
-    let tone = match channel.repeater.tone.mode {
-        ToneMode::Off => '0',
-        ToneMode::Encode => '1',
-        ToneMode::EncodeDecode => '2',
-        ToneMode::Dtcs => bail!("DTCS is not supported by the TS-590SG memory format"),
-    };
-    let name = channel.name.unwrap_or_default();
-    anyhow::ensure!(
-        name.is_ascii() && name.len() <= 8,
-        "TS-590SG memory name must be ASCII and at most 8 characters"
-    );
-    Ok(format!(
-        "{}{channel_number:03}{frequency:011}{mode}0{tone}00{tone_index:02}00000000000000000{name}",
-        if split { '1' } else { '0' },
-        channel_number = channel.channel,
-        tone_index = channel.repeater.tone.index,
-    ))
-}
-
-fn parse_field<T>(value: &str, label: &str) -> Result<T>
-where
-    T: std::str::FromStr,
-    T::Err: std::fmt::Display,
-{
-    value
-        .trim()
-        .parse()
-        .map_err(|error| anyhow!("invalid {label}: {error}"))
-}
-
 fn one_char(payload: &str, context: &str) -> Result<char> {
     let mut chars = payload.chars();
     let value = chars.next().with_context(|| format!("missing {context}"))?;
@@ -1588,7 +1421,7 @@ mod tests {
             "{:03}{:011}{}0{}00{:02}{:011}{}000{}",
             1, 14_500_000, '4', '1', 8, 14_500_000, '4', "LOCAL"
         );
-        let channel = decode_ts890_memory(&payload, &TS890S_PROFILE).unwrap();
+        let channel = crate::kenwood::ts890s::decode_memory(&payload, &TS890S_PROFILE).unwrap();
         assert_eq!(channel.channel, 1);
         assert_eq!(channel.frequency_hz, 14_500_000);
         assert_eq!(channel.mode, Mode::Fm);
@@ -1603,7 +1436,7 @@ mod tests {
             "1{:03}{:011}{}0{}00{:02}00000000000000000{}",
             7, 14_074_000, '2', '2', 8, "LOCAL"
         );
-        let channel = decode_ts590_memory(&payload, &TS590SG_PROFILE).unwrap();
+        let channel = crate::kenwood::ts590sg::decode_memory(&payload, &TS590SG_PROFILE).unwrap();
         assert_eq!(channel.channel, 7);
         assert_eq!(channel.frequency_hz, 14_074_000);
         assert_eq!(channel.transmit_frequency_hz, Some(14_074_000));
