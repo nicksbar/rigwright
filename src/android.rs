@@ -259,6 +259,46 @@ impl Radio for RadioAndroid {
     fn capabilities(&self) -> RadioCapabilities {
         self.radio().capabilities()
     }
+
+    fn supports_scope(&self) -> bool {
+        self.radio().supports_scope()
+    }
+
+    fn scope_metadata(&self) -> Option<crate::ScopeMetadata> {
+        self.radio().scope_metadata()
+    }
+
+    fn filter_bandwidth_hz(&self, mode: Mode, filter: u8) -> Option<u32> {
+        self.radio().filter_bandwidth_hz(mode, filter)
+    }
+
+    fn swr_sweep_setup(&self) -> Option<crate::SwrSweepSetup> {
+        self.radio().swr_sweep_setup()
+    }
+
+    fn meter_presentation(&self, id: MeterId, normalized: u8) -> Option<crate::MeterPresentation> {
+        self.radio().meter_presentation(id, normalized)
+    }
+
+    fn control_max(&self, id: ControlId) -> Option<u8> {
+        self.radio().control_max(id)
+    }
+
+    fn supported_control_values(&self, id: ControlId) -> Option<&'static [u8]> {
+        self.radio().supported_control_values(id)
+    }
+
+    fn meter_poll_spec(&self, id: MeterId) -> Option<crate::MeterPollSpec> {
+        self.radio().meter_poll_spec(id)
+    }
+
+    async fn set_scope_configuration(&self, config: crate::ScopeConfiguration) -> Result<()> {
+        self.radio().set_scope_configuration(config).await
+    }
+
+    async fn get_scope_state(&self) -> Result<crate::ScopeState> {
+        self.radio().get_scope_state().await
+    }
 }
 
 #[cfg(test)]
@@ -412,7 +452,13 @@ mod tests {
         assert!(radio.supports_control(ControlId::RfPower));
         assert!(radio.supports_control_read(ControlId::RfPower));
         assert!(radio.supports_control_write(ControlId::RfPower));
+        assert!(radio.supports_scope());
+        assert!(radio.scope_metadata().is_some());
+        assert_eq!(radio.filter_bandwidth_hz(Mode::Usb, 1), Some(3_000));
+        assert!(radio.swr_sweep_setup().is_some());
+        assert!(radio.control_max(ControlId::Agc).is_some());
         assert!(radio.supports_meter(MeterId::Signal));
+        assert!(radio.meter_poll_spec(MeterId::Signal).is_some());
         assert!(radio.supports_repeater_settings());
         assert!(radio.supports_memory_channels());
         assert!(!radio.supports_send_dtmf());

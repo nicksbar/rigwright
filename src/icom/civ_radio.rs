@@ -13,12 +13,14 @@ use std::{
 };
 
 use super::profile::ControlEncoding;
-use super::profile::{meter_command_prefix, profile_for_model, MemoryLayout};
+use super::profile::{meter_command_prefix, profile_for_model, MemoryLayout, ScopeMenuSpec};
 use crate::events::{RadioEvent, RadioEventRouter, RadioEventSubscription};
 pub use crate::hal_types::{BaseMode, Mode, OperatingMode};
 use crate::hal_types::{
-    ControlId, ControlValue, MemoryChannel, MeterId, MeterPresentation, RepeaterSettings,
-    RepeaterShift, ScopeConfiguration, SwrSweepSetup, ToneMode, ToneSettings, TunerStatus,
+    ControlId, ControlValue, MemoryChannel, MeterId, MeterPollSpec, MeterPresentation,
+    RepeaterSettings, RepeaterShift, ScopeCenterType, ScopeColor, ScopeConfiguration,
+    ScopeMarkerPosition, ScopeMaxHold, ScopeMetadata, ScopeState, ScopeWaveformType, SwrSweepSetup,
+    ToneMode, ToneSettings, TunerStatus,
 };
 
 const CI_V_FRAME_START: u8 = 0xFE;
@@ -384,6 +386,15 @@ impl IcomCiVRadio {
             self.supports_scope(),
             "native CI-V scope is unavailable for this model"
         );
+        let profile = self.model().map(profile_for_model);
+        let menu = profile.and_then(|profile| profile.scope.and_then(|scope| scope.menu));
+        let set_menu = |index: u16, value: u8| -> Result<()> {
+            let [high, low] = encode_civ_menu_index(index);
+            self.transact_ack(&[0x1A, 0x05, high, low, value])
+        };
+        let require_menu = |menu: Option<ScopeMenuSpec>| -> Result<ScopeMenuSpec> {
+            menu.ok_or_else(|| anyhow!("advanced scope controls are unavailable for this model"))
+        };
         if let Some(value) = config.center_mode {
             self.transact_ack(&[0x27, 0x14, 0x00, u8::from(value)])?;
         }
@@ -394,9 +405,12 @@ impl IcomCiVRadio {
             self.transact_ack(&payload)?;
         }
         if let Some(edge) = config.fixed_edge_number {
+            let metadata = self
+                .scope_metadata()
+                .ok_or_else(|| anyhow!("scope metadata is unavailable"))?;
             anyhow::ensure!(
-                (1..=4).contains(&edge),
-                "scope fixed-edge number must be in 1..=4"
+                metadata.fixed_edge_numbers.contains(&edge),
+                "unsupported scope fixed-edge number {edge}"
             );
             self.transact_ack(&[0x27, 0x16, 0x00, edge])?;
         }
@@ -419,7 +433,13 @@ impl IcomCiVRadio {
             ])?;
         }
         if let Some(speed) = config.sweep_speed {
-            anyhow::ensure!(speed <= 2, "scope sweep speed must be in 0..=2");
+            let metadata = self
+                .scope_metadata()
+                .ok_or_else(|| anyhow!("scope metadata is unavailable"))?;
+            anyhow::ensure!(
+                metadata.sweep_speed_values.contains(&speed),
+                "unsupported scope sweep speed {speed}"
+            );
             self.transact_ack(&[0x27, 0x1A, 0x00, speed])?;
         }
         if let Some(wide) = config.vbw_wide {
@@ -427,12 +447,168 @@ impl IcomCiVRadio {
         }
         if let Some((lower, upper)) = config.fixed_edges_hz {
             anyhow::ensure!(lower < upper, "scope lower edge must be below upper edge");
-            let mut payload = vec![0x27, 0x1E, 0x00, config.fixed_edge_number.unwrap_or(1)];
+            let edge = config.fixed_edge_number.unwrap_or(1);
+            let metadata = self
+                .scope_metadata()
+                .ok_or_else(|| anyhow!("scope metadata is unavailable"))?;
+            anyhow::ensure!(
+                metadata.fixed_edge_numbers.contains(&edge),
+                "unsupported scope fixed-edge number {edge}"
+            );
+            let mut payload = vec![0x27, 0x1E, 0x00, edge];
             payload.extend_from_slice(&encode_civ_frequency_bcd(lower));
             payload.extend_from_slice(&encode_civ_frequency_bcd(upper));
             self.transact_ack(&payload)?;
         }
+        if let Some(value) = config.tx_display {
+            let menu = require_menu(menu)?;
+            set_menu(menu.tx_display, u8::from(value))?;
+        }
+        if let Some(value) = config.max_hold {
+            let menu = require_menu(menu)?;
+            set_menu(menu.max_hold, scope_max_hold_value(value))?;
+        }
+        if let Some(value) = config.center_type {
+            let menu = require_menu(menu)?;
+            set_menu(menu.center_type, scope_center_type_value(value))?;
+        }
+        if let Some(value) = config.marker_position {
+            let menu = require_menu(menu)?;
+            set_menu(menu.marker_position, scope_marker_position_value(value))?;
+        }
+        if let Some(value) = config.averaging {
+            let menu = require_menu(menu)?;
+            let encoded = match value {
+                0 => 0,
+                2..=4 => value - 1,
+                _ => anyhow::bail!("unsupported scope averaging value {value}"),
+            };
+            set_menu(menu.averaging, encoded)?;
+        }
+        if let Some(value) = config.waveform_type {
+            let menu = require_menu(menu)?;
+            set_menu(menu.waveform_type, scope_waveform_type_value(value))?;
+        }
+        if let Some(value) = config.waterfall_display {
+            let menu = require_menu(menu)?;
+            set_menu(menu.waterfall_display, u8::from(value))?;
+        }
+        if let Some(value) = config.waterfall_size {
+            let menu = require_menu(menu)?;
+            anyhow::ensure!(value <= 2, "unsupported waterfall size {value}");
+            set_menu(menu.waterfall_size, value)?;
+        }
+        if let Some(value) = config.waterfall_peak_level {
+            let menu = require_menu(menu)?;
+            let metadata = self
+                .scope_metadata()
+                .ok_or_else(|| anyhow!("scope metadata is unavailable"))?;
+            anyhow::ensure!(
+                metadata.waterfall_peak_level_options.contains(&value),
+                "unsupported waterfall peak level {value}"
+            );
+            set_menu(menu.waterfall_peak_level, value.saturating_sub(1))?;
+        }
+        if let Some(value) = config.marker_auto_hide {
+            let menu = require_menu(menu)?;
+            set_menu(menu.marker_auto_hide, u8::from(value))?;
+        }
+        if let Some(color) = config.waveform_color_current {
+            let menu = require_menu(menu)?;
+            self.set_scope_color(menu.waveform_color_current, color)?;
+        }
+        if let Some(color) = config.waveform_color_line {
+            let menu = require_menu(menu)?;
+            self.set_scope_color(menu.waveform_color_line, color)?;
+        }
+        if let Some(color) = config.waveform_color_max_hold {
+            let menu = require_menu(menu)?;
+            self.set_scope_color(menu.waveform_color_max_hold, color)?;
+        }
         Ok(())
+    }
+
+    pub async fn get_scope_state(&self) -> Result<ScopeState> {
+        anyhow::ensure!(
+            self.supports_scope(),
+            "native CI-V scope is unavailable for this model"
+        );
+        let profile = profile_for_model(self.selected_model()?);
+        let menu = profile
+            .scope
+            .and_then(|scope| scope.menu)
+            .context("scope menu is unavailable")?;
+        let tx_display = self.read_scope_menu(menu.tx_display, 1)?[0] != 0;
+        let waterfall_display = self.read_scope_menu(menu.waterfall_display, 1)?[0] != 0;
+        let marker_auto_hide = self.read_scope_menu(menu.marker_auto_hide, 1)?[0] != 0;
+        let max_hold = match self.read_scope_menu(menu.max_hold, 1)?[0] {
+            0 => ScopeMaxHold::Off,
+            1 => ScopeMaxHold::TenSeconds,
+            2 => ScopeMaxHold::Continuous,
+            value => anyhow::bail!("invalid CI-V max hold value {value}"),
+        };
+        let center_type = match self.read_scope_menu(menu.center_type, 1)?[0] {
+            0 => ScopeCenterType::FilterCenter,
+            1 => ScopeCenterType::CarrierPoint,
+            2 => ScopeCenterType::CarrierPointAbsolute,
+            value => anyhow::bail!("invalid CI-V center type value {value}"),
+        };
+        let marker_position = match self.read_scope_menu(menu.marker_position, 1)?[0] {
+            0 => ScopeMarkerPosition::FilterCenter,
+            1 => ScopeMarkerPosition::CarrierPoint,
+            value => anyhow::bail!("invalid CI-V marker position value {value}"),
+        };
+        let averaging = match self.read_scope_menu(menu.averaging, 1)?[0] {
+            0 => 0,
+            1..=3 => self.read_scope_menu(menu.averaging, 1)?[0] + 1,
+            value => anyhow::bail!("invalid CI-V averaging value {value}"),
+        };
+        let waveform_type = match self.read_scope_menu(menu.waveform_type, 1)?[0] {
+            0 => ScopeWaveformType::Fill,
+            1 => ScopeWaveformType::FillAndLine,
+            value => anyhow::bail!("invalid CI-V waveform type value {value}"),
+        };
+        let waterfall_peak_level = self.read_scope_menu(menu.waterfall_peak_level, 1)?[0] + 1;
+        let state = ScopeConfiguration {
+            tx_display: Some(tx_display),
+            max_hold: Some(max_hold),
+            center_type: Some(center_type),
+            marker_position: Some(marker_position),
+            averaging: Some(averaging),
+            waveform_type: Some(waveform_type),
+            waterfall_display: Some(waterfall_display),
+            waterfall_size: Some(self.read_scope_menu(menu.waterfall_size, 1)?[0]),
+            waterfall_peak_level: Some(waterfall_peak_level),
+            marker_auto_hide: Some(marker_auto_hide),
+            ..ScopeConfiguration::default()
+        };
+        Ok(ScopeState {
+            configuration: state,
+            waveform_color_current: Some(self.read_scope_color(menu.waveform_color_current)?),
+            waveform_color_line: Some(self.read_scope_color(menu.waveform_color_line)?),
+            waveform_color_max_hold: Some(self.read_scope_color(menu.waveform_color_max_hold)?),
+        })
+    }
+
+    fn read_scope_menu(&self, index: u16, length: usize) -> Result<Vec<u8>> {
+        let [high, low] = encode_civ_menu_index(index);
+        let prefix = [0x1A, 0x05, high, low];
+        let response = self.transact(&prefix, true)?;
+        let data = response_data_after_prefix(&response, &prefix)?;
+        anyhow::ensure!(data.len() >= length, "short CI-V scope menu response");
+        Ok(data[..length].to_vec())
+    }
+
+    fn read_scope_color(&self, index: u16) -> Result<ScopeColor> {
+        let data = self.read_scope_menu(index, 6)?;
+        decode_scope_color(&data)
+    }
+
+    fn set_scope_color(&self, index: u16, color: ScopeColor) -> Result<()> {
+        let [high, low] = encode_civ_menu_index(index);
+        let mut payload = vec![0x1A, 0x05, high, low];
+        payload.extend_from_slice(&encode_scope_color(color));
+        self.transact_ack(&payload)
     }
 
     fn set_operating_mode_blocking(
@@ -2124,6 +2300,10 @@ impl Radio for IcomCiVRadio {
         IcomCiVRadio::set_scope_configuration(self, config).await
     }
 
+    async fn get_scope_state(&self) -> Result<ScopeState> {
+        IcomCiVRadio::get_scope_state(self).await
+    }
+
     async fn protocol_write_read(&self, request: &[u8]) -> Result<Vec<u8>> {
         if request.first().copied() != Some(CI_V_FRAME_START)
             || request.get(1).copied() != Some(CI_V_FRAME_START)
@@ -2176,6 +2356,36 @@ impl Radio for IcomCiVRadio {
         self.model()
             .map(profile_for_model)
             .and_then(|profile| profile.meter_presentation(id, normalized))
+    }
+
+    fn meter_poll_spec(&self, id: MeterId) -> Option<MeterPollSpec> {
+        self.model()
+            .map(profile_for_model)
+            .and_then(|profile| {
+                profile
+                    .meter_poll_specs
+                    .iter()
+                    .find(|spec| spec.meter == id)
+            })
+            .copied()
+    }
+
+    fn scope_metadata(&self) -> Option<ScopeMetadata> {
+        self.model()
+            .map(profile_for_model)
+            .and_then(|profile| profile.scope_metadata())
+    }
+
+    fn control_max(&self, id: ControlId) -> Option<u8> {
+        self.model()
+            .map(profile_for_model)
+            .and_then(|profile| profile.control_max(id))
+    }
+
+    fn supported_control_values(&self, id: ControlId) -> Option<&'static [u8]> {
+        self.model()
+            .map(profile_for_model)
+            .and_then(|profile| profile.supported_control_values(id))
     }
 
     fn supports_control(&self, id: ControlId) -> bool {
@@ -2410,6 +2620,65 @@ fn decode_event_mode(value: Option<u8>) -> Option<Mode> {
         0x08 => Mode::Data,
         0x09 => Mode::Wfm,
         _ => return None,
+    })
+}
+
+fn encode_civ_menu_index(index: u16) -> [u8; 2] {
+    [
+        decimal_to_bcd((index / 100) as u8),
+        decimal_to_bcd((index % 100) as u8),
+    ]
+}
+
+fn scope_center_type_value(value: crate::hal_types::ScopeCenterType) -> u8 {
+    match value {
+        crate::hal_types::ScopeCenterType::FilterCenter => 0,
+        crate::hal_types::ScopeCenterType::CarrierPoint => 1,
+        crate::hal_types::ScopeCenterType::CarrierPointAbsolute => 2,
+    }
+}
+
+fn scope_max_hold_value(value: crate::hal_types::ScopeMaxHold) -> u8 {
+    match value {
+        crate::hal_types::ScopeMaxHold::Off => 0,
+        crate::hal_types::ScopeMaxHold::TenSeconds => 1,
+        crate::hal_types::ScopeMaxHold::Continuous => 2,
+    }
+}
+
+fn scope_marker_position_value(value: crate::hal_types::ScopeMarkerPosition) -> u8 {
+    match value {
+        crate::hal_types::ScopeMarkerPosition::FilterCenter => 0,
+        crate::hal_types::ScopeMarkerPosition::CarrierPoint => 1,
+    }
+}
+
+fn scope_waveform_type_value(value: crate::hal_types::ScopeWaveformType) -> u8 {
+    match value {
+        crate::hal_types::ScopeWaveformType::Fill => 0,
+        crate::hal_types::ScopeWaveformType::FillAndLine => 1,
+    }
+}
+
+fn encode_scope_color(color: ScopeColor) -> [u8; 6] {
+    let component = |value: u8| [decimal_to_bcd(value / 100), decimal_to_bcd(value % 100)];
+    let red = component(color.red);
+    let green = component(color.green);
+    let blue = component(color.blue);
+    [red[0], red[1], green[0], green[1], blue[0], blue[1]]
+}
+
+fn decode_scope_color(data: &[u8]) -> Result<ScopeColor> {
+    anyhow::ensure!(data.len() >= 6, "short CI-V RGB color payload");
+    let decode = |high: u8, low: u8| -> Result<u8> {
+        let value = u16::from(high & 0x0F) * 100 + u16::from(low >> 4) * 10 + u16::from(low & 0x0F);
+        anyhow::ensure!(value <= 255, "invalid CI-V RGB component {value}");
+        Ok(value as u8)
+    };
+    Ok(ScopeColor {
+        red: decode(data[0], data[1])?,
+        green: decode(data[2], data[3])?,
+        blue: decode(data[4], data[5])?,
     })
 }
 
@@ -2869,6 +3138,28 @@ mod tests {
     use crate::icom::ic7300::decimal_to_bcd;
     use std::io::{Read, Write};
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn scope_colors_use_four_digit_bcd_components() {
+        let color = ScopeColor {
+            red: 0,
+            green: 127,
+            blue: 255,
+        };
+        assert_eq!(
+            encode_scope_color(color),
+            [0x00, 0x00, 0x01, 0x27, 0x02, 0x55]
+        );
+        assert_eq!(
+            decode_scope_color(&encode_scope_color(color)).unwrap(),
+            color
+        );
+    }
+
+    #[test]
+    fn scope_color_decoder_rejects_values_above_255() {
+        assert!(decode_scope_color(&[0x03, 0x00, 0x00, 0x00, 0x00, 0x00]).is_err());
+    }
 
     struct TestTransport {
         reads: VecDeque<Vec<u8>>,
@@ -4093,6 +4384,7 @@ mod tests {
             sweep_speed: Some(2),
             vbw_wide: Some(true),
             fixed_edges_hz: Some((14_000_000, 14_200_000)),
+            ..ScopeConfiguration::default()
         }))
         .unwrap();
         futures::executor::block_on(radio.select_vfo(IcomVfo::A)).unwrap();

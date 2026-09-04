@@ -3,8 +3,9 @@
 pub use crate::events::RadioEventRouter;
 pub use crate::hal_types::{
     BaseMode, ControlId, ControlValue, CoreState, DtmfSequence, FilterBandwidth, MemoryChannel,
-    MeterId, MeterPresentation, Mode, OperatingMode, RepeaterSettings, RepeaterShift,
-    ScopeConfiguration, SwrSweepSetup, ToneSettings, TunerStatus,
+    MeterId, MeterPollSpec, MeterPresentation, Mode, OperatingMode, RepeaterSettings,
+    RepeaterShift, ScopeConfiguration, ScopeMetadata, ScopeState, SwrSweepSetup, ToneSettings,
+    TunerStatus,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -126,6 +127,12 @@ pub trait Radio: Send + Sync {
     fn supports_scope(&self) -> bool {
         false
     }
+    fn scope_metadata(&self) -> Option<ScopeMetadata> {
+        None
+    }
+    async fn get_scope_state(&self) -> Result<ScopeState> {
+        anyhow::bail!("native scope readback is not supported by this radio")
+    }
     /// Return documented bandwidth metadata for a normalized filter choice.
     fn filter_bandwidth_hz(&self, _mode: Mode, _filter: u8) -> Option<u32> {
         None
@@ -137,6 +144,15 @@ pub trait Radio: Send + Sync {
     }
     /// Convert a normalized meter value to a driver-calibrated presentation.
     fn meter_presentation(&self, _id: MeterId, _normalized: u8) -> Option<MeterPresentation> {
+        None
+    }
+    fn control_max(&self, _id: ControlId) -> Option<u8> {
+        None
+    }
+    fn supported_control_values(&self, _id: ControlId) -> Option<&'static [u8]> {
+        None
+    }
+    fn meter_poll_spec(&self, _id: MeterId) -> Option<MeterPollSpec> {
         None
     }
     async fn set_scope_configuration(&self, _config: ScopeConfiguration) -> Result<()> {

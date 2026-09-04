@@ -1,7 +1,10 @@
 //! Shared declarative profiles for Icom CI-V models.
 
 use crate::controls::ControlId;
-use crate::hal_types::{MeterId, MeterPresentation, Mode, SwrSweepSetup};
+use crate::hal_types::{
+    MeterId, MeterPollSpec, MeterPresentation, Mode, ScopeCenterType, ScopeMarkerPosition,
+    ScopeMaxHold, ScopeMetadata, ScopeWaveformType, SwrSweepSetup,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlEncoding {
@@ -145,6 +148,48 @@ pub struct ScopeSpec {
     pub stream_command: &'static [u8],
     /// Stop waveform streaming.
     pub disable_stream_command: &'static [u8],
+    /// Optional `1A 05` menu-command indices for advanced scope settings.
+    pub menu: Option<ScopeMenuSpec>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScopeMenuSpec {
+    pub tx_display: u16,
+    pub max_hold: u16,
+    pub center_type: u16,
+    pub marker_position: u16,
+    pub vbw: u16,
+    pub averaging: u16,
+    pub waveform_type: u16,
+    pub waterfall_display: u16,
+    pub waterfall_speed: u16,
+    pub waterfall_size: u16,
+    pub waterfall_peak_level: u16,
+    pub marker_auto_hide: u16,
+    pub waveform_color_current: u16,
+    pub waveform_color_line: u16,
+    pub waveform_color_max_hold: u16,
+}
+
+/// Model-owned catalog of scope and waterfall settings. Empty lists mean the
+/// setting has not been validated for that model yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScopeOptions {
+    pub span_options_hz: &'static [u64],
+    pub sweep_speed_values: &'static [u8],
+    pub fixed_edge_numbers: &'static [u8],
+    pub center_types: &'static [ScopeCenterType],
+    pub tx_display: &'static [bool],
+    pub max_hold: &'static [ScopeMaxHold],
+    pub marker_positions: &'static [ScopeMarkerPosition],
+    pub averaging: &'static [u8],
+    pub waveform_types: &'static [ScopeWaveformType],
+    pub waterfall_display: &'static [bool],
+    pub waterfall_sizes: &'static [u8],
+    pub waterfall_peak_levels: &'static [u8],
+    pub marker_auto_hide: &'static [bool],
+    pub edge_banks: &'static [crate::hal_types::ScopeEdgeBank],
+    pub supports_waveform_colors: bool,
 }
 
 /// Model-owned capability metadata for controls whose CI-V layout is shared
@@ -169,12 +214,17 @@ pub enum MemoryLayout {
 /// driver. `civ_radio.rs` performs transport and framing; this profile owns
 /// addresses, supported ranges, controls, scope geometry, and optional
 /// model-specific behaviors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct IcomCivProfile {
     /// Model represented by this profile.
     pub model: crate::models::IcomCivModel,
     /// CI-V rates documented by the model's manual.
     pub baud_rates: &'static [u32],
+    /// CI-V USB rates documented by the model's manual, when distinct from
+    /// the physical CI-V/REMOTE rates.
+    pub usb_baud_rates: &'static [u32],
+    /// Whether the radio exposes an Auto CI-V rate option.
+    pub supports_auto_baud: bool,
     /// Preferred starting rate when Auto is not available.
     pub preferred_baud_rate: u32,
     /// Factory-default CI-V address. Applications may override it.
@@ -187,6 +237,8 @@ pub struct IcomCivProfile {
     pub scope_geometry: Option<crate::models::IcomScopeGeometry>,
     /// Commands required to start and stop the model's scope stream.
     pub scope: Option<ScopeSpec>,
+    /// Model-specific scope settings validated against its documentation.
+    pub scope_options: ScopeOptions,
     /// Main/sub behavior, when documented for the model.
     pub main_sub: Option<MainSubSpec>,
     /// External preamp behavior, when documented for the model.
@@ -204,6 +256,8 @@ pub struct IcomCivProfile {
     pub supports_iq_output: bool,
     /// Explicit meter surface exposed by this model profile.
     pub meters: &'static [MeterId],
+    /// Driver scheduling guidance for polling normalized meters.
+    pub meter_poll_specs: &'static [MeterPollSpec],
     /// Availability and readback metadata for shared special controls.
     pub control_capabilities: ControlCapabilities,
     /// Memory record layout used by this model.
@@ -215,6 +269,46 @@ pub struct IcomCivProfile {
     pub meter_presentation: Option<fn(MeterId, u8) -> Option<MeterPresentation>>,
 }
 
+impl PartialEq for IcomCivProfile {
+    fn eq(&self, other: &Self) -> bool {
+        let meter_presentation_eq = match (self.meter_presentation, other.meter_presentation) {
+            (None, None) => true,
+            (Some(left), Some(right)) => std::ptr::fn_addr_eq(left, right),
+            _ => false,
+        };
+
+        self.model == other.model
+            && self.baud_rates == other.baud_rates
+            && self.usb_baud_rates == other.usb_baud_rates
+            && self.supports_auto_baud == other.supports_auto_baud
+            && self.preferred_baud_rate == other.preferred_baud_rate
+            && self.default_address == other.default_address
+            && self.frequency_ranges == other.frequency_ranges
+            && self.controls == other.controls
+            && self.scope_geometry == other.scope_geometry
+            && self.scope == other.scope
+            && self.scope_options == other.scope_options
+            && self.main_sub == other.main_sub
+            && self.external_preamp == other.external_preamp
+            && self.attenuator_values == other.attenuator_values
+            && self.preamp_max_level == other.preamp_max_level
+            && self.agc_max == other.agc_max
+            && self.noise_reduction_level_max == other.noise_reduction_level_max
+            && self.supports_iq_output == other.supports_iq_output
+            && self.meters == other.meters
+            && self.meter_poll_specs == other.meter_poll_specs
+            && self.control_capabilities == other.control_capabilities
+            && self.memory_layout == other.memory_layout
+            && self.supports_repeater_settings == other.supports_repeater_settings
+            && self.supports_memory_channels == other.supports_memory_channels
+            && self.filter_bandwidths == other.filter_bandwidths
+            && self.swr_sweep_setup == other.swr_sweep_setup
+            && meter_presentation_eq
+    }
+}
+
+impl Eq for IcomCivProfile {}
+
 /// Conservative CI-V defaults used by current Icom profiles unless a model
 /// documents a narrower serial menu.
 pub const DEFAULT_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
@@ -224,6 +318,67 @@ pub const DEFAULT_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 57_600, 1
 pub const SWR_SWEEP_SETUP: SwrSweepSetup = SwrSweepSetup {
     carrier_mode: Mode::Rtty,
     rf_power: 77,
+};
+
+pub const DEFAULT_METER_POLL_SPECS: &[MeterPollSpec] = &[
+    MeterPollSpec {
+        meter: MeterId::Signal,
+        interval_ms: 400,
+        tx_priority: false,
+    },
+    MeterPollSpec {
+        meter: MeterId::Power,
+        interval_ms: 300,
+        tx_priority: true,
+    },
+    MeterPollSpec {
+        meter: MeterId::Swr,
+        interval_ms: 300,
+        tx_priority: true,
+    },
+    MeterPollSpec {
+        meter: MeterId::Alc,
+        interval_ms: 300,
+        tx_priority: true,
+    },
+    MeterPollSpec {
+        meter: MeterId::Compression,
+        interval_ms: 300,
+        tx_priority: true,
+    },
+    MeterPollSpec {
+        meter: MeterId::Current,
+        interval_ms: 1_500,
+        tx_priority: false,
+    },
+    MeterPollSpec {
+        meter: MeterId::Voltage,
+        interval_ms: 1_500,
+        tx_priority: false,
+    },
+    MeterPollSpec {
+        meter: MeterId::Temperature,
+        interval_ms: 1_500,
+        tx_priority: false,
+    },
+];
+
+pub const EMPTY_SCOPE_OPTIONS: ScopeOptions = ScopeOptions {
+    span_options_hz: &[],
+    sweep_speed_values: &[],
+    fixed_edge_numbers: &[],
+    center_types: &[],
+    tx_display: &[],
+    max_hold: &[],
+    marker_positions: &[],
+    averaging: &[],
+    waveform_types: &[],
+    waterfall_display: &[],
+    waterfall_sizes: &[],
+    waterfall_peak_levels: &[],
+    marker_auto_hide: &[],
+    edge_banks: &[],
+    supports_waveform_colors: false,
 };
 
 /// CI-V SWR calibration documented by the IC-705, IC-7300, IC-7610, and
@@ -288,6 +443,48 @@ impl IcomCivProfile {
     pub fn meter_presentation(self, id: MeterId, raw: u8) -> Option<MeterPresentation> {
         self.meter_presentation.and_then(|present| present(id, raw))
     }
+
+    pub fn control_max(self, id: ControlId) -> Option<u8> {
+        match id {
+            ControlId::Preamp => Some(self.preamp_max_level),
+            ControlId::Agc => Some(self.agc_max),
+            ControlId::NoiseReductionLevel => Some(self.noise_reduction_level_max),
+            _ => None,
+        }
+    }
+
+    pub fn supported_control_values(self, id: ControlId) -> Option<&'static [u8]> {
+        match id {
+            ControlId::Attenuator => Some(self.attenuator_values),
+            ControlId::Filter => Some(self.control_capabilities.filter_values),
+            _ => None,
+        }
+    }
+
+    pub fn scope_metadata(self) -> Option<ScopeMetadata> {
+        self.scope_geometry.map(|geometry| ScopeMetadata {
+            waveform_bins: geometry.bins,
+            waveform_divisions: geometry.divisions as u8,
+            span_options_hz: self.scope_options.span_options_hz,
+            sweep_speed_values: self.scope_options.sweep_speed_values,
+            fixed_edge_numbers: self.scope_options.fixed_edge_numbers,
+            reference_level_range_tenths_db: Some((-200, 200, 5)),
+            supports_hold: true,
+            supports_vbw: true,
+            center_type_options: self.scope_options.center_types,
+            tx_display_options: self.scope_options.tx_display,
+            max_hold_options: self.scope_options.max_hold,
+            marker_position_options: self.scope_options.marker_positions,
+            averaging_options: self.scope_options.averaging,
+            waveform_type_options: self.scope_options.waveform_types,
+            waterfall_display_options: self.scope_options.waterfall_display,
+            waterfall_size_options: self.scope_options.waterfall_sizes,
+            waterfall_peak_level_options: self.scope_options.waterfall_peak_levels,
+            marker_auto_hide_options: self.scope_options.marker_auto_hide,
+            edge_banks: self.scope_options.edge_banks,
+            supports_waveform_colors: self.scope_options.supports_waveform_colors,
+        })
+    }
 }
 
 pub fn profile_for_model(model: crate::models::IcomCivModel) -> &'static IcomCivProfile {
@@ -319,7 +516,12 @@ mod tests {
             let profile = profile_for_model(model);
             assert_eq!(profile.model, model);
             assert!(!profile.baud_rates.is_empty());
-            assert!(profile.baud_rates.contains(&profile.preferred_baud_rate));
+            assert!(
+                profile.baud_rates.contains(&profile.preferred_baud_rate)
+                    || profile
+                        .usb_baud_rates
+                        .contains(&profile.preferred_baud_rate)
+            );
             assert!(profile.noise_reduction_level_max > 0);
             if profile.supports_control(ControlId::Agc) {
                 assert!(profile.agc_max > 0);

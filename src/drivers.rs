@@ -446,6 +446,33 @@ impl Radio for ConfiguredRadio {
             _ => false,
         }
     }
+    fn scope_metadata(&self) -> Option<crate::ScopeMetadata> {
+        match self {
+            Self::Icom(r) => r.scope_metadata(),
+            _ => None,
+        }
+    }
+    fn control_max(&self, id: crate::ControlId) -> Option<u8> {
+        match self {
+            Self::Icom(r) => r.control_max(id),
+            Self::Yaesu(r) => r.control_max(id),
+            Self::Kenwood(r) => r.control_max(id),
+            Self::Elecraft(r) => r.control_max(id),
+            _ => None,
+        }
+    }
+    fn supported_control_values(&self, id: crate::ControlId) -> Option<&'static [u8]> {
+        match self {
+            Self::Icom(r) => r.supported_control_values(id),
+            _ => None,
+        }
+    }
+    fn meter_poll_spec(&self, id: crate::MeterId) -> Option<crate::MeterPollSpec> {
+        match self {
+            Self::Icom(r) => r.meter_poll_spec(id),
+            _ => None,
+        }
+    }
     async fn set_scope_configuration(&self, config: crate::ScopeConfiguration) -> Result<()> {
         match self {
             Self::Icom(r) => r.set_scope_configuration(config).await,
@@ -586,6 +613,8 @@ impl Radio for ConfiguredRadio {
     fn filter_bandwidth_hz(&self, mode: crate::Mode, filter: u8) -> Option<u32> {
         match self {
             Self::Icom(r) => r.filter_bandwidth_hz(mode, filter),
+            Self::Yaesu(r) => r.filter_bandwidth_hz(mode, filter),
+            Self::Elecraft(r) => r.filter_bandwidth_hz(mode, filter),
             _ => None,
         }
     }
@@ -605,6 +634,7 @@ impl Radio for ConfiguredRadio {
     ) -> Option<crate::MeterPresentation> {
         match self {
             Self::Icom(r) => r.meter_presentation(id, normalized),
+            Self::Elecraft(r) => r.meter_presentation(id, normalized),
             _ => None,
         }
     }

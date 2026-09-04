@@ -536,6 +536,13 @@ impl YaesuCatRadio {
             .context("this operation requires a selected Yaesu model profile")
     }
 
+    fn control_command(&self, id: ControlId) -> Result<&'static str> {
+        self.selected_profile()?
+            .control(id)
+            .map(|spec| spec.command)
+            .with_context(|| format!("{id:?} is not profiled for this Yaesu model"))
+    }
+
     fn query(
         &self,
         command: &str,
@@ -848,8 +855,17 @@ impl YaesuCatRadio {
 
 #[async_trait]
 impl Radio for YaesuCatRadio {
+    fn filter_bandwidth_hz(&self, mode: Mode, filter: u8) -> Option<u32> {
+        self.profile()
+            .and_then(|profile| profile.filter_bandwidth_hz(mode, filter))
+    }
+
     fn swr_sweep_setup(&self) -> Option<SwrSweepSetup> {
         self.profile().and_then(|profile| profile.swr_sweep_setup())
+    }
+
+    fn control_max(&self, id: ControlId) -> Option<u8> {
+        self.profile().and_then(|profile| profile.control_max(id))
     }
 
     fn event_router(&self) -> Option<RadioEventRouter> {
@@ -939,42 +955,55 @@ impl Radio for YaesuCatRadio {
     async fn get_control(&self, id: ControlId) -> Result<Option<ControlValue>> {
         match id {
             ControlId::AfGain | ControlId::RfGain => {
-                let command = if id == ControlId::AfGain { "AG" } else { "RG" };
+                let command = self.control_command(id)?;
                 Ok(Some(ControlValue::U8(self.get_yaesu_level(command, 255)?)))
             }
             ControlId::Squelch => Ok(Some(ControlValue::U8(normalize_percent(
-                self.get_yaesu_level("SQ", 100)?,
+                self.get_yaesu_level(self.control_command(id)?, 100)?,
             )))),
-            ControlId::Preamp => Ok(Some(ControlValue::U8(self.get_yaesu_selector("PA")?))),
-            ControlId::Attenuator => Ok(Some(ControlValue::U8(self.get_yaesu_selector("RA")?))),
+            ControlId::Preamp => Ok(Some(ControlValue::U8(
+                self.get_yaesu_selector(self.control_command(id)?)?,
+            ))),
+            ControlId::Attenuator => Ok(Some(ControlValue::U8(
+                self.get_yaesu_selector(self.control_command(id)?)?,
+            ))),
             ControlId::NoiseBlanker => Ok(Some(ControlValue::Bool(
-                self.get_yaesu_bool_selector("NB")?,
+                self.get_yaesu_bool_selector(self.control_command(id)?)?,
             ))),
             ControlId::Notch => Ok(Some(ControlValue::Bool(
-                self.get_yaesu_bool_selector("BC")?,
+                self.get_yaesu_bool_selector(self.control_command(id)?)?,
             ))),
-            ControlId::ManualNotch => Ok(Some(ControlValue::Bool(self.get_yaesu_manual_notch()?))),
-            ControlId::Filter => Ok(Some(ControlValue::U8(self.get_yaesu_width()?))),
-            ControlId::Rit => Ok(Some(ControlValue::Bool(self.get_yaesu_bool("RT")?))),
-            ControlId::Xit => Ok(Some(ControlValue::Bool(self.get_yaesu_bool("XT")?))),
+            ControlId::ManualNotch => Ok(Some(ControlValue::Bool(
+                self.get_yaesu_manual_notch(self.control_command(id)?)?,
+            ))),
+            ControlId::Filter => Ok(Some(ControlValue::U8(
+                self.get_yaesu_width(self.control_command(id)?)?,
+            ))),
+            ControlId::Rit | ControlId::Xit => Ok(Some(ControlValue::Bool(
+                self.get_yaesu_bool(self.control_command(id)?)?,
+            ))),
             ControlId::Vfo => {
-                let response = self.query("VS", None, 1)?;
-                let payload = parse_payload(&response, "VS")?;
+                let command = self.control_command(id)?;
+                let response = self.query(command, None, 1)?;
+                let payload = parse_payload(&response, command)?;
                 let value = payload
                     .parse::<u8>()
                     .context("invalid Yaesu VFO selector")?;
                 anyhow::ensure!(value <= 1, "invalid Yaesu VFO selector: {value}");
                 Ok(Some(ControlValue::Vfo(value)))
             }
-            ControlId::Tuner => Ok(Some(ControlValue::Bool(self.get_yaesu_tuner_enabled()?))),
+            ControlId::Tuner => Ok(Some(ControlValue::Bool(
+                self.get_yaesu_tuner_enabled(self.control_command(id)?)?,
+            ))),
             ControlId::RfPower => {
                 let watts = self.get_power_watts()?;
                 Ok(Some(ControlValue::U8(self.watts_to_normalized(watts)?)))
             }
             ControlId::Split => Ok(Some(ControlValue::Bool(self.get_split()?))),
             ControlId::Agc => {
-                let response = self.query("GT", None, 2)?;
-                let payload = parse_payload(&response, "GT")?;
+                let command = self.control_command(id)?;
+                let response = self.query(command, None, 2)?;
+                let payload = parse_payload(&response, command)?;
                 let value = payload
                     .strip_prefix('0')
                     .context("invalid Yaesu GT response")?
@@ -985,8 +1014,9 @@ impl Radio for YaesuCatRadio {
                 Ok(Some(ControlValue::U8(value)))
             }
             ControlId::NoiseReduction => {
-                let response = self.query("NR", None, 2)?;
-                let payload = parse_payload(&response, "NR")?;
+                let command = self.control_command(id)?;
+                let response = self.query(command, None, 2)?;
+                let payload = parse_payload(&response, command)?;
                 match payload {
                     "00" => Ok(Some(ControlValue::Bool(false))),
                     "01" => Ok(Some(ControlValue::Bool(true))),
@@ -994,8 +1024,9 @@ impl Radio for YaesuCatRadio {
                 }
             }
             ControlId::NoiseReductionLevel => {
-                let response = self.query("RL", None, 3)?;
-                let payload = parse_payload(&response, "RL")?;
+                let command = self.control_command(id)?;
+                let response = self.query(command, None, 3)?;
+                let payload = parse_payload(&response, command)?;
                 let value = payload
                     .strip_prefix('0')
                     .context("invalid Yaesu RL response")?
@@ -1023,56 +1054,59 @@ impl Radio for YaesuCatRadio {
     }
 
     async fn set_control(&self, id: ControlId, value: ControlValue) -> Result<()> {
+        let command = || self.control_command(id);
         match (id, value) {
-            (ControlId::AfGain, ControlValue::U8(value)) => self.set_yaesu_level("AG", value),
-            (ControlId::RfGain, ControlValue::U8(value)) => self.set_yaesu_level("RG", value),
+            (ControlId::AfGain, ControlValue::U8(value))
+            | (ControlId::RfGain, ControlValue::U8(value)) => {
+                self.set_yaesu_level(command()?, value)
+            }
             (ControlId::Squelch, ControlValue::U8(value)) => {
-                self.send_set("SQ", &format!("0{:03}", denormalize_percent(value)))
+                self.send_set(command()?, &format!("0{:03}", denormalize_percent(value)))
             }
             (ControlId::Preamp, ControlValue::U8(value)) if value <= 2 => {
-                self.send_set("PA", &format!("0{value}"))
+                self.send_set(command()?, &format!("0{value}"))
             }
             (ControlId::Attenuator, ControlValue::U8(value)) if value <= 3 => {
-                self.send_set("RA", &format!("0{value}"))
+                self.send_set(command()?, &format!("0{value}"))
             }
             (ControlId::NoiseBlanker, ControlValue::Bool(enabled)) => {
-                self.send_set("NB", if enabled { "01" } else { "00" })
+                self.send_set(command()?, if enabled { "01" } else { "00" })
             }
             (ControlId::Notch, ControlValue::Bool(enabled)) => {
-                self.send_set("BC", if enabled { "01" } else { "00" })
+                self.send_set(command()?, if enabled { "01" } else { "00" })
             }
             (ControlId::ManualNotch, ControlValue::Bool(enabled)) => {
-                self.send_set("BP", if enabled { "00001" } else { "00000" })
+                self.send_set(command()?, if enabled { "00001" } else { "00000" })
             }
             (ControlId::Filter, ControlValue::U8(value)) if value <= 23 => {
-                self.send_set("SH", &format!("00{value:02}"))
+                self.send_set(command()?, &format!("00{value:02}"))
             }
             (ControlId::Rit, ControlValue::Bool(enabled)) => {
-                self.send_set("RT", if enabled { "1" } else { "0" })
+                self.send_set(command()?, if enabled { "1" } else { "0" })
             }
             (ControlId::Xit, ControlValue::Bool(enabled)) => {
-                self.send_set("XT", if enabled { "1" } else { "0" })
+                self.send_set(command()?, if enabled { "1" } else { "0" })
             }
             (ControlId::Vfo, ControlValue::Vfo(value)) if value <= 1 => {
-                self.send_set("VS", &value.to_string())
+                self.send_set(command()?, &value.to_string())
             }
             (ControlId::Tuner, ControlValue::Bool(enabled)) => {
-                self.send_set("AC", if enabled { "001" } else { "000" })
+                self.send_set(command()?, if enabled { "001" } else { "000" })
             }
             (ControlId::RfPower, ControlValue::U8(level)) => {
                 self.set_power_watts(self.normalized_to_watts(level)?)
             }
             (ControlId::Split, ControlValue::Bool(enabled)) => self.set_split(enabled),
             (ControlId::Agc, ControlValue::U8(value)) if value <= 4 => {
-                self.send_set("GT", &format!("0{value}"))
+                self.send_set(command()?, &format!("0{value}"))
             }
             (ControlId::NoiseReduction, ControlValue::Bool(enabled)) => {
-                self.send_set("NR", if enabled { "01" } else { "00" })
+                self.send_set(command()?, if enabled { "01" } else { "00" })
             }
             (ControlId::NoiseReductionLevel, ControlValue::U8(value))
                 if (1..=15).contains(&value) =>
             {
-                self.send_set("RL", &format!("0{value:02}"))
+                self.send_set(command()?, &format!("0{value:02}"))
             }
             (_, value) => bail!("unsupported Yaesu CAT control/value: {id:?} = {value:?}"),
         }
@@ -1153,11 +1187,13 @@ impl Radio for YaesuCatRadio {
     }
 
     fn supports_control_read(&self, id: ControlId) -> bool {
-        self.supports_control(id)
+        self.profile()
+            .is_some_and(|profile| profile.supports_control_read(id))
     }
 
     fn supports_control_write(&self, id: ControlId) -> bool {
-        self.supports_control(id)
+        self.profile()
+            .is_some_and(|profile| profile.supports_control_write(id))
     }
 
     async fn start_tuner(&self) -> Result<()> {
@@ -1250,15 +1286,15 @@ impl YaesuCatRadio {
         }
     }
 
-    fn get_yaesu_manual_notch(&self) -> Result<bool> {
-        let response = self.query("BP", Some("00"), 5)?;
-        let payload = parse_payload(&response, "BP")?;
+    fn get_yaesu_manual_notch(&self, command: &str) -> Result<bool> {
+        let response = self.query(command, Some("00"), 5)?;
+        let payload = parse_payload(&response, command)?;
         Ok(payload.get(2..5) == Some("001"))
     }
 
-    fn get_yaesu_width(&self) -> Result<u8> {
-        let response = self.query("SH", Some("0"), 4)?;
-        let payload = parse_payload(&response, "SH")?;
+    fn get_yaesu_width(&self, command: &str) -> Result<u8> {
+        let response = self.query(command, Some("0"), 4)?;
+        let payload = parse_payload(&response, command)?;
         payload
             .get(2..4)
             .context("invalid Yaesu SH response")?
@@ -1266,9 +1302,9 @@ impl YaesuCatRadio {
             .context("invalid Yaesu width index")
     }
 
-    fn get_yaesu_tuner_enabled(&self) -> Result<bool> {
-        let response = self.query("AC", None, 3)?;
-        let payload = parse_payload(&response, "AC")?;
+    fn get_yaesu_tuner_enabled(&self, command: &str) -> Result<bool> {
+        let response = self.query(command, None, 3)?;
+        let payload = parse_payload(&response, command)?;
         match payload.chars().last() {
             Some('0') => Ok(false),
             Some('1' | '2') => Ok(true),

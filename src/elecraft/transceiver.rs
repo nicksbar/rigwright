@@ -565,6 +565,20 @@ fn publish_event(router: &RadioEventRouter, model: Option<ElecraftModel>, frame:
 
 #[async_trait]
 impl Radio for ElecraftRadio {
+    fn filter_bandwidth_hz(&self, mode: Mode, filter: u8) -> Option<u32> {
+        self.profile()
+            .and_then(|profile| profile.filter_bandwidth_hz(mode, filter))
+    }
+
+    fn meter_presentation(&self, id: MeterId, normalized: u8) -> Option<crate::MeterPresentation> {
+        self.profile()
+            .and_then(|profile| profile.meter_presentation(id, normalized))
+    }
+
+    fn control_max(&self, id: ControlId) -> Option<u8> {
+        self.profile().and_then(|profile| profile.control_max(id))
+    }
+
     fn swr_sweep_setup(&self) -> Option<SwrSweepSetup> {
         self.profile().and_then(|profile| {
             (profile.model != ElecraftModel::K4 && profile.model != ElecraftModel::Kh1)

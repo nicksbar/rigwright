@@ -24,6 +24,14 @@ pub struct YaesuModeSpec {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct YaesuControlSpec {
+    pub id: ControlId,
+    pub command: &'static str,
+    pub readable: bool,
+    pub writable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct YaesuCatProfile {
     pub model: YaesuCatModel,
     /// Four-character payload returned by `ID;`.
@@ -35,7 +43,7 @@ pub struct YaesuCatProfile {
     /// Model-specific `MD` codes.
     pub modes: &'static [YaesuModeSpec],
     /// Controls shared by the model's documented CAT surface.
-    pub controls: &'static [ControlId],
+    pub controls: &'static [YaesuControlSpec],
     /// Model-owned maxima for indexed controls.
     pub control_maxes: &'static [(ControlId, u8)],
     /// Inclusive `PC` power setting range, when implemented.
@@ -57,6 +65,30 @@ pub struct YaesuCatProfile {
 }
 
 impl YaesuCatProfile {
+    pub fn filter_bandwidth_hz(self, mode: Mode, filter: u8) -> Option<u32> {
+        if !matches!(
+            mode,
+            Mode::Lsb | Mode::Usb | Mode::Cw | Mode::Rtty | Mode::RttyReverse
+        ) {
+            return None;
+        }
+        let widths = if matches!(mode, Mode::Lsb | Mode::Usb) {
+            [
+                0, 300, 400, 600, 850, 1100, 1200, 1500, 1650, 1800, 1950, 2100, 2250, 2400, 2450,
+                2500, 2600, 2700, 2800, 2900, 3000, 3200, 3500, 4000,
+            ]
+        } else {
+            [
+                0, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 600, 800, 1200, 1400, 1700,
+                2000, 2400, 3000, 3200, 3500, 4000, 0, 0,
+            ]
+        };
+        widths
+            .get(usize::from(filter))
+            .copied()
+            .filter(|&hz| hz != 0)
+    }
+
     pub fn swr_sweep_setup(self) -> Option<SwrSweepSetup> {
         self.power_range_watts.map(|(_, maximum)| SwrSweepSetup {
             carrier_mode: Mode::Rtty,
@@ -66,9 +98,42 @@ impl YaesuCatProfile {
     }
 
     pub fn supports_control(self, id: ControlId) -> bool {
-        self.controls.contains(&id)
+        self.controls.iter().any(|spec| spec.id == id)
             || (id == ControlId::RfPower && self.power_range_watts.is_some())
             || (id == ControlId::Split && self.supports_split)
+    }
+
+    pub fn control(self, id: ControlId) -> Option<YaesuControlSpec> {
+        self.controls
+            .iter()
+            .copied()
+            .find(|spec| spec.id == id)
+            .or_else(|| {
+                (id == ControlId::RfPower && self.power_range_watts.is_some()).then_some(
+                    YaesuControlSpec {
+                        id,
+                        command: "PC",
+                        readable: true,
+                        writable: true,
+                    },
+                )
+            })
+            .or_else(|| {
+                (id == ControlId::Split && self.supports_split).then_some(YaesuControlSpec {
+                    id,
+                    command: "ST",
+                    readable: true,
+                    writable: true,
+                })
+            })
+    }
+
+    pub fn supports_control_read(self, id: ControlId) -> bool {
+        self.control(id).is_some_and(|spec| spec.readable)
+    }
+
+    pub fn supports_control_write(self, id: ControlId) -> bool {
+        self.control(id).is_some_and(|spec| spec.writable)
     }
 
     pub fn control_max(self, id: ControlId) -> Option<u8> {
@@ -132,24 +197,33 @@ const HF_RANGE: &[(u64, u64)] = &[(30_000, 75_000_000)];
 const FT991A_RANGE: &[(u64, u64)] = &[(30_000, 470_000_000)];
 const CLASSIC_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400];
 const FT710_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 115_200];
-const COMMON_CONTROLS: &[ControlId] = &[
-    ControlId::AfGain,
-    ControlId::RfGain,
-    ControlId::Squelch,
-    ControlId::Preamp,
-    ControlId::Attenuator,
-    ControlId::NoiseBlanker,
-    ControlId::Notch,
-    ControlId::ManualNotch,
-    ControlId::Filter,
-    ControlId::Agc,
-    ControlId::NoiseReduction,
-    ControlId::NoiseReductionLevel,
-    ControlId::Rit,
-    ControlId::Xit,
-    ControlId::Tuner,
-    ControlId::Vfo,
+const COMMON_CONTROLS: &[YaesuControlSpec] = &[
+    control(ControlId::AfGain, "AG"),
+    control(ControlId::RfGain, "RG"),
+    control(ControlId::Squelch, "SQ"),
+    control(ControlId::Preamp, "PA"),
+    control(ControlId::Attenuator, "RA"),
+    control(ControlId::NoiseBlanker, "NB"),
+    control(ControlId::Notch, "BC"),
+    control(ControlId::ManualNotch, "BP"),
+    control(ControlId::Filter, "SH"),
+    control(ControlId::Agc, "GT"),
+    control(ControlId::NoiseReduction, "NR"),
+    control(ControlId::NoiseReductionLevel, "RL"),
+    control(ControlId::Rit, "RT"),
+    control(ControlId::Xit, "XT"),
+    control(ControlId::Tuner, "AC"),
+    control(ControlId::Vfo, "VS"),
 ];
+
+const fn control(id: ControlId, command: &'static str) -> YaesuControlSpec {
+    YaesuControlSpec {
+        id,
+        command,
+        readable: true,
+        writable: true,
+    }
+}
 const CONTROL_MAXES: &[(ControlId, u8)] = &[
     (ControlId::Preamp, 2),
     (ControlId::Attenuator, 3),
@@ -378,5 +452,20 @@ mod tests {
                 model.model_name()
             );
         }
+    }
+
+    #[test]
+    fn common_controls_own_their_documented_cat_commands() {
+        let profile = profile_for_model(YaesuCatModel::Ft710);
+        assert_eq!(profile.control(ControlId::AfGain).unwrap().command, "AG");
+        assert_eq!(
+            profile.control(ControlId::ManualNotch).unwrap().command,
+            "BP"
+        );
+        assert_eq!(profile.control(ControlId::Tuner).unwrap().command, "AC");
+        assert_eq!(profile.control(ControlId::RfPower).unwrap().command, "PC");
+        assert_eq!(profile.control(ControlId::Split).unwrap().command, "ST");
+        assert!(profile.supports_control_read(ControlId::RfPower));
+        assert!(profile.supports_control_write(ControlId::Split));
     }
 }

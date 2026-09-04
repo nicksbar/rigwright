@@ -84,6 +84,104 @@ pub struct ScopeConfiguration {
     pub sweep_speed: Option<u8>,
     pub center_mode: Option<bool>,
     pub vbw_wide: Option<bool>,
+    pub center_type: Option<ScopeCenterType>,
+    pub tx_display: Option<bool>,
+    pub max_hold: Option<ScopeMaxHold>,
+    pub marker_position: Option<ScopeMarkerPosition>,
+    pub averaging: Option<u8>,
+    pub waveform_type: Option<ScopeWaveformType>,
+    pub waterfall_display: Option<bool>,
+    pub waterfall_size: Option<u8>,
+    pub waterfall_peak_level: Option<u8>,
+    pub marker_auto_hide: Option<bool>,
+    pub waveform_color_current: Option<ScopeColor>,
+    pub waveform_color_line: Option<ScopeColor>,
+    pub waveform_color_max_hold: Option<ScopeColor>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ScopeColor {
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScopeEdgeBank {
+    pub low_hz: u64,
+    pub high_hz: u64,
+    pub edge_numbers: &'static [u8],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ScopeState {
+    pub configuration: ScopeConfiguration,
+    pub waveform_color_current: Option<ScopeColor>,
+    pub waveform_color_line: Option<ScopeColor>,
+    pub waveform_color_max_hold: Option<ScopeColor>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopeCenterType {
+    FilterCenter,
+    CarrierPoint,
+    CarrierPointAbsolute,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopeMaxHold {
+    Off,
+    TenSeconds,
+    Continuous,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopeMarkerPosition {
+    FilterCenter,
+    CarrierPoint,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopeWaveformType {
+    Fill,
+    FillAndLine,
+}
+
+/// Driver-owned geometry and legal values for a native spectrum scope.
+/// Applications use this metadata to render controls; the driver remains the
+/// authority that validates and applies `ScopeConfiguration`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScopeMetadata {
+    pub waveform_bins: usize,
+    pub waveform_divisions: u8,
+    pub span_options_hz: &'static [u64],
+    pub sweep_speed_values: &'static [u8],
+    pub fixed_edge_numbers: &'static [u8],
+    pub reference_level_range_tenths_db: Option<(i16, i16, i16)>,
+    pub supports_hold: bool,
+    pub supports_vbw: bool,
+    pub center_type_options: &'static [ScopeCenterType],
+    pub tx_display_options: &'static [bool],
+    pub max_hold_options: &'static [ScopeMaxHold],
+    pub marker_position_options: &'static [ScopeMarkerPosition],
+    /// Averaging values use 0 for off and 2..=4 for sweep counts.
+    pub averaging_options: &'static [u8],
+    pub waveform_type_options: &'static [ScopeWaveformType],
+    pub waterfall_display_options: &'static [bool],
+    pub waterfall_size_options: &'static [u8],
+    /// Waterfall peak-color threshold, expressed as the manual's grid 1..=8.
+    pub waterfall_peak_level_options: &'static [u8],
+    pub marker_auto_hide_options: &'static [bool],
+    pub edge_banks: &'static [ScopeEdgeBank],
+    pub supports_waveform_colors: bool,
+}
+
+/// Driver-owned polling guidance for a normalized meter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MeterPollSpec {
+    pub meter: MeterId,
+    pub interval_ms: u64,
+    pub tx_priority: bool,
 }
 
 impl OperatingMode {

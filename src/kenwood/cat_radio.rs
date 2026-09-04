@@ -960,6 +960,10 @@ impl Radio for KenwoodCatRadio {
         self.profile().and_then(|profile| profile.swr_sweep_setup())
     }
 
+    fn control_max(&self, id: ControlId) -> Option<u8> {
+        self.profile().and_then(|profile| profile.control_max(id))
+    }
+
     fn event_router(&self) -> Option<RadioEventRouter> {
         Some(self.event_router.clone())
     }

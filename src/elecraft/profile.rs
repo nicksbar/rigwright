@@ -2,7 +2,7 @@
 
 use crate::{
     hal::Mode,
-    hal_types::{ControlId, SwrSweepSetup},
+    hal_types::{ControlId, MeterId, MeterPresentation, SwrSweepSetup},
 };
 use anyhow::{bail, Result};
 
@@ -90,6 +90,40 @@ pub struct ElecraftProfile {
 }
 
 impl ElecraftProfile {
+    pub fn filter_bandwidth_hz(self, _mode: Mode, filter: u8) -> Option<u32> {
+        let maximum = self.filter_max_hz?;
+        Some(u32::from(crate::denormalize_meter_level(filter, maximum)?))
+    }
+
+    pub fn meter_presentation(self, id: MeterId, normalized: u8) -> Option<MeterPresentation> {
+        if id != MeterId::Swr || self.model == ElecraftModel::K4 {
+            return None;
+        }
+        let raw = crate::denormalize_meter_level(normalized, 999)?;
+        Some(MeterPresentation {
+            value: raw as f32 / 10.0,
+            unit: ":1",
+            precision: 1,
+            upper_bound: Some(99.9),
+        })
+    }
+
+    pub fn control_max(self, id: ControlId) -> Option<u8> {
+        match id {
+            ControlId::AfGain => self.af_gain_max.and_then(|value| u8::try_from(value).ok()),
+            ControlId::RfGain => self.rf_gain_max.and_then(|value| u8::try_from(value).ok()),
+            ControlId::Preamp => self.preamp_max,
+            ControlId::Attenuator => self.attenuator_max,
+            ControlId::NoiseBlanker => self.noise_blanker_level_max,
+            ControlId::NoiseReductionLevel => self.noise_reduction_level_max,
+            ControlId::Agc => self.agc_max,
+            ControlId::Filter => self
+                .filter_max_hz
+                .and_then(|value| u8::try_from(value).ok()),
+            _ => None,
+        }
+    }
+
     pub fn swr_sweep_setup(self) -> Option<SwrSweepSetup> {
         let carrier_mode = if self.modes.iter().any(|spec| spec.mode == Mode::Rtty) {
             Mode::Rtty
@@ -206,6 +240,17 @@ mod tests {
         assert!(k3::PROFILE.validate_baud(115_200).is_err());
         assert!(k2::PROFILE.encode_mode(Mode::Rtty).is_ok());
         assert!(k2::PROFILE.encode_mode(Mode::Am).is_err());
+    }
+
+    #[test]
+    fn swr_presentation_uses_documented_tenths_scale() {
+        let presentation = k3::PROFILE
+            .meter_presentation(MeterId::Swr, 255)
+            .expect("K3 exposes documented SWR readback");
+        assert_eq!(presentation.unit, ":1");
+        assert_eq!(presentation.precision, 1);
+        assert!((presentation.value - 99.9).abs() < f32::EPSILON);
+        assert!(k4::PROFILE.meter_presentation(MeterId::Swr, 255).is_none());
     }
 
     #[test]

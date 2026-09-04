@@ -166,6 +166,14 @@ impl KenwoodCatProfile {
             || (id == ControlId::Vfo && self.supports_vfo)
             || (id == ControlId::Split && self.supports_split)
     }
+
+    pub fn control_max(self, id: ControlId) -> Option<u8> {
+        self.control(id)
+            .and_then(|spec| spec.max_value)
+            .or_else(|| {
+                (id == ControlId::RfPower && self.power_range_watts.is_some()).then_some(u8::MAX)
+            })
+    }
 }
 
 const fn mode(code: char, mode: Mode, preferred: bool) -> KenwoodModeSpec {
