@@ -42,6 +42,7 @@ pub const PROFILE: ElecraftProfile = ElecraftProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hal_types::MeterId;
 
     fn assert_true(value: bool) {
         assert!(value);
@@ -53,5 +54,7 @@ mod tests {
         assert!(PROFILE.validate_baud(115_200).is_ok());
         assert_eq!(PROFILE.rf_gain_max, Some(60));
         assert_true(PROFILE.rf_gain_is_attenuation);
+        assert_eq!(PROFILE.meter_metadata(MeterId::Signal).unwrap().raw_max, 42);
+        assert!(!PROFILE.supports_meter(MeterId::Swr));
     }
 }

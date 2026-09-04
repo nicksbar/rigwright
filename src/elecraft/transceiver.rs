@@ -3,7 +3,7 @@
 use crate::{
     events::{RadioEvent, RadioEventRouter},
     hal::{Mode, Radio, RadioCapabilities},
-    hal_types::{ControlId, ControlValue, MeterId, SwrSweepSetup},
+    hal_types::{ControlId, ControlValue, MeterId, MeterMetadata, MeterPollSpec, SwrSweepSetup},
     transport::RadioTransport,
 };
 use anyhow::{bail, Context, Result};
@@ -575,6 +575,16 @@ impl Radio for ElecraftRadio {
             .and_then(|profile| profile.meter_presentation(id, normalized))
     }
 
+    fn meter_poll_spec(&self, id: MeterId) -> Option<MeterPollSpec> {
+        self.profile()
+            .and_then(|profile| profile.meter_poll_spec(id))
+    }
+
+    fn meter_metadata(&self, id: MeterId) -> Option<MeterMetadata> {
+        self.profile()
+            .and_then(|profile| profile.meter_metadata(id))
+    }
+
     fn control_max(&self, id: ControlId) -> Option<u8> {
         self.profile().and_then(|profile| profile.control_max(id))
     }
@@ -1120,13 +1130,8 @@ impl Radio for ElecraftRadio {
     }
 
     fn supports_meter(&self, id: MeterId) -> bool {
-        match id {
-            MeterId::Signal => self.model.is_some(),
-            MeterId::Power => self.model.is_some(),
-            MeterId::Swr => self.model.is_some_and(|model| model != ElecraftModel::K4),
-            MeterId::Alc => matches!(self.model, Some(ElecraftModel::K3 | ElecraftModel::K3s)),
-            _ => false,
-        }
+        self.profile()
+            .is_some_and(|profile| profile.supports_meter(id))
     }
     fn supports_control(&self, id: ControlId) -> bool {
         self.profile()

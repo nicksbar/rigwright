@@ -17,7 +17,8 @@ use crate::{
     hal::{Mode, Radio, RadioCapabilities},
     hal_types::{
         denormalize_meter_level, normalize_meter_level, ControlId, ControlValue, MemoryChannel,
-        MeterId, RepeaterSettings, RepeaterShift, SwrSweepSetup, ToneMode, ToneSettings,
+        MeterId, MeterMetadata, MeterPollSpec, RepeaterSettings, RepeaterShift, SwrSweepSetup,
+        ToneMode, ToneSettings,
     },
     models::KenwoodCatModel,
     protocol::ascii_cat,
@@ -956,6 +957,16 @@ impl KenwoodCatRadio {
 
 #[async_trait]
 impl Radio for KenwoodCatRadio {
+    fn meter_poll_spec(&self, id: MeterId) -> Option<MeterPollSpec> {
+        self.profile()
+            .and_then(|profile| profile.meter_poll_spec(id))
+    }
+
+    fn meter_metadata(&self, id: MeterId) -> Option<MeterMetadata> {
+        self.profile()
+            .and_then(|profile| profile.meter_metadata(id))
+    }
+
     fn swr_sweep_setup(&self) -> Option<SwrSweepSetup> {
         self.profile().and_then(|profile| profile.swr_sweep_setup())
     }
@@ -1136,10 +1147,8 @@ impl Radio for KenwoodCatRadio {
     }
 
     fn supports_meter(&self, id: MeterId) -> bool {
-        self.profile().is_some_and(|profile| {
-            matches!(id, MeterId::Signal | MeterId::Power | MeterId::Swr)
-                || profile.meter(id).is_some()
-        })
+        self.profile()
+            .is_some_and(|profile| profile.supports_meter(id))
     }
 
     async fn set_control(&self, id: ControlId, value: ControlValue) -> Result<()> {

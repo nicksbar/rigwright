@@ -4,7 +4,7 @@ use anyhow::{bail, Result};
 
 use crate::{
     hal::Mode,
-    hal_types::{ControlId, MeterId, SwrSweepSetup},
+    hal_types::{ControlId, MeterId, MeterMetadata, MeterPollSpec, SwrSweepSetup},
     models::KenwoodCatModel,
 };
 
@@ -158,6 +158,43 @@ impl KenwoodCatProfile {
 
     pub fn meter(self, id: MeterId) -> Option<KenwoodMeterSpec> {
         self.extra_meters.iter().copied().find(|spec| spec.id == id)
+    }
+
+    pub fn supports_meter(self, id: MeterId) -> bool {
+        matches!(id, MeterId::Signal | MeterId::Power | MeterId::Swr) || self.meter(id).is_some()
+    }
+
+    pub fn meter_poll_spec(self, id: MeterId) -> Option<MeterPollSpec> {
+        self.supports_meter(id).then_some(MeterPollSpec {
+            meter: id,
+            interval_ms: if matches!(id, MeterId::Signal) {
+                400
+            } else {
+                300
+            },
+            tx_priority: !matches!(id, MeterId::Signal),
+        })
+    }
+
+    pub fn meter_metadata(self, id: MeterId) -> Option<MeterMetadata> {
+        if !self.supports_meter(id) {
+            return None;
+        }
+        let maximum = match id {
+            MeterId::Signal | MeterId::Power => self.meter_max,
+            MeterId::Swr => self.swr_meter_max,
+            _ => self.meter(id)?.maximum,
+        };
+        let raw_width = match id {
+            MeterId::Signal | MeterId::Power => (self.sm_payload_len - self.sm_value_start) as u8,
+            _ => 2,
+        };
+        Some(MeterMetadata {
+            meter: id,
+            raw_min: 0,
+            raw_max: maximum,
+            raw_width,
+        })
     }
 
     pub fn supports_control(self, id: ControlId) -> bool {
@@ -579,6 +616,20 @@ mod tests {
         assert_eq!(TS890S_PROFILE.swr_meter_max, 70);
         assert_eq!(TS2000_PROFILE.swr_meter_max, 30);
         assert_eq!(TS890S_PROFILE.swr_rm_selector, '2');
+        assert_eq!(
+            TS890S_PROFILE
+                .meter_metadata(MeterId::Temperature)
+                .unwrap()
+                .raw_max,
+            70
+        );
+        assert_eq!(
+            TS890S_PROFILE
+                .meter_poll_spec(MeterId::Signal)
+                .unwrap()
+                .interval_ms,
+            400
+        );
     }
 
     #[test]

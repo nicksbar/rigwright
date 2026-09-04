@@ -2,7 +2,9 @@
 
 use crate::{
     hal::Mode,
-    hal_types::{ControlId, MeterId, MeterPresentation, SwrSweepSetup},
+    hal_types::{
+        ControlId, MeterId, MeterMetadata, MeterPollSpec, MeterPresentation, SwrSweepSetup,
+    },
 };
 use anyhow::{bail, Result};
 
@@ -90,6 +92,54 @@ pub struct ElecraftProfile {
 }
 
 impl ElecraftProfile {
+    pub fn supports_meter(self, id: MeterId) -> bool {
+        match id {
+            MeterId::Signal => true,
+            MeterId::Power => self.power_max_watts.is_some(),
+            MeterId::Swr => self.model != ElecraftModel::K4,
+            MeterId::Alc => matches!(self.model, ElecraftModel::K3 | ElecraftModel::K3s),
+            _ => false,
+        }
+    }
+
+    pub fn meter_poll_spec(self, id: MeterId) -> Option<MeterPollSpec> {
+        self.supports_meter(id).then_some(MeterPollSpec {
+            meter: id,
+            interval_ms: if matches!(id, MeterId::Signal) {
+                400
+            } else {
+                300
+            },
+            tx_priority: !matches!(id, MeterId::Signal),
+        })
+    }
+
+    pub fn meter_metadata(self, id: MeterId) -> Option<MeterMetadata> {
+        if !self.supports_meter(id) {
+            return None;
+        }
+        let raw_max = match id {
+            MeterId::Signal => match self.model {
+                ElecraftModel::K2 => 15,
+                ElecraftModel::K4 => 42,
+                _ => 30,
+            },
+            MeterId::Power => match self.model {
+                ElecraftModel::K4 => 1100,
+                _ => 12,
+            },
+            MeterId::Alc => 7,
+            MeterId::Swr => 999,
+            _ => return None,
+        };
+        Some(MeterMetadata {
+            meter: id,
+            raw_min: 0,
+            raw_max,
+            raw_width: 4,
+        })
+    }
+
     pub fn filter_bandwidth_hz(self, _mode: Mode, filter: u8) -> Option<u32> {
         let maximum = self.filter_max_hz?;
         Some(u32::from(crate::denormalize_meter_level(filter, maximum)?))
