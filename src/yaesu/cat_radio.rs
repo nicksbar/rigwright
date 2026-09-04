@@ -868,6 +868,11 @@ impl Radio for YaesuCatRadio {
         self.profile().and_then(|profile| profile.control_max(id))
     }
 
+    fn supported_control_values(&self, id: ControlId) -> Option<&'static [u8]> {
+        self.profile()
+            .and_then(|profile| profile.supported_control_values(id))
+    }
+
     fn event_router(&self) -> Option<RadioEventRouter> {
         Some(self.event_router.clone())
     }
@@ -1175,10 +1180,13 @@ impl Radio for YaesuCatRadio {
     }
 
     fn supports_meter(&self, id: MeterId) -> bool {
-        self.model().is_some_and(|model| {
-            !matches!(id, MeterId::Temperature)
-                || matches!(model, YaesuCatModel::Ftdx101D | YaesuCatModel::Ftdx101Mp)
-        })
+        self.profile()
+            .is_some_and(|profile| profile.supports_meter(id))
+    }
+
+    fn meter_poll_spec(&self, id: MeterId) -> Option<crate::MeterPollSpec> {
+        self.profile()
+            .and_then(|profile| profile.meter_poll_spec(id))
     }
 
     fn supports_control(&self, id: ControlId) -> bool {

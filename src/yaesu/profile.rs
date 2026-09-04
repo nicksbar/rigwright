@@ -8,7 +8,7 @@ use anyhow::{bail, Result};
 
 use crate::{
     hal::Mode,
-    hal_types::{ControlId, SwrSweepSetup},
+    hal_types::{ControlId, MeterId, MeterPollSpec, SwrSweepSetup},
     models::YaesuCatModel,
 };
 
@@ -40,12 +40,25 @@ pub struct YaesuCatProfile {
     pub frequency_ranges: &'static [(u64, u64)],
     /// Baud rates exposed by the radio's CAT menu.
     pub baud_rates: &'static [u32],
+    /// USB CAT rates. Yaesu exposes the same CAT-rate surface through its
+    /// virtual serial port, so this is normally the same list as `baud_rates`.
+    pub usb_baud_rates: &'static [u32],
+    /// Whether the model documents automatic CAT-rate negotiation.
+    pub supports_auto_baud: bool,
+    /// Preferred starting rate for this model.
+    pub preferred_baud_rate: u32,
     /// Model-specific `MD` codes.
     pub modes: &'static [YaesuModeSpec],
     /// Controls shared by the model's documented CAT surface.
     pub controls: &'static [YaesuControlSpec],
     /// Model-owned maxima for indexed controls.
     pub control_maxes: &'static [(ControlId, u8)],
+    /// Enumerated legal values for controls whose choices are not merely a
+    /// contiguous maximum.
+    pub control_values: &'static [(ControlId, &'static [u8])],
+    /// Explicit meter surface and polling guidance for CAT clients.
+    pub meters: &'static [MeterId],
+    pub meter_poll_specs: &'static [MeterPollSpec],
     /// Inclusive `PC` power setting range, when implemented.
     pub power_range_watts: Option<(u16, u16)>,
     /// Whether the `ST` split command is implemented by this profile.
@@ -142,6 +155,23 @@ impl YaesuCatProfile {
             .find_map(|&(control, maximum)| (control == id).then_some(maximum))
     }
 
+    pub fn supported_control_values(self, id: ControlId) -> Option<&'static [u8]> {
+        self.control_values
+            .iter()
+            .find_map(|&(control, values)| (control == id).then_some(values))
+    }
+
+    pub fn supports_meter(self, id: MeterId) -> bool {
+        self.meters.contains(&id)
+    }
+
+    pub fn meter_poll_spec(self, id: MeterId) -> Option<MeterPollSpec> {
+        self.meter_poll_specs
+            .iter()
+            .copied()
+            .find(|spec| spec.meter == id)
+    }
+
     pub fn supports_frequency(self, hz: u64) -> bool {
         self.frequency_ranges
             .iter()
@@ -197,6 +227,13 @@ const HF_RANGE: &[(u64, u64)] = &[(30_000, 75_000_000)];
 const FT991A_RANGE: &[(u64, u64)] = &[(30_000, 470_000_000)];
 const CLASSIC_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400];
 const FT710_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 115_200];
+const PREAMP_VALUES: &[u8] = &[0, 1, 2];
+const ATTENUATOR_VALUES: &[u8] = &[0, 1, 2, 3];
+const FILTER_VALUES: &[u8] = &[
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+];
+const AGC_VALUES: &[u8] = &[0, 1, 2, 3, 4];
+const NOISE_REDUCTION_LEVEL_VALUES: &[u8] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 const COMMON_CONTROLS: &[YaesuControlSpec] = &[
     control(ControlId::AfGain, "AG"),
     control(ControlId::RfGain, "RG"),
@@ -230,6 +267,74 @@ const CONTROL_MAXES: &[(ControlId, u8)] = &[
     (ControlId::Filter, 23),
     (ControlId::Agc, 4),
     (ControlId::NoiseReductionLevel, 15),
+];
+const CONTROL_VALUES: &[(ControlId, &[u8])] = &[
+    (ControlId::Preamp, PREAMP_VALUES),
+    (ControlId::Attenuator, ATTENUATOR_VALUES),
+    (ControlId::Filter, FILTER_VALUES),
+    (ControlId::Agc, AGC_VALUES),
+    (ControlId::NoiseReductionLevel, NOISE_REDUCTION_LEVEL_VALUES),
+];
+const COMMON_METERS: &[MeterId] = &[
+    MeterId::Signal,
+    MeterId::Power,
+    MeterId::Swr,
+    MeterId::Alc,
+    MeterId::Compression,
+    MeterId::Current,
+    MeterId::Voltage,
+];
+const FTDX101_METERS: &[MeterId] = &[
+    MeterId::Signal,
+    MeterId::Power,
+    MeterId::Swr,
+    MeterId::Alc,
+    MeterId::Compression,
+    MeterId::Current,
+    MeterId::Voltage,
+    MeterId::Temperature,
+];
+const METER_POLL_SPECS: &[MeterPollSpec] = &[
+    MeterPollSpec {
+        meter: MeterId::Signal,
+        interval_ms: 400,
+        tx_priority: false,
+    },
+    MeterPollSpec {
+        meter: MeterId::Power,
+        interval_ms: 300,
+        tx_priority: true,
+    },
+    MeterPollSpec {
+        meter: MeterId::Swr,
+        interval_ms: 300,
+        tx_priority: true,
+    },
+    MeterPollSpec {
+        meter: MeterId::Alc,
+        interval_ms: 300,
+        tx_priority: true,
+    },
+    MeterPollSpec {
+        meter: MeterId::Compression,
+        interval_ms: 300,
+        tx_priority: true,
+    },
+    MeterPollSpec {
+        meter: MeterId::Current,
+        interval_ms: 1_500,
+        tx_priority: false,
+    },
+    MeterPollSpec {
+        meter: MeterId::Voltage,
+        interval_ms: 1_500,
+        tx_priority: false,
+    },
+    MeterPollSpec {
+        meter: MeterId::Temperature,
+        interval_ms: 1_500,
+        tx_priority: false,
+    },
 ];
 
 const MODERN_HF_MODES: &[YaesuModeSpec] = &[
@@ -280,9 +385,15 @@ pub const FT710_PROFILE: YaesuCatProfile = YaesuCatProfile {
     id_code: "0800",
     frequency_ranges: HF_RANGE,
     baud_rates: FT710_BAUD_RATES,
+    usb_baud_rates: FT710_BAUD_RATES,
+    supports_auto_baud: false,
+    preferred_baud_rate: 115_200,
     modes: MODERN_HF_MODES,
     controls: COMMON_CONTROLS,
     control_maxes: CONTROL_MAXES,
+    control_values: CONTROL_VALUES,
+    meters: COMMON_METERS,
+    meter_poll_specs: METER_POLL_SPECS,
     power_range_watts: Some((5, 100)),
     supports_split: true,
     supports_repeater_settings: true,
@@ -297,9 +408,15 @@ pub const FTDX10_PROFILE: YaesuCatProfile = YaesuCatProfile {
     id_code: "0761",
     frequency_ranges: HF_RANGE,
     baud_rates: CLASSIC_BAUD_RATES,
+    usb_baud_rates: CLASSIC_BAUD_RATES,
+    supports_auto_baud: false,
+    preferred_baud_rate: 38_400,
     modes: MODERN_HF_MODES,
     controls: COMMON_CONTROLS,
     control_maxes: CONTROL_MAXES,
+    control_values: CONTROL_VALUES,
+    meters: COMMON_METERS,
+    meter_poll_specs: METER_POLL_SPECS,
     power_range_watts: Some((5, 100)),
     supports_split: true,
     supports_repeater_settings: true,
@@ -313,9 +430,15 @@ pub const FTDX101D_PROFILE: YaesuCatProfile = YaesuCatProfile {
     id_code: "0681",
     frequency_ranges: HF_RANGE,
     baud_rates: CLASSIC_BAUD_RATES,
+    usb_baud_rates: CLASSIC_BAUD_RATES,
+    supports_auto_baud: false,
+    preferred_baud_rate: 38_400,
     modes: MODERN_HF_MODES,
     controls: COMMON_CONTROLS,
     control_maxes: CONTROL_MAXES,
+    control_values: CONTROL_VALUES,
+    meters: FTDX101_METERS,
+    meter_poll_specs: METER_POLL_SPECS,
     power_range_watts: Some((5, 100)),
     supports_split: true,
     supports_repeater_settings: true,
@@ -329,9 +452,15 @@ pub const FTDX101MP_PROFILE: YaesuCatProfile = YaesuCatProfile {
     id_code: "0682",
     frequency_ranges: HF_RANGE,
     baud_rates: CLASSIC_BAUD_RATES,
+    usb_baud_rates: CLASSIC_BAUD_RATES,
+    supports_auto_baud: false,
+    preferred_baud_rate: 38_400,
     modes: MODERN_HF_MODES,
     controls: COMMON_CONTROLS,
     control_maxes: CONTROL_MAXES,
+    control_values: CONTROL_VALUES,
+    meters: FTDX101_METERS,
+    meter_poll_specs: METER_POLL_SPECS,
     power_range_watts: Some((5, 200)),
     supports_split: true,
     supports_repeater_settings: true,
@@ -345,9 +474,15 @@ pub const FT991A_PROFILE: YaesuCatProfile = YaesuCatProfile {
     id_code: "0670",
     frequency_ranges: FT991A_RANGE,
     baud_rates: CLASSIC_BAUD_RATES,
+    usb_baud_rates: CLASSIC_BAUD_RATES,
+    supports_auto_baud: false,
+    preferred_baud_rate: 38_400,
     modes: FT991A_MODES,
     controls: COMMON_CONTROLS,
     control_maxes: CONTROL_MAXES,
+    control_values: CONTROL_VALUES,
+    meters: COMMON_METERS,
+    meter_poll_specs: METER_POLL_SPECS,
     power_range_watts: Some((5, 100)),
     // The FT-991A CAT manual lists ST (SPLIT) as supported.
     supports_split: true,
@@ -467,5 +602,29 @@ mod tests {
         assert_eq!(profile.control(ControlId::Split).unwrap().command, "ST");
         assert!(profile.supports_control_read(ControlId::RfPower));
         assert!(profile.supports_control_write(ControlId::Split));
+    }
+
+    #[test]
+    fn every_modern_profile_exposes_complete_serial_and_polling_metadata() {
+        for model in [
+            YaesuCatModel::Ft710,
+            YaesuCatModel::Ft991A,
+            YaesuCatModel::Ftdx10,
+            YaesuCatModel::Ftdx101D,
+            YaesuCatModel::Ftdx101Mp,
+        ] {
+            let profile = profile_for_model(model);
+            assert!(!profile.baud_rates.is_empty());
+            assert_eq!(profile.usb_baud_rates, profile.baud_rates);
+            assert!(!profile.supports_auto_baud);
+            assert!(profile.baud_rates.contains(&profile.preferred_baud_rate));
+            assert!(profile.supports_meter(MeterId::Signal));
+            assert!(profile.meter_poll_spec(MeterId::Signal).is_some());
+            assert!(profile
+                .supported_control_values(ControlId::Filter)
+                .is_some());
+        }
+        assert!(profile_for_model(YaesuCatModel::Ftdx101D).supports_meter(MeterId::Temperature));
+        assert!(!profile_for_model(YaesuCatModel::Ft710).supports_meter(MeterId::Temperature));
     }
 }

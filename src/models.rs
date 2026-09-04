@@ -208,7 +208,7 @@ impl RadioModelProfile {
                 .unwrap_or(115_200),
             Protocol::YaesuCat => YaesuCatModel::from_model_name(self.model)
                 .map(crate::yaesu::profile::profile_for_model)
-                .and_then(|profile| profile.baud_rates.last().copied())
+                .map(|profile| profile.preferred_baud_rate)
                 .unwrap_or(38_400),
             Protocol::YaesuLegacyCat => YaesuLegacyModel::from_model_name(self.model)
                 .map(crate::yaesu::legacy_profile::profile_for_model)
