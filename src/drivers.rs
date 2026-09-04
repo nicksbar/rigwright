@@ -273,7 +273,7 @@ impl ConfiguredRadio {
             Self::DxLab(radio) => radio.get_frequency_hz().await.map(|_| ()),
             Self::LegacyYaesu(radio) => radio.get_frequency_hz().await.map(|_| ()),
             Self::Rigctld(radio) => radio.get_frequency_hz().await.map(|_| ()),
-            Self::Null(radio) => radio.get_frequency_hz().await.map(|_| ()),
+            Self::Null(_) => bail!("CAT probing is not supported for virtual radios"),
             Self::Elecraft(radio) => radio.get_frequency_hz().await.map(|_| ()),
         }
     }
