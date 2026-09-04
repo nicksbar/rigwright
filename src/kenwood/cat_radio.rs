@@ -1308,7 +1308,9 @@ fn display_command(request: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kenwood::profile::{TS590SG_PROFILE, TS890S_PROFILE};
+    use crate::kenwood::{
+        ts590sg::CAT_PROFILE as TS590SG_PROFILE, ts890s::CAT_PROFILE as TS890S_PROFILE,
+    };
     use std::collections::VecDeque;
     use std::io::{Read, Write};
     use std::sync::{Arc, Mutex};

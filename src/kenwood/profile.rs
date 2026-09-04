@@ -285,57 +285,7 @@ pub(crate) fn memory_char(payload: &str, context: &str) -> Result<char> {
     Ok(value)
 }
 
-const fn mode(code: char, mode: Mode, preferred: bool) -> KenwoodModeSpec {
-    KenwoodModeSpec {
-        code,
-        mode,
-        preferred,
-    }
-}
-
-const STANDARD_MODES: &[KenwoodModeSpec] = &[
-    mode('1', Mode::Lsb, true),
-    mode('2', Mode::Usb, true),
-    // On models without an explicit data flag, generic digital operation uses
-    // USB. Decoding remains USB because the radio cannot report the intent.
-    mode('2', Mode::Data, false),
-    mode('3', Mode::Cw, true),
-    mode('4', Mode::Fm, true),
-    mode('5', Mode::Am, true),
-    mode('6', Mode::Rtty, true),
-    mode('7', Mode::CwReverse, true),
-    mode('9', Mode::RttyReverse, true),
-];
-
-const TS890_MODES: &[KenwoodModeSpec] = &[
-    mode('1', Mode::Lsb, true),
-    mode('2', Mode::Usb, true),
-    mode('3', Mode::Cw, true),
-    mode('4', Mode::Fm, true),
-    mode('5', Mode::Am, true),
-    mode('6', Mode::Rtty, true),
-    mode('7', Mode::CwReverse, true),
-    mode('9', Mode::RttyReverse, true),
-    mode('A', Mode::Data, false), // PSK
-    mode('B', Mode::Data, false), // PSK-R
-    mode('C', Mode::Data, false), // LSB-D
-    mode('D', Mode::Data, true),  // USB-D
-    mode('E', Mode::Data, false), // FM-D
-    mode('F', Mode::Data, false), // AM-D
-];
-
-const MODERN_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
-const TS2000_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 57_600];
-const HF_RANGE: &[(u64, u64)] = &[(30_000, 60_000_000)];
-const TS2000_RANGES: &[(u64, u64)] = &[
-    (30_000, 60_000_000),
-    (118_000_000, 174_000_000),
-    (220_000_000, 512_000_000),
-    (1_240_000_000, 1_300_000_000),
-];
-
-/* model command tables moved to ts590sg.rs, ts890s.rs, and ts2000.rs */
-/*
+/* Legacy model command tables retained in git history; model modules own them now.
 const TS590_CONTROLS: &[KenwoodControlSpec] = &[
     KenwoodControlSpec {
         id: ControlId::AfGain,
@@ -573,97 +523,21 @@ const TS890_METERS: &[KenwoodMeterSpec] = &[
 ];
 const NO_EXTRA_METERS: &[KenwoodMeterSpec] = &[];
 */
-
-pub const TS590SG_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
-    model: KenwoodCatModel::Ts590Sg,
-    id_code: "023",
-    frequency_ranges: HF_RANGE,
-    baud_rates: MODERN_BAUD_RATES,
-    modes: STANDARD_MODES,
-    mode_command: KenwoodModeCommand::Md {
-        supports_data_flag: true,
-    },
-    split_command: KenwoodSplitCommand::ReceiverTransmitterVfo,
-    supports_vfo: true,
-    supports_split: true,
-    supports_if_status: true,
-    power_range_watts: Some((5, 100)),
-    meter_max: 30,
-    swr_meter_max: 30,
-    swr_rm_selector: '1',
-    controls: crate::kenwood::ts590sg::CONTROLS,
-    extra_meters: crate::kenwood::ts590sg::METERS,
-    rit_xit_layout: KenwoodRitXitLayout::IfStatus,
-    memory: Some(crate::kenwood::ts590sg::MEMORY),
-    ai_on_value: "2",
-    sm_payload_len: 5,
-    sm_value_start: 1,
-    swr_meter_requires_selection: false,
-};
-
-pub const TS890S_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
-    model: KenwoodCatModel::Ts890S,
-    id_code: "024",
-    frequency_ranges: HF_RANGE,
-    baud_rates: MODERN_BAUD_RATES,
-    modes: TS890_MODES,
-    mode_command: KenwoodModeCommand::Om,
-    split_command: KenwoodSplitCommand::Tb,
-    supports_vfo: true,
-    supports_split: true,
-    supports_if_status: false,
-    power_range_watts: Some((5, 100)),
-    meter_max: 70,
-    swr_meter_max: 70,
-    swr_rm_selector: '2',
-    controls: crate::kenwood::ts890s::CONTROLS,
-    extra_meters: crate::kenwood::ts890s::METERS,
-    rit_xit_layout: KenwoodRitXitLayout::RfAndFunctionState,
-    memory: Some(crate::kenwood::ts890s::MEMORY),
-    ai_on_value: "2",
-    sm_payload_len: 4,
-    sm_value_start: 0,
-    swr_meter_requires_selection: true,
-};
-
-pub const TS2000_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
-    model: KenwoodCatModel::Ts2000,
-    id_code: "019",
-    frequency_ranges: TS2000_RANGES,
-    baud_rates: TS2000_BAUD_RATES,
-    modes: STANDARD_MODES,
-    mode_command: KenwoodModeCommand::Md {
-        supports_data_flag: false,
-    },
-    split_command: KenwoodSplitCommand::ReceiverTransmitterVfo,
-    supports_vfo: true,
-    supports_split: true,
-    supports_if_status: true,
-    power_range_watts: Some((5, 100)),
-    meter_max: 30,
-    swr_meter_max: 30,
-    swr_rm_selector: '1',
-    controls: crate::kenwood::ts2000::CONTROLS,
-    extra_meters: &[],
-    rit_xit_layout: KenwoodRitXitLayout::IfStatus,
-    memory: None,
-    ai_on_value: "1",
-    sm_payload_len: 5,
-    sm_value_start: 1,
-    swr_meter_requires_selection: false,
-};
-
 pub fn profile_for_model(model: KenwoodCatModel) -> &'static KenwoodCatProfile {
     match model {
-        KenwoodCatModel::Ts590Sg => &TS590SG_PROFILE,
-        KenwoodCatModel::Ts890S => &TS890S_PROFILE,
-        KenwoodCatModel::Ts2000 => &TS2000_PROFILE,
+        KenwoodCatModel::Ts590Sg => &crate::kenwood::ts590sg::CAT_PROFILE,
+        KenwoodCatModel::Ts890S => &crate::kenwood::ts890s::CAT_PROFILE,
+        KenwoodCatModel::Ts2000 => &crate::kenwood::ts2000::CAT_PROFILE,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kenwood::{
+        ts2000::CAT_PROFILE as TS2000_PROFILE, ts590sg::CAT_PROFILE as TS590SG_PROFILE,
+        ts890s::CAT_PROFILE as TS890S_PROFILE,
+    };
 
     #[test]
     fn identification_and_command_families_are_model_specific() {

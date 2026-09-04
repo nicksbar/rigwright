@@ -4,12 +4,89 @@ use anyhow::{bail, Result};
 
 use super::profile::{
     memory_char, parse_memory_field, KenwoodCatProfile, KenwoodControlSpec, KenwoodMemorySpec,
-    KenwoodMeterSpec,
+    KenwoodMeterSpec, KenwoodModeCommand, KenwoodModeSpec, KenwoodRitXitLayout,
+    KenwoodSplitCommand,
 };
+use crate::hal::Mode;
 use crate::hal_types::{
     ControlId, MemoryChannel, MeterId, RepeaterSettings, RepeaterShift, ToneMode, ToneSettings,
 };
 use crate::models::{find_model, RadioModelProfile};
+
+const MODES: &[KenwoodModeSpec] = &[
+    KenwoodModeSpec {
+        code: '1',
+        mode: Mode::Lsb,
+        preferred: true,
+    },
+    KenwoodModeSpec {
+        code: '2',
+        mode: Mode::Usb,
+        preferred: true,
+    },
+    KenwoodModeSpec {
+        code: '3',
+        mode: Mode::Cw,
+        preferred: true,
+    },
+    KenwoodModeSpec {
+        code: '4',
+        mode: Mode::Fm,
+        preferred: true,
+    },
+    KenwoodModeSpec {
+        code: '5',
+        mode: Mode::Am,
+        preferred: true,
+    },
+    KenwoodModeSpec {
+        code: '6',
+        mode: Mode::Rtty,
+        preferred: true,
+    },
+    KenwoodModeSpec {
+        code: '7',
+        mode: Mode::CwReverse,
+        preferred: true,
+    },
+    KenwoodModeSpec {
+        code: '9',
+        mode: Mode::RttyReverse,
+        preferred: true,
+    },
+    KenwoodModeSpec {
+        code: 'A',
+        mode: Mode::Data,
+        preferred: false,
+    },
+    KenwoodModeSpec {
+        code: 'B',
+        mode: Mode::Data,
+        preferred: false,
+    },
+    KenwoodModeSpec {
+        code: 'C',
+        mode: Mode::Data,
+        preferred: false,
+    },
+    KenwoodModeSpec {
+        code: 'D',
+        mode: Mode::Data,
+        preferred: true,
+    },
+    KenwoodModeSpec {
+        code: 'E',
+        mode: Mode::Data,
+        preferred: false,
+    },
+    KenwoodModeSpec {
+        code: 'F',
+        mode: Mode::Data,
+        preferred: false,
+    },
+];
+const BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
+const FREQUENCY_RANGES: &[(u64, u64)] = &[(30_000, 60_000_000)];
 
 pub(crate) const CONTROLS: &[KenwoodControlSpec] = &[
     KenwoodControlSpec {
@@ -195,7 +272,32 @@ fn encode_memory(channel: MemoryChannel, profile: &KenwoodCatProfile) -> Result<
     ))
 }
 
-pub use super::profile::TS890S_PROFILE as CAT_PROFILE;
+pub const CAT_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
+    model: crate::models::KenwoodCatModel::Ts890S,
+    id_code: "024",
+    frequency_ranges: FREQUENCY_RANGES,
+    baud_rates: BAUD_RATES,
+    modes: MODES,
+    mode_command: KenwoodModeCommand::Om,
+    split_command: KenwoodSplitCommand::Tb,
+    supports_vfo: true,
+    supports_split: true,
+    supports_if_status: false,
+    power_range_watts: Some((5, 100)),
+    meter_max: 70,
+    swr_meter_max: 70,
+    swr_rm_selector: '2',
+    controls: CONTROLS,
+    extra_meters: METERS,
+    rit_xit_layout: KenwoodRitXitLayout::RfAndFunctionState,
+    memory: Some(MEMORY),
+    ai_on_value: "2",
+    sm_payload_len: 4,
+    sm_value_start: 0,
+    swr_meter_requires_selection: true,
+};
+
+pub use CAT_PROFILE as TS890S_PROFILE;
 
 pub fn profile() -> &'static RadioModelProfile {
     find_model("TS-890S").expect("built-in TS-890S profile")

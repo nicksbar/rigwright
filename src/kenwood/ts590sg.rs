@@ -4,12 +4,64 @@ use anyhow::{bail, Result};
 
 use super::profile::{
     memory_char, parse_memory_field, KenwoodCatProfile, KenwoodControlSpec, KenwoodMemorySpec,
-    KenwoodMeterSpec,
+    KenwoodMeterSpec, KenwoodModeCommand, KenwoodModeSpec, KenwoodRitXitLayout,
+    KenwoodSplitCommand,
 };
+use crate::hal::Mode;
 use crate::hal_types::{
     ControlId, MemoryChannel, MeterId, RepeaterSettings, RepeaterShift, ToneMode, ToneSettings,
 };
 use crate::models::{find_model, RadioModelProfile};
+
+const MODES: &[KenwoodModeSpec] = &[
+    KenwoodModeSpec {
+        code: '1',
+        mode: Mode::Lsb,
+        preferred: true,
+    },
+    KenwoodModeSpec {
+        code: '2',
+        mode: Mode::Usb,
+        preferred: true,
+    },
+    KenwoodModeSpec {
+        code: '2',
+        mode: Mode::Data,
+        preferred: false,
+    },
+    KenwoodModeSpec {
+        code: '3',
+        mode: Mode::Cw,
+        preferred: true,
+    },
+    KenwoodModeSpec {
+        code: '4',
+        mode: Mode::Fm,
+        preferred: true,
+    },
+    KenwoodModeSpec {
+        code: '5',
+        mode: Mode::Am,
+        preferred: true,
+    },
+    KenwoodModeSpec {
+        code: '6',
+        mode: Mode::Rtty,
+        preferred: true,
+    },
+    KenwoodModeSpec {
+        code: '7',
+        mode: Mode::CwReverse,
+        preferred: true,
+    },
+    KenwoodModeSpec {
+        code: '9',
+        mode: Mode::RttyReverse,
+        preferred: true,
+    },
+];
+const BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
+const FREQUENCY_RANGES: &[(u64, u64)] = &[(30_000, 60_000_000)];
 
 pub(crate) const CONTROLS: &[KenwoodControlSpec] = &[
     KenwoodControlSpec {
@@ -166,7 +218,34 @@ fn encode_memory(channel: MemoryChannel, profile: &KenwoodCatProfile) -> Result<
     ))
 }
 
-pub use super::profile::TS590SG_PROFILE as CAT_PROFILE;
+pub const CAT_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
+    model: crate::models::KenwoodCatModel::Ts590Sg,
+    id_code: "023",
+    frequency_ranges: FREQUENCY_RANGES,
+    baud_rates: BAUD_RATES,
+    modes: MODES,
+    mode_command: KenwoodModeCommand::Md {
+        supports_data_flag: true,
+    },
+    split_command: KenwoodSplitCommand::ReceiverTransmitterVfo,
+    supports_vfo: true,
+    supports_split: true,
+    supports_if_status: true,
+    power_range_watts: Some((5, 100)),
+    meter_max: 30,
+    swr_meter_max: 30,
+    swr_rm_selector: '1',
+    controls: CONTROLS,
+    extra_meters: METERS,
+    rit_xit_layout: KenwoodRitXitLayout::IfStatus,
+    memory: Some(MEMORY),
+    ai_on_value: "2",
+    sm_payload_len: 5,
+    sm_value_start: 1,
+    swr_meter_requires_selection: false,
+};
+
+pub use CAT_PROFILE as TS590SG_PROFILE;
 
 pub fn profile() -> &'static RadioModelProfile {
     find_model("TS-590SG").expect("built-in TS-590SG profile")
