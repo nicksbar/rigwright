@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.21 — resilient IC-7300 scope streaming
+
+### Fixed
+- Start IC-7300 scope lifecycle from unsolicited USB CI-V waveform output;
+  use the USB scope-data selector `27 11`, which produces divisions on the
+  tested IC-7300 path where `27 20` did not.
+
 ## 0.1.20 — Elecraft component boundaries and profile-accurate catalog
 
 Issue #24: publish and maintain the support/evidence contract for consumers.

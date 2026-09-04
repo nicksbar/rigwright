@@ -1850,7 +1850,7 @@ impl IcomCiVRadio {
         data.first().copied().context("missing U8 control data")
     }
 
-    fn enable_spectrum_stream_blocking(&self, timeout: Duration) -> Result<Vec<u8>> {
+    fn start_spectrum_stream_blocking(&self) -> Result<()> {
         let model = self.selected_model()?;
         let scope = profile_for_model(model)
             .scope
@@ -1863,10 +1863,19 @@ impl IcomCiVRadio {
         }
         self.transact_scope_setting(scope.enable_command)?;
         self.transact_scope_setting(scope.stream_command)?;
-        // The IC-7300 manual distinguishes enabling scope output (27 20)
-        // from requesting waveform data (27 00). Request the first sweep
-        // explicitly; subsequent frames may then arrive continuously.
-        self.request_scope_waveform_bins_blocking_timeout(timeout)
+        Ok(())
+    }
+
+    fn enable_spectrum_stream_blocking(&self, timeout: Duration) -> Result<Vec<u8>> {
+        self.start_spectrum_stream_blocking()?;
+        // USB CI-V scope output is unsolicited once enabled. Some IC-7300
+        // firmware accepts 27 10/27 11 but NAKs an immediate 27 00 request;
+        // lifecycle start must therefore consume the native stream instead
+        // of requiring a request/response waveform exchange. The explicit
+        // request_scope_waveform_bins API remains available separately for
+        // radios/firmware that implement that form.
+        self.try_scope_waveform_bins_stream_blocking(timeout)?
+            .context("scope output enabled but no complete scope sweep arrived")
     }
 
     fn disable_spectrum_stream_blocking(&self) -> Result<()> {
@@ -1880,6 +1889,13 @@ impl IcomCiVRadio {
 
     pub async fn enable_spectrum_stream(&self, timeout: Duration) -> Result<Vec<u8>> {
         self.enable_spectrum_stream_blocking(timeout)
+    }
+
+    /// Enable native scope output without waiting for the first complete
+    /// sweep. Network services should use this form so their request loop can
+    /// continue forwarding audio and controls while scope frames arrive.
+    pub async fn start_spectrum_stream(&self) -> Result<()> {
+        self.start_spectrum_stream_blocking()
     }
 
     pub async fn disable_spectrum_stream(&self) -> Result<()> {
@@ -4197,12 +4213,12 @@ mod tests {
             .lock()
             .unwrap()
             .iter()
-            .any(|frame| frame.ends_with(&[0x27, 0x20, 0x01, 0xFD])));
+            .any(|frame| frame.ends_with(&[0x27, 0x11, 0x01, 0xFD])));
         assert!(writes
             .lock()
             .unwrap()
             .iter()
-            .any(|frame| frame.ends_with(&[0x27, 0x20, 0x00, 0xFD])));
+            .any(|frame| frame.ends_with(&[0x27, 0x11, 0x00, 0xFD])));
     }
 
     #[test]

@@ -353,8 +353,8 @@ mod tests {
             .scope
             .expect("IC-7300 scope profile");
         assert_eq!(ic7300.enable_command, &[0x27, 0x10, 0x01]);
-        assert_eq!(ic7300.stream_command, &[0x27, 0x20, 0x01]);
-        assert_eq!(ic7300.disable_stream_command, &[0x27, 0x20, 0x00]);
+        assert_eq!(ic7300.stream_command, &[0x27, 0x11, 0x01]);
+        assert_eq!(ic7300.disable_stream_command, &[0x27, 0x11, 0x00]);
 
         let ic7610 = profile_for_model(IcomCivModel::Ic7610)
             .main_sub

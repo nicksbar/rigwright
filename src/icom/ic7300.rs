@@ -41,10 +41,11 @@ const ATTENUATOR_VALUES: &[u8] = &[0, 20];
 /// CI-V scope command family used by the IC-7300 scope stream.
 const SCOPE: ScopeSpec = ScopeSpec {
     enable_command: &[0x27, 0x10, 0x01],
-    // The IC-7300 manual identifies 0x27 0x20 as "Scope wave data
-    // output".  0x27 0x11 is not the output-enable command for this model.
-    stream_command: &[0x27, 0x20, 0x01],
-    disable_stream_command: &[0x27, 0x20, 0x00],
+    // The IC-7300 USB CI-V interface uses 0x27 0x11 to enable unsolicited
+    // scope waveform output.  0x27 0x20 is accepted by some firmware but
+    // does not produce waveform divisions on the USB path.
+    stream_command: &[0x27, 0x11, 0x01],
+    disable_stream_command: &[0x27, 0x11, 0x00],
 };
 const METERS: &[MeterId] = &[
     MeterId::Signal,
