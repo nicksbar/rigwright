@@ -589,6 +589,21 @@ impl Radio for ElecraftRadio {
         self.profile().and_then(|profile| profile.control_max(id))
     }
 
+    fn supported_control_values(&self, id: ControlId) -> Option<&'static [u8]> {
+        self.profile()
+            .and_then(|profile| profile.supported_control_values(id))
+    }
+
+    fn supports_control_read(&self, id: ControlId) -> bool {
+        self.profile()
+            .is_some_and(|profile| profile.supports_control_read(id))
+    }
+
+    fn supports_control_write(&self, id: ControlId) -> bool {
+        self.profile()
+            .is_some_and(|profile| profile.supports_control_write(id))
+    }
+
     fn swr_sweep_setup(&self) -> Option<SwrSweepSetup> {
         self.profile().and_then(|profile| {
             (profile.model != ElecraftModel::K4 && profile.model != ElecraftModel::Kh1)

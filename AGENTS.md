@@ -15,6 +15,14 @@ agent changes:
   to execute it.
 - Every new model profile must add an architectural contract test covering its
   optional controls, meters, command widths, and unsupported surfaces.
+- Profile completeness is mandatory: record baud choices, preferred baud,
+  frequency/mode ranges, control read/write direction, maxima and discrete
+  legal values, meter selectors/ranges/widths/polling/presentation, and native
+  scope/waterfall metadata when implemented. Document explicit negative
+  capability for manual surfaces that are not implemented.
+- Never advertise an accessory waterfall such as Elecraft P3/PX3 as a
+  transceiver scope. Native `ScopeMetadata` requires model-owned commands,
+  stream framing, configuration handling, and tests.
 - Run `cargo fmt --all`, `cargo test --locked`, `cargo clippy --locked
   --all-targets --all-features -- -D warnings`, and `git diff --check` before
   declaring a driver change complete.

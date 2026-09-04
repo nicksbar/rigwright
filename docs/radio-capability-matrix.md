@@ -46,6 +46,22 @@ operating state and remove unnecessary private details before sharing.
 are not yet safe to expose generically because command selectors, payloads,
 units, or model behavior differ.
 
+### Profile completeness standard
+
+Every selectable model profile must declare the same dimensions, including
+explicit unsupported values: documented baud rates and preferred rate;
+frequency ranges and modes; control commands, read/write direction, maxima and
+discrete legal values; meter selectors, raw ranges, widths, polling and
+presentation; and native scope/waterfall metadata when implemented. If a
+manual documents a surface that is not implemented, the profile and its
+documentation must say so and identify any accessory-owned boundary.
+
+Drivers must delegate discovery and validation to these profile facts. Clients
+must use `supports_control_read()`, `supports_control_write()`,
+`supported_control_values()`, `control_max()`, `meter_metadata()`, and
+`meter_poll_spec()` rather than recreating vendor rules. Parser tests are
+software evidence; they do not constitute hardware validation.
+
 ## Issue #20 session execution
 
 | Area | Rigwright status | Client contract |
@@ -75,7 +91,7 @@ integration. No qsonaut-modems or qsonaut-third-party change is required.
 | Radio power read | `get_power` | —; CI-V power is write-only | H/P | — | H/P | Q/pending-state handling |
 | Raw protocol | `protocol_write_read` | H/P | H/P | H/P | H/P | Not a normal UI control |
 | Tuner start/status | `start_tuner`, `get_tuner_status` | H/P/V for profiled Icoms | H/P | H/P | H/P | Q: tuner and SWR sweep workflow |
-| Spectrum waveform | backend-specific scope API | H/P; model geometry differs | — | — | — | Q where native scope is enabled |
+| Spectrum waveform | backend-specific scope API | H/P; model geometry differs | — | — | — | — for transceivers; P3/PX3 are separate components |
 | I/Q stream | model/backend-specific | Shared I/Q sample block decoder only; IC-7610 documents USB I/Q output, but Rigwright does not yet own/open that transport | — | — | — | Not currently consumed |
 
 ### Universal HAL caveat

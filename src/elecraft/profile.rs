@@ -92,6 +92,37 @@ pub struct ElecraftProfile {
 }
 
 impl ElecraftProfile {
+    pub const fn preferred_baud_rate(self) -> u32 {
+        self.baud_rates[self.baud_rates.len() - 1]
+    }
+
+    pub fn supports_control_read(self, id: ControlId) -> bool {
+        self.supports_control(id) && self.model != ElecraftModel::Kh1
+    }
+
+    pub fn supports_control_write(self, id: ControlId) -> bool {
+        self.supports_control(id)
+    }
+
+    pub fn supported_control_values(self, id: ControlId) -> Option<&'static [u8]> {
+        const BINARY: &[u8] = &[0, 1];
+        const AGC: &[u8] = &[0, 1, 2, 3];
+        const K4_ATTENUATION: &[u8] = &[0, 3, 6, 9, 12, 15, 18, 21];
+        if !self.supports_control(id) {
+            return None;
+        }
+        match id {
+            ControlId::Preamp
+            | ControlId::Notch
+            | ControlId::ManualNotch
+            | ControlId::NoiseBlanker
+            | ControlId::Tuner => Some(BINARY),
+            ControlId::Agc => Some(AGC),
+            ControlId::Attenuator if self.model == ElecraftModel::K4 => Some(K4_ATTENUATION),
+            _ => None,
+        }
+    }
+
     pub fn supports_meter(self, id: MeterId) -> bool {
         match id {
             MeterId::Signal => true,
@@ -301,6 +332,20 @@ mod tests {
         assert_eq!(presentation.precision, 1);
         assert!((presentation.value - 99.9).abs() < f32::EPSILON);
         assert!(k4::PROFILE.meter_presentation(MeterId::Swr, 255).is_none());
+    }
+
+    #[test]
+    fn control_direction_values_and_preferred_baud_are_profile_owned() {
+        let kh1 = profile_for_model(ElecraftModel::Kh1);
+        assert_eq!(kh1.preferred_baud_rate(), 9_600);
+        assert!(!kh1.supports_control_read(ControlId::RfPower));
+        let k4 = profile_for_model(ElecraftModel::K4);
+        assert_eq!(k4.preferred_baud_rate(), 115_200);
+        assert!(k4.supports_control_write(ControlId::Vfo));
+        assert_eq!(
+            k4.supported_control_values(ControlId::Attenuator),
+            Some(&[0, 3, 6, 9, 12, 15, 18, 21][..])
+        );
     }
 
     #[test]

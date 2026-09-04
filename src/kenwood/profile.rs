@@ -94,6 +94,38 @@ pub struct KenwoodCatProfile {
 }
 
 impl KenwoodCatProfile {
+    pub const fn preferred_baud_rate(self) -> u32 {
+        self.baud_rates[self.baud_rates.len() - 1]
+    }
+
+    pub fn supports_control_read(self, id: ControlId) -> bool {
+        self.supports_control(id)
+    }
+
+    pub fn supports_control_write(self, id: ControlId) -> bool {
+        self.supports_control(id)
+    }
+
+    pub fn supported_control_values(self, id: ControlId) -> Option<&'static [u8]> {
+        const BINARY: &[u8] = &[0, 1];
+        const PREAMP_TS890: &[u8] = &[0, 1, 2];
+        const AGC: &[u8] = &[0, 1, 2, 3];
+        if !self.supports_control(id) {
+            return None;
+        }
+        match id {
+            ControlId::Preamp if self.model == KenwoodCatModel::Ts890S => Some(PREAMP_TS890),
+            ControlId::Preamp
+            | ControlId::NoiseBlanker
+            | ControlId::NoiseReduction
+            | ControlId::Notch
+            | ControlId::Rit
+            | ControlId::Xit => Some(BINARY),
+            ControlId::Agc => Some(AGC),
+            _ => None,
+        }
+    }
+
     pub fn swr_sweep_setup(self) -> Option<SwrSweepSetup> {
         self.power_range_watts.map(|(_, maximum)| SwrSweepSetup {
             carrier_mode: Mode::Rtty,
@@ -689,5 +721,17 @@ mod tests {
         assert!(TS890S_PROFILE.encode_mode(Mode::Data).is_ok());
         assert!(TS590SG_PROFILE.encode_mode(Mode::Wfm).is_err());
         assert!(TS590SG_PROFILE.validate_power(1).is_err());
+    }
+
+    #[test]
+    fn control_direction_values_and_preferred_baud_are_profile_owned() {
+        assert_eq!(TS890S_PROFILE.preferred_baud_rate(), 115_200);
+        assert_eq!(TS2000_PROFILE.preferred_baud_rate(), 57_600);
+        assert_eq!(
+            TS890S_PROFILE.supported_control_values(ControlId::Preamp),
+            Some(&[0, 1, 2][..])
+        );
+        assert!(TS590SG_PROFILE.supports_control_read(ControlId::Filter));
+        assert!(TS590SG_PROFILE.supports_control_write(ControlId::Filter));
     }
 }

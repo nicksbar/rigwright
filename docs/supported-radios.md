@@ -45,6 +45,13 @@ KH1 is separately profiled for fixed-baud, write-only frequency/mode control;
 its display-mediated status and FT8/CW keying commands are not ordinary
 `Radio` operations.
 
+The K4 reference also documents panadapter, waterfall, and Ethernet dB/bin
+streaming. Its streaming packet protocol is explicitly supplied separately,
+so Rigwright does not advertise K4 native scope or waterfall support yet. The
+stream framing, waveform assembly, configuration readback, and tests must be
+implemented before adding `ScopeMetadata`. P3/PX3 are separate waterfall
+accessories and must not be projected into a transceiver `Radio` profile.
+
 These documents establish command syntax and documented capabilities only.
 They do not constitute physical-radio or accessory validation. The proposed
 component boundary and implementation order are recorded in
@@ -147,7 +154,10 @@ implements profiled receiver controls, RIT/XIT, VFO selection, tuner, filters,
 and memory records, and routes interleaved Auto Information frames to the
 shared event router. PTT writes are verified on the two models with pollable
 `IF` status. All three remain framework-level until exercised against physical
-radios.
+radios. The profiles expose documented baud choices and preferred rates,
+control direction/legal values, meter selectors/raw ranges/widths, and polling
+guidance. None currently advertises a native Kenwood waterfall; that requires
+a model-specific stream decoder and manual-backed geometry.
 All normalized meters use the HAL's 0..255 meter-deflection scale. Yaesu CAT
 profiles expose signal, power, SWR, ALC, compression, current, and voltage
 through the documented `RM1` and `RM3`..`RM8` selectors; FTDX101D/MP also
