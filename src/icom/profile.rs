@@ -271,12 +271,26 @@ impl IcomCivProfile {
                                 * (high_ratio - low_ratio)
                     })
                     .unwrap_or(3.0);
-                Some(MeterPresentation { value, unit: ":1", precision: 2, upper_bound: Some(3.0) })
+                Some(MeterPresentation {
+                    value,
+                    unit: ":1",
+                    precision: 2,
+                    upper_bound: Some(3.0),
+                })
             }
             MeterId::Voltage => {
                 let value = f32::from(raw);
-                let value = if raw <= 13 { value * 10.0 / 13.0 } else { 10.0 + (value - 13.0) * 6.0 / (241.0 - 13.0) };
-                Some(MeterPresentation { value: value.clamp(0.0, 16.0), unit: "V", precision: 1, upper_bound: Some(16.0) })
+                let value = if raw <= 13 {
+                    value * 10.0 / 13.0
+                } else {
+                    10.0 + (value - 13.0) * 6.0 / (241.0 - 13.0)
+                };
+                Some(MeterPresentation {
+                    value: value.clamp(0.0, 16.0),
+                    unit: "V",
+                    precision: 1,
+                    upper_bound: Some(16.0),
+                })
             }
             _ => None,
         }

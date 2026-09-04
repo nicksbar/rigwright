@@ -17,9 +17,8 @@ use super::profile::{meter_command_prefix, profile_for_model, MemoryLayout};
 use crate::events::{RadioEvent, RadioEventRouter, RadioEventSubscription};
 pub use crate::hal_types::{BaseMode, Mode, OperatingMode};
 use crate::hal_types::{
-    ControlId, ControlValue, MemoryChannel, MeterId, MeterPresentation, Mode,
-    RepeaterSettings, RepeaterShift, ScopeConfiguration, SwrSweepSetup, ToneMode, ToneSettings,
-    TunerStatus,
+    ControlId, ControlValue, MemoryChannel, MeterId, MeterPresentation, RepeaterSettings,
+    RepeaterShift, ScopeConfiguration, SwrSweepSetup, ToneMode, ToneSettings, TunerStatus,
 };
 
 const CI_V_FRAME_START: u8 = 0xFE;

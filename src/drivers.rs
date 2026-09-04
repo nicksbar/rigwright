@@ -595,7 +595,11 @@ impl Radio for ConfiguredRadio {
             _ => None,
         }
     }
-    fn meter_presentation(&self, id: crate::MeterId, normalized: u8) -> Option<crate::MeterPresentation> {
+    fn meter_presentation(
+        &self,
+        id: crate::MeterId,
+        normalized: u8,
+    ) -> Option<crate::MeterPresentation> {
         match self {
             Self::Icom(r) => r.meter_presentation(id, normalized),
             _ => None,
