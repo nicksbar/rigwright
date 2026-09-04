@@ -30,11 +30,37 @@ pub enum KenwoodRitXitLayout {
     RfAndFunctionState,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KenwoodMemorySurface {
-    None,
-    Ts590,
-    Ts890,
+#[derive(Clone, Copy)]
+pub struct KenwoodMemorySpec {
+    pub channel_max: u16,
+    pub select_vfo: u8,
+    pub select_command: &'static str,
+    pub read_command: &'static str,
+    pub write_command: &'static str,
+    pub read_parameters: fn(u16) -> String,
+    pub decode: fn(&str, &KenwoodCatProfile) -> Result<crate::MemoryChannel>,
+    pub encode: fn(crate::MemoryChannel, &KenwoodCatProfile) -> Result<String>,
+}
+
+impl std::fmt::Debug for KenwoodMemorySpec {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("KenwoodMemorySpec")
+            .field("channel_max", &self.channel_max)
+            .field("select_vfo", &self.select_vfo)
+            .field("select_command", &self.select_command)
+            .field("read_command", &self.read_command)
+            .field("write_command", &self.write_command)
+            .finish_non_exhaustive()
+    }
+}
+
+fn ts590_read_parameters(channel: u16) -> String {
+    format!("0{channel:03}")
+}
+
+fn ts890_read_parameters(channel: u16) -> String {
+    format!("{channel:03}")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,7 +87,7 @@ pub enum KenwoodSplitCommand {
     Tb,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct KenwoodCatProfile {
     pub model: KenwoodCatModel,
     /// Three-digit payload returned by `ID;`.
@@ -86,7 +112,7 @@ pub struct KenwoodCatProfile {
     pub controls: &'static [KenwoodControlSpec],
     pub extra_meters: &'static [KenwoodMeterSpec],
     pub rit_xit_layout: KenwoodRitXitLayout,
-    pub memory_surface: KenwoodMemorySurface,
+    pub memory: Option<KenwoodMemorySpec>,
     pub ai_on_value: &'static str,
     pub sm_payload_len: usize,
     pub sm_value_start: usize,
@@ -554,7 +580,16 @@ pub const TS590SG_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     controls: crate::kenwood::ts590sg::CONTROLS,
     extra_meters: crate::kenwood::ts590sg::METERS,
     rit_xit_layout: KenwoodRitXitLayout::IfStatus,
-    memory_surface: KenwoodMemorySurface::Ts590,
+    memory: Some(KenwoodMemorySpec {
+        channel_max: 119,
+        select_vfo: 2,
+        select_command: "MC",
+        read_command: "MR",
+        write_command: "MW",
+        read_parameters: ts590_read_parameters,
+        decode: crate::kenwood::cat_radio::decode_ts590_memory,
+        encode: crate::kenwood::cat_radio::encode_ts590_memory,
+    }),
     ai_on_value: "2",
     sm_payload_len: 5,
     sm_value_start: 1,
@@ -579,7 +614,16 @@ pub const TS890S_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     controls: crate::kenwood::ts890s::CONTROLS,
     extra_meters: crate::kenwood::ts890s::METERS,
     rit_xit_layout: KenwoodRitXitLayout::RfAndFunctionState,
-    memory_surface: KenwoodMemorySurface::Ts890,
+    memory: Some(KenwoodMemorySpec {
+        channel_max: 119,
+        select_vfo: 3,
+        select_command: "MN",
+        read_command: "MA0",
+        write_command: "MA0",
+        read_parameters: ts890_read_parameters,
+        decode: crate::kenwood::cat_radio::decode_ts890_memory,
+        encode: crate::kenwood::cat_radio::encode_ts890_memory,
+    }),
     ai_on_value: "2",
     sm_payload_len: 4,
     sm_value_start: 0,
@@ -606,7 +650,7 @@ pub const TS2000_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     controls: crate::kenwood::ts2000::CONTROLS,
     extra_meters: &[],
     rit_xit_layout: KenwoodRitXitLayout::IfStatus,
-    memory_surface: KenwoodMemorySurface::None,
+    memory: None,
     ai_on_value: "1",
     sm_payload_len: 5,
     sm_value_start: 1,
@@ -733,5 +777,18 @@ mod tests {
         );
         assert!(TS590SG_PROFILE.supports_control_read(ControlId::Filter));
         assert!(TS590SG_PROFILE.supports_control_write(ControlId::Filter));
+    }
+
+    #[test]
+    fn memory_command_surfaces_are_profile_owned() {
+        let ts590 = TS590SG_PROFILE.memory.unwrap();
+        assert_eq!(ts590.channel_max, 119);
+        assert_eq!(ts590.select_command, "MC");
+        assert_eq!((ts590.read_parameters)(7), "0007");
+
+        let ts890 = TS890S_PROFILE.memory.unwrap();
+        assert_eq!(ts890.select_command, "MN");
+        assert_eq!((ts890.read_parameters)(7), "007");
+        assert!(TS2000_PROFILE.memory.is_none());
     }
 }

@@ -26,8 +26,8 @@ use crate::{
 };
 
 use super::profile::{
-    profile_for_model, KenwoodCatProfile, KenwoodMemorySurface, KenwoodModeCommand,
-    KenwoodRitXitLayout, KenwoodSplitCommand,
+    profile_for_model, KenwoodCatProfile, KenwoodModeCommand, KenwoodRitXitLayout,
+    KenwoodSplitCommand,
 };
 
 const RESPONSE_TIMEOUT: Duration = Duration::from_millis(1_200);
@@ -579,117 +579,43 @@ impl KenwoodCatRadio {
     }
 
     pub fn select_memory_channel(&self, channel: u16) -> Result<()> {
+        let memory = self
+            .selected_profile()?
+            .memory
+            .context("this Kenwood profile does not expose memory selection")?;
         anyhow::ensure!(
-            self.selected_profile()?.memory_surface != KenwoodMemorySurface::None && channel <= 119,
-            "this Kenwood profile does not expose channels 0..119"
+            channel <= memory.channel_max,
+            "memory channel is outside this Kenwood profile's documented range"
         );
-        match self.selected_profile()?.memory_surface {
-            KenwoodMemorySurface::Ts890 => {
-                self.send_set("FR", "3")?;
-                self.send_set("MN", &format!("{channel:03}"))
-            }
-            KenwoodMemorySurface::Ts590 => {
-                self.send_set("FR", "2")?;
-                self.send_set("MC", &format!("{channel:03}"))
-            }
-            KenwoodMemorySurface::None => unreachable!(),
-        }
+        self.send_set("FR", &memory.select_vfo.to_string())?;
+        self.send_set(memory.select_command, &format!("{channel:03}"))
     }
 
     pub fn read_memory_channel(&self, channel: u16) -> Result<MemoryChannel> {
+        let profile = self.selected_profile()?;
+        let memory = profile
+            .memory
+            .context("this Kenwood profile does not expose memory records")?;
         anyhow::ensure!(
-            self.selected_profile()?.memory_surface != KenwoodMemorySurface::None && channel <= 119,
-            "this Kenwood profile does not expose memory records"
+            channel <= memory.channel_max,
+            "memory channel is outside this Kenwood profile's documented range"
         );
-        match self.selected_profile()?.memory_surface {
-            KenwoodMemorySurface::Ts890 => {
-                let response = self.query("MA0", Some(&format!("{channel:03}")), None)?;
-                decode_ts890_memory(parse_payload(&response, "MA0")?, self.selected_profile()?)
-            }
-            KenwoodMemorySurface::Ts590 => {
-                let response = self.query("MR", Some(&format!("0{channel:03}")), None)?;
-                decode_ts590_memory(parse_payload(&response, "MR")?, self.selected_profile()?)
-            }
-            KenwoodMemorySurface::None => unreachable!(),
-        }
+        let parameters = (memory.read_parameters)(channel);
+        let response = self.query(memory.read_command, Some(&parameters), None)?;
+        (memory.decode)(parse_payload(&response, memory.read_command)?, profile)
     }
 
     pub fn write_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
+        let profile = self.selected_profile()?;
+        let memory = profile
+            .memory
+            .context("this Kenwood profile does not expose memory writes")?;
         anyhow::ensure!(
-            self.selected_profile()?.memory_surface != KenwoodMemorySurface::None
-                && channel.channel <= 119,
-            "this Kenwood profile does not expose memory writes"
+            channel.channel <= memory.channel_max,
+            "memory channel is outside this Kenwood profile's documented range"
         );
-        anyhow::ensure!(
-            channel.frequency_hz <= 99_999_999_999,
-            "Kenwood memory frequency does not fit the documented 11-digit field"
-        );
-        if self.selected_profile()?.memory_surface == KenwoodMemorySurface::Ts590 {
-            return self.write_ts590_memory_channel(channel);
-        }
-        anyhow::ensure!(
-            matches!(channel.repeater.shift, RepeaterShift::Simplex),
-            "Kenwood MA0 memory writes require simplex; split memory needs a separate TX frequency"
-        );
-        let mode = self.selected_profile()?.encode_mode(channel.mode)?;
-        let tone_type = match channel.repeater.tone.mode {
-            ToneMode::Off => '0',
-            ToneMode::Encode => '1',
-            ToneMode::EncodeDecode => '2',
-            ToneMode::Dtcs => anyhow::bail!("DTCS is not supported by this Kenwood profile"),
-        };
-        anyhow::ensure!(
-            channel.repeater.tone.index <= 41,
-            "Kenwood CTCSS index must be 0..=41"
-        );
-        let tx_frequency = channel
-            .transmit_frequency_hz
-            .unwrap_or(channel.frequency_hz);
-        anyhow::ensure!(
-            tx_frequency <= 99_999_999_999,
-            "Kenwood transmit memory frequency does not fit the documented 11-digit field"
-        );
-        let name = channel.name.unwrap_or_default();
-        anyhow::ensure!(
-            name.is_ascii() && name.len() <= 10,
-            "Kenwood channel name must be ASCII and at most 10 characters"
-        );
-        let params = format!(
-            "{:03}{:011}{mode}0{tone_type}00{:02}{:011}{mode}000{name}",
-            channel.channel, channel.frequency_hz, channel.repeater.tone.index, tx_frequency,
-        );
-        self.send_set("MA0", &params)
-    }
-
-    fn write_ts590_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
-        let mode = self.selected_profile()?.encode_mode(channel.mode)?;
-        anyhow::ensure!(
-            channel.repeater.tone.index <= 41,
-            "Kenwood tone index must be 0..=41"
-        );
-        let split = channel.transmit_frequency_hz.is_some();
-        let frequency = channel
-            .transmit_frequency_hz
-            .unwrap_or(channel.frequency_hz);
-        let tone = match channel.repeater.tone.mode {
-            ToneMode::Off => '0',
-            ToneMode::Encode => '1',
-            ToneMode::EncodeDecode => '2',
-            ToneMode::Dtcs => bail!("DTCS is not supported by the TS-590SG memory format"),
-        };
-        let name = channel.name.unwrap_or_default();
-        anyhow::ensure!(
-            name.is_ascii() && name.len() <= 8,
-            "TS-590SG memory name must be ASCII and at most 8 characters"
-        );
-        let params = format!(
-            "{}{channel_number:03}{frequency:011}{mode}0{tone}00{tone_index:02}00000000000000000{name}",
-            if split { '1' } else { '0' },
-            channel_number = channel.channel,
-            tone_index = channel.repeater.tone.index,
-        );
-        self.send_set("MW", &params)?;
-        Ok(())
+        let parameters = (memory.encode)(channel, profile)?;
+        self.send_set(memory.write_command, &parameters)
     }
 
     fn selected_profile(&self) -> Result<&'static KenwoodCatProfile> {
@@ -1278,7 +1204,7 @@ impl Radio for KenwoodCatRadio {
 
     fn supports_memory_channels(&self) -> bool {
         self.profile()
-            .is_some_and(|profile| profile.memory_surface != KenwoodMemorySurface::None)
+            .is_some_and(|profile| profile.memory.is_some())
     }
 
     fn supports_repeater_settings(&self) -> bool {
@@ -1338,7 +1264,10 @@ fn parse_bool_payload(frame: &[u8], command: &str) -> Result<bool> {
     }
 }
 
-fn decode_ts890_memory(payload: &str, profile: &KenwoodCatProfile) -> Result<MemoryChannel> {
+pub(crate) fn decode_ts890_memory(
+    payload: &str,
+    profile: &KenwoodCatProfile,
+) -> Result<MemoryChannel> {
     anyhow::ensure!(payload.len() >= 36, "TS-890S MA0 response is too short");
     let channel = parse_field::<u16>(&payload[0..3], "memory channel")?;
     let frequency_hz = parse_field::<u64>(&payload[3..14], "memory frequency")?;
@@ -1375,7 +1304,51 @@ fn decode_ts890_memory(payload: &str, profile: &KenwoodCatProfile) -> Result<Mem
     })
 }
 
-fn decode_ts590_memory(payload: &str, profile: &KenwoodCatProfile) -> Result<MemoryChannel> {
+pub(crate) fn encode_ts890_memory(
+    channel: MemoryChannel,
+    profile: &KenwoodCatProfile,
+) -> Result<String> {
+    anyhow::ensure!(
+        channel.frequency_hz <= 99_999_999_999,
+        "Kenwood memory frequency does not fit the documented 11-digit field"
+    );
+    anyhow::ensure!(
+        matches!(channel.repeater.shift, RepeaterShift::Simplex),
+        "Kenwood MA0 memory writes require simplex; split memory needs a separate TX frequency"
+    );
+    let mode = profile.encode_mode(channel.mode)?;
+    let tone_type = match channel.repeater.tone.mode {
+        ToneMode::Off => '0',
+        ToneMode::Encode => '1',
+        ToneMode::EncodeDecode => '2',
+        ToneMode::Dtcs => anyhow::bail!("DTCS is not supported by this Kenwood profile"),
+    };
+    anyhow::ensure!(
+        channel.repeater.tone.index <= 41,
+        "Kenwood CTCSS index must be 0..=41"
+    );
+    let tx_frequency = channel
+        .transmit_frequency_hz
+        .unwrap_or(channel.frequency_hz);
+    anyhow::ensure!(
+        tx_frequency <= 99_999_999_999,
+        "Kenwood transmit memory frequency does not fit the documented 11-digit field"
+    );
+    let name = channel.name.unwrap_or_default();
+    anyhow::ensure!(
+        name.is_ascii() && name.len() <= 10,
+        "Kenwood channel name must be ASCII and at most 10 characters"
+    );
+    Ok(format!(
+        "{:03}{:011}{mode}0{tone_type}00{:02}{:011}{mode}000{name}",
+        channel.channel, channel.frequency_hz, channel.repeater.tone.index, tx_frequency,
+    ))
+}
+
+pub(crate) fn decode_ts590_memory(
+    payload: &str,
+    profile: &KenwoodCatProfile,
+) -> Result<MemoryChannel> {
     // MR payload: P1, three-digit channel, 11-digit frequency, mode/data,
     // tone fields, filter state, and an optional eight-character name.
     anyhow::ensure!(payload.len() >= 39, "TS-590SG MR response is too short");
@@ -1409,6 +1382,42 @@ fn decode_ts590_memory(payload: &str, profile: &KenwoodCatProfile) -> Result<Mem
             },
         },
     })
+}
+
+pub(crate) fn encode_ts590_memory(
+    channel: MemoryChannel,
+    profile: &KenwoodCatProfile,
+) -> Result<String> {
+    let mode = profile.encode_mode(channel.mode)?;
+    anyhow::ensure!(
+        channel.repeater.tone.index <= 41,
+        "Kenwood tone index must be 0..=41"
+    );
+    let split = channel.transmit_frequency_hz.is_some();
+    let frequency = channel
+        .transmit_frequency_hz
+        .unwrap_or(channel.frequency_hz);
+    anyhow::ensure!(
+        frequency <= 99_999_999_999,
+        "Kenwood memory frequency does not fit the documented 11-digit field"
+    );
+    let tone = match channel.repeater.tone.mode {
+        ToneMode::Off => '0',
+        ToneMode::Encode => '1',
+        ToneMode::EncodeDecode => '2',
+        ToneMode::Dtcs => bail!("DTCS is not supported by the TS-590SG memory format"),
+    };
+    let name = channel.name.unwrap_or_default();
+    anyhow::ensure!(
+        name.is_ascii() && name.len() <= 8,
+        "TS-590SG memory name must be ASCII and at most 8 characters"
+    );
+    Ok(format!(
+        "{}{channel_number:03}{frequency:011}{mode}0{tone}00{tone_index:02}00000000000000000{name}",
+        if split { '1' } else { '0' },
+        channel_number = channel.channel,
+        tone_index = channel.repeater.tone.index,
+    ))
 }
 
 fn parse_field<T>(value: &str, label: &str) -> Result<T>
