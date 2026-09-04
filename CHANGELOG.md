@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.22 — model-aware startup probing
+
+### Fixed
+- Keep configured-radio startup probing inside the driver boundary, using
+  model verification for modern Yaesu CAT radios whose optional VFO-selector
+  query may be rejected even when CAT is healthy.
+
 ## 0.1.21 — resilient IC-7300 scope streaming
 
 ### Fixed

@@ -260,6 +260,24 @@ pub enum ConfiguredRadio {
 }
 
 impl ConfiguredRadio {
+    /// Perform the least-invasive model-aware connectivity check for the
+    /// configured driver. Vendor-specific probe details stay behind this
+    /// boundary so applications do not need to know which CAT command is
+    /// safe to issue first for a particular radio family.
+    pub async fn probe(&self) -> Result<()> {
+        match self {
+            Self::Yaesu(radio) => radio.verify_model(),
+            Self::Kenwood(radio) => radio.verify_model(),
+            Self::Icom(radio) => radio.get_frequency_hz().await.map(|_| ()),
+            Self::Ascii(radio) => radio.get_frequency_hz().await.map(|_| ()),
+            Self::DxLab(radio) => radio.get_frequency_hz().await.map(|_| ()),
+            Self::LegacyYaesu(radio) => radio.get_frequency_hz().await.map(|_| ()),
+            Self::Rigctld(radio) => radio.get_frequency_hz().await.map(|_| ()),
+            Self::Null(radio) => radio.get_frequency_hz().await.map(|_| ()),
+            Self::Elecraft(radio) => radio.get_frequency_hz().await.map(|_| ()),
+        }
+    }
+
     pub fn as_icom(&self) -> Option<&IcomCiVRadio> {
         match self {
             Self::Icom(radio) => Some(radio),
