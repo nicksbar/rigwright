@@ -17,8 +17,8 @@ use super::profile::{meter_command_prefix, profile_for_model, MemoryLayout};
 use crate::events::{RadioEvent, RadioEventRouter, RadioEventSubscription};
 pub use crate::hal_types::{BaseMode, Mode, OperatingMode};
 use crate::hal_types::{
-    ControlId, ControlValue, MemoryChannel, MeterId, RepeaterSettings, RepeaterShift, ToneMode,
-    ToneSettings, TunerStatus,
+    ControlId, ControlValue, MemoryChannel, MeterId, RepeaterSettings, RepeaterShift,
+    ScopeConfiguration, ToneMode, ToneSettings, TunerStatus,
 };
 
 const CI_V_FRAME_START: u8 = 0xFE;
@@ -237,20 +237,6 @@ pub enum IcomVfo {
 pub enum IcomReceiver {
     Main,
     Sub,
-}
-
-/// Common scope controls shared by the currently profiled Icom CI-V scope
-/// transports. `None` leaves a setting unchanged.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ScopeConfiguration {
-    pub span_hz: Option<u64>,
-    pub fixed_edges_hz: Option<(u64, u64)>,
-    pub fixed_edge_number: Option<u8>,
-    pub hold: Option<bool>,
-    pub reference_level_tenths_db: Option<i16>,
-    pub sweep_speed: Option<u8>,
-    pub center_mode: Option<bool>,
-    pub vbw_wide: Option<bool>,
 }
 
 pub fn enumerate_serial_ports() -> Result<Vec<String>> {
@@ -2128,6 +2114,14 @@ impl Radio for IcomCiVRadio {
 
     async fn set_power(&self, enabled: bool) -> Result<()> {
         self.set_power_blocking(enabled)
+    }
+
+    fn supports_scope(&self) -> bool {
+        self.supports_scope()
+    }
+
+    async fn set_scope_configuration(&self, config: ScopeConfiguration) -> Result<()> {
+        IcomCiVRadio::set_scope_configuration(self, config).await
     }
 
     async fn protocol_write_read(&self, request: &[u8]) -> Result<Vec<u8>> {

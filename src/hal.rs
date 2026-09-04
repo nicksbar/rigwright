@@ -3,7 +3,7 @@
 pub use crate::events::RadioEventRouter;
 pub use crate::hal_types::{
     BaseMode, ControlId, ControlValue, CoreState, DtmfSequence, MemoryChannel, MeterId, Mode,
-    OperatingMode, RepeaterSettings, RepeaterShift, ToneSettings, TunerStatus,
+    OperatingMode, RepeaterSettings, RepeaterShift, ScopeConfiguration, ToneSettings, TunerStatus,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -121,6 +121,12 @@ pub trait Radio: Send + Sync {
     }
     async fn set_power(&self, _enabled: bool) -> Result<()> {
         anyhow::bail!("setting radio power state is not supported by this radio")
+    }
+    fn supports_scope(&self) -> bool {
+        false
+    }
+    async fn set_scope_configuration(&self, _config: ScopeConfiguration) -> Result<()> {
+        anyhow::bail!("native scope configuration is not supported by this radio")
     }
     async fn protocol_write_read(&self, _request: &[u8]) -> Result<Vec<u8>> {
         Ok(Vec::new())

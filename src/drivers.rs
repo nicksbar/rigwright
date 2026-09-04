@@ -440,6 +440,18 @@ impl Radio for ConfiguredRadio {
             Self::Elecraft(r) => r.set_power(enabled).await,
         }
     }
+    fn supports_scope(&self) -> bool {
+        match self {
+            Self::Icom(r) => r.supports_scope(),
+            _ => false,
+        }
+    }
+    async fn set_scope_configuration(&self, config: crate::ScopeConfiguration) -> Result<()> {
+        match self {
+            Self::Icom(r) => r.set_scope_configuration(config).await,
+            _ => bail!("native scope configuration is not available for this driver"),
+        }
+    }
     async fn protocol_write_read(&self, request: &[u8]) -> Result<Vec<u8>> {
         match self {
             Self::Icom(r) => r.protocol_write_read(request).await,

@@ -46,6 +46,20 @@ pub struct OperatingMode {
     pub filter: Option<u8>,
 }
 
+/// Protocol-neutral native scope configuration. `None` leaves a setting
+/// unchanged; drivers validate supported values against their model profile.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScopeConfiguration {
+    pub span_hz: Option<u64>,
+    pub fixed_edges_hz: Option<(u64, u64)>,
+    pub fixed_edge_number: Option<u8>,
+    pub hold: Option<bool>,
+    pub reference_level_tenths_db: Option<i16>,
+    pub sweep_speed: Option<u8>,
+    pub center_mode: Option<bool>,
+    pub vbw_wide: Option<bool>,
+}
+
 impl OperatingMode {
     pub fn label(self) -> String {
         let base = match self.base {
