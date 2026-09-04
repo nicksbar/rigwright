@@ -103,6 +103,9 @@ pub struct KenwoodCatProfile {
     pub swr_rm_selector: char,
     pub controls: &'static [KenwoodControlSpec],
     pub extra_meters: &'static [KenwoodMeterSpec],
+    pub supports_signal_meter: bool,
+    pub supports_power_meter: bool,
+    pub supports_swr_meter: bool,
     pub rit_xit_layout: KenwoodRitXitLayout,
     pub memory: Option<KenwoodMemorySpec>,
     pub ai_on_value: &'static str,
@@ -211,7 +214,12 @@ impl KenwoodCatProfile {
     }
 
     pub fn supports_meter(self, id: MeterId) -> bool {
-        matches!(id, MeterId::Signal | MeterId::Power | MeterId::Swr) || self.meter(id).is_some()
+        match id {
+            MeterId::Signal => self.supports_signal_meter,
+            MeterId::Power => self.supports_power_meter,
+            MeterId::Swr => self.supports_swr_meter,
+            _ => self.meter(id).is_some(),
+        }
     }
 
     pub fn meter_poll_spec(self, id: MeterId) -> Option<MeterPollSpec> {
@@ -525,6 +533,7 @@ const NO_EXTRA_METERS: &[KenwoodMeterSpec] = &[];
 */
 pub fn profile_for_model(model: KenwoodCatModel) -> &'static KenwoodCatProfile {
     match model {
+        KenwoodCatModel::Generic => &crate::kenwood::generic::CAT_PROFILE,
         KenwoodCatModel::Ts590Sg => &crate::kenwood::ts590sg::CAT_PROFILE,
         KenwoodCatModel::Ts890S => &crate::kenwood::ts890s::CAT_PROFILE,
         KenwoodCatModel::Ts2000 => &crate::kenwood::ts2000::CAT_PROFILE,

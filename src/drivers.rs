@@ -997,8 +997,13 @@ mod tests {
         assert!(!elecraft_k3.supports_memory_channels());
 
         let generic = open_model(GENERIC_KENWOOD_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
-        assert!(!generic.supports_control(crate::ControlId::RfPower));
-        assert!(!generic.supports_meter(crate::MeterId::Signal));
+        assert!(generic.supports_control(crate::ControlId::RfPower));
+        assert!(generic.supports_meter(crate::MeterId::Signal));
+        assert!(generic.supports_meter(crate::MeterId::Power));
+        assert!(!generic.supports_meter(crate::MeterId::Swr));
+        assert!(!generic.supports_control(crate::ControlId::AfGain));
+        assert!(!generic.supports_repeater_settings());
+        assert!(!generic.supports_memory_channels());
 
         let generic_icom = open_model(GENERIC_ICOM_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
         assert!(!generic_icom.supports_control(crate::ControlId::IpPlus));

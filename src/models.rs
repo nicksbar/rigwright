@@ -408,6 +408,7 @@ pub enum YaesuLegacyModel {
 /// Semicolon-terminated Kenwood PC-control radios.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KenwoodCatModel {
+    Generic,
     Ts590Sg,
     Ts890S,
     Ts2000,
@@ -495,6 +496,7 @@ impl YaesuLegacyModel {
 impl KenwoodCatModel {
     pub fn model_name(self) -> &'static str {
         match self {
+            Self::Generic => GENERIC_KENWOOD_MODEL,
             Self::Ts590Sg => "TS-590SG",
             Self::Ts890S => "TS-890S",
             Self::Ts2000 => "TS-2000",
@@ -503,6 +505,7 @@ impl KenwoodCatModel {
 
     pub fn from_model_name(model: &str) -> Option<Self> {
         match model.to_ascii_uppercase().as_str() {
+            "PC CONTROL (GENERIC)" | "KENWOOD (GENERIC)" => Some(Self::Generic),
             "TS-590SG" | "TS590SG" => Some(Self::Ts590Sg),
             "TS-890S" | "TS890S" => Some(Self::Ts890S),
             "TS-2000" | "TS2000" | "TS-2000X" | "TS2000X" | "TS-B2000" | "TSB2000" => {

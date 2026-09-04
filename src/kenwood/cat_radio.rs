@@ -209,7 +209,11 @@ impl KenwoodCatRadio {
     }
 
     pub fn profile(&self) -> Option<&'static KenwoodCatProfile> {
-        self.model.map(profile_for_model)
+        Some(
+            self.model
+                .map(profile_for_model)
+                .unwrap_or(&crate::kenwood::generic::CAT_PROFILE),
+        )
     }
 
     pub fn close(&self) {
@@ -225,6 +229,13 @@ impl KenwoodCatRadio {
         let profile = self.selected_profile()?;
         let response = self.query("ID", None, Some(3))?;
         let id = parse_payload(&response, "ID")?;
+        if self.model.is_none() || self.model == Some(KenwoodCatModel::Generic) {
+            anyhow::ensure!(
+                id.len() == 3 && id.chars().all(|character| character.is_ascii_digit()),
+                "Kenwood generic ID response is not a three-digit model identifier: {id}"
+            );
+            return Ok(());
+        }
         if id != profile.id_code {
             bail!(
                 "Kenwood radio identified as {id}, expected {} ({})",
@@ -1208,25 +1219,21 @@ impl Radio for KenwoodCatRadio {
     }
 
     fn supports_repeater_settings(&self) -> bool {
-        self.model().is_some()
+        self.profile()
+            .is_some_and(|profile| profile.model != KenwoodCatModel::Generic)
     }
 
     fn supports_control(&self, id: ControlId) -> bool {
-        self.profile().is_some_and(|profile| {
-            profile.supports_control(id)
-                || matches!(
-                    id,
-                    ControlId::AfGain | ControlId::RfGain | ControlId::Squelch
-                )
-        })
+        self.profile()
+            .is_some_and(|profile| profile.supports_control(id))
     }
 
     fn capabilities(&self) -> RadioCapabilities {
         RadioCapabilities {
             can_get_frequency: true,
             can_set_frequency: true,
-            can_get_mode: self.model.is_some(),
-            can_set_mode: self.model.is_some(),
+            can_get_mode: true,
+            can_set_mode: true,
             can_get_ptt: self
                 .profile()
                 .is_some_and(|profile| profile.supports_if_status),
