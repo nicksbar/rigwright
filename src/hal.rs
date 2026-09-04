@@ -212,6 +212,11 @@ pub trait Radio: Send + Sync {
     fn supports_memory_channels(&self) -> bool {
         false
     }
+    /// Whether the backend can select a memory channel, independent of
+    /// whether it can losslessly read and write a generic memory record.
+    fn supports_memory_selection(&self) -> bool {
+        self.supports_memory_channels()
+    }
     fn supports_send_dtmf(&self) -> bool {
         false
     }
@@ -460,6 +465,7 @@ mod tests {
         );
         assert!(!radio.supports_repeater_settings());
         assert!(!radio.supports_memory_channels());
+        assert!(!radio.supports_memory_selection());
         assert!(!radio.supports_send_dtmf());
         assert!(
             futures::executor::block_on(radio.get_meter(MeterId::Signal))

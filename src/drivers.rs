@@ -687,6 +687,16 @@ impl Radio for ConfiguredRadio {
             _ => false,
         }
     }
+    fn supports_memory_selection(&self) -> bool {
+        match self {
+            Self::Icom(r) => r.supports_memory_selection(),
+            Self::Yaesu(r) => r.supports_memory_selection(),
+            Self::Kenwood(r) => r.supports_memory_selection(),
+            Self::LegacyYaesu(r) => r.supports_memory_selection(),
+            Self::Elecraft(r) => r.supports_memory_selection(),
+            _ => false,
+        }
+    }
     fn supports_control(&self, id: crate::ControlId) -> bool {
         match self {
             Self::Icom(r) => r.supports_control(id),
@@ -975,11 +985,16 @@ mod tests {
         let elecraft = open_model("K4", "/dev/null", 38_400, 0xE0).unwrap();
         assert!(elecraft.supports_repeater_settings());
         assert!(!elecraft.supports_memory_channels());
+        assert!(!elecraft.supports_memory_selection());
         assert!(elecraft.capabilities().can_raw_protocol);
         assert!(elecraft
             .supported_control_values(crate::ControlId::Attenuator)
             .is_some());
         assert!(elecraft.meter_metadata(crate::MeterId::Signal).is_some());
+
+        let elecraft_k3 = open_model("K3", "/dev/null", 38_400, 0xE0).unwrap();
+        assert!(elecraft_k3.supports_memory_selection());
+        assert!(!elecraft_k3.supports_memory_channels());
 
         let generic = open_model(GENERIC_KENWOOD_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
         assert!(!generic.supports_control(crate::ControlId::RfPower));

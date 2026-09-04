@@ -169,7 +169,7 @@ physical hardware.
 | Tuning step / VFO movement | `ControlId::TuningStep`, `move_vfo` | H/P for K4 via `VT$`; K2/K4 current-step `UP`/`DN` and K3-family indexed `UP`/`DN` movement implemented |
 | Internal tuner mode/start | `ControlId::Tuner`, `start_tuner` | H/P for K4 via `AT`/`TU3`; other models remain profile-gated |
 | Repeater shift/offset | `RepeaterSettings` | H/P for K4 via `RP`; tone fields remain unsupported |
-| Memory/channel selection | `select_memory_channel` | H/P for KX2/KX3/K3/K3S via `MC`; full record read/write remains open |
+| Memory/channel selection | `select_memory_channel`, `supports_memory_selection` | H/P for KX2/KX3/K3/K3S via `MC`; generic record read/write remains unsupported and is not advertised by `supports_memory_channels` |
 | Raw protocol | `protocol_write_read` | H/P |
 | TX meters | `MeterId::{Power,Alc,Swr,Compression}` | K4 signal/power queries use documented `SM$`/`PO`; K3/K3S queried `BG` plus `TM0`/`TM1`; K4 ALC/compression/SWR are typed unsolicited `TM` events, not polled `SW` |
 

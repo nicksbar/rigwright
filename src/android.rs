@@ -224,6 +224,10 @@ impl Radio for RadioAndroid {
     fn supports_memory_channels(&self) -> bool {
         self.radio().supports_memory_channels()
     }
+
+    fn supports_memory_selection(&self) -> bool {
+        self.radio().supports_memory_selection()
+    }
     fn supports_send_dtmf(&self) -> bool {
         self.radio().supports_send_dtmf()
     }

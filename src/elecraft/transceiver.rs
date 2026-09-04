@@ -1107,6 +1107,13 @@ impl Radio for ElecraftRadio {
             .is_some_and(|profile| profile.supports_repeater)
     }
 
+    fn supports_memory_selection(&self) -> bool {
+        matches!(
+            self.model,
+            Some(ElecraftModel::Kx2 | ElecraftModel::Kx3 | ElecraftModel::K3 | ElecraftModel::K3s)
+        )
+    }
+
     async fn get_meter(&self, id: MeterId) -> Result<Option<u8>> {
         let value = match id {
             MeterId::Signal => {
