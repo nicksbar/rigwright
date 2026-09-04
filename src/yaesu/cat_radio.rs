@@ -481,32 +481,35 @@ impl YaesuCatRadio {
     /// Select a documented modern Yaesu memory channel. Complete `MR`/`MT`
     /// record codecs remain gated to the hardware-validated FTDX10 layout.
     pub fn select_memory_channel(&self, channel: u16) -> Result<()> {
-        if !self.selected_profile()?.supports_memory_channels || channel > 99 {
+        let profile = self.selected_profile()?;
+        if !profile.supports_memory_channels || channel > profile.memory_channel_max {
             bail!("memory channel selection is not documented for this Yaesu model");
         }
         self.send_set("MC", &format!("{channel:03}"))
     }
 
     pub fn read_memory_channel(&self, channel: u16) -> Result<MemoryChannel> {
+        let profile = self.selected_profile()?;
         anyhow::ensure!(
-            self.selected_profile()?.supports_memory_channels && (1..=99).contains(&channel),
+            profile.supports_memory_channels && (1..=profile.memory_channel_max).contains(&channel),
             "memory records are not profiled for this Yaesu model"
         );
         let response = self.query("MR", Some(&format!("{channel:03}")), 0)?;
-        decode_modern_yaesu_memory(parse_payload(&response, "MR")?, self.selected_profile()?)
+        decode_modern_yaesu_memory(parse_payload(&response, "MR")?, profile)
     }
 
     pub fn write_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
+        let profile = self.selected_profile()?;
         anyhow::ensure!(
-            self.selected_profile()?.supports_memory_channels
-                && (1..=99).contains(&channel.channel),
+            profile.supports_memory_channels
+                && (1..=profile.memory_channel_max).contains(&channel.channel),
             "memory records are not profiled for this Yaesu model"
         );
         anyhow::ensure!(
             channel.frequency_hz <= 999_999_999,
             "Yaesu memory frequency exceeds CAT width"
         );
-        let mode = self.selected_profile()?.encode_mode(channel.mode)?;
+        let mode = profile.encode_mode(channel.mode)?;
         let tone = match channel.repeater.tone.mode {
             ToneMode::Off => '0',
             ToneMode::EncodeDecode => '1',
@@ -2353,6 +2356,12 @@ mod tests {
                 1
             );
         }
+    }
+
+    #[test]
+    fn memory_channel_limits_follow_the_model_manuals() {
+        assert_eq!(FT991A_PROFILE.memory_channel_max, 117);
+        assert_eq!(FTDX10_PROFILE.memory_channel_max, 99);
     }
 
     #[test]

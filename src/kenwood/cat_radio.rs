@@ -664,8 +664,8 @@ impl KenwoodCatRadio {
     fn write_ts590_memory_channel(&self, channel: MemoryChannel) -> Result<()> {
         let mode = self.selected_profile()?.encode_mode(channel.mode)?;
         anyhow::ensure!(
-            channel.repeater.tone.index <= 42,
-            "Kenwood tone index must be 0..=42"
+            channel.repeater.tone.index <= 41,
+            "Kenwood tone index must be 0..=41"
         );
         let split = channel.transmit_frequency_hz.is_some();
         let frequency = channel
@@ -1996,6 +1996,22 @@ mod tests {
                     ..ToneSettings::default()
                 },
                 ..RepeaterSettings::default()
+            })
+            .is_err());
+        assert!(ts590
+            .write_memory_channel(MemoryChannel {
+                channel: 7,
+                name: None,
+                frequency_hz: 14_074_000,
+                transmit_frequency_hz: None,
+                mode: Mode::Usb,
+                repeater: RepeaterSettings {
+                    tone: ToneSettings {
+                        index: 42,
+                        ..ToneSettings::default()
+                    },
+                    ..RepeaterSettings::default()
+                },
             })
             .is_err());
     }

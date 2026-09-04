@@ -68,6 +68,8 @@ pub struct YaesuCatProfile {
     pub supports_repeater_settings: bool,
     /// The model manual documents `MC`, `MR`, and `MT` memory operations.
     pub supports_memory_channels: bool,
+    /// Highest regular memory channel accepted by `MC`/`MR`/`MT`.
+    pub memory_channel_max: u16,
     /// `EX` menu selector that reads the radio's CAT RTS (hardware flow
     /// control) setting, when the model documents one. The selector is the
     /// model's own `EX` menu address, not a shared value: the FTDX10 and
@@ -485,6 +487,7 @@ pub const FT710_PROFILE: YaesuCatProfile = YaesuCatProfile {
     supports_split: true,
     supports_repeater_settings: true,
     supports_memory_channels: true,
+    memory_channel_max: 99,
     // The FT-710 manual documents no CAT RTS menu; RTS on its standard COM
     // port is a PTT source configured by `RPTT SELECT`, not CAT flow control.
     cat_rts_menu: None,
@@ -509,6 +512,7 @@ pub const FTDX10_PROFILE: YaesuCatProfile = YaesuCatProfile {
     supports_split: true,
     supports_repeater_settings: true,
     supports_memory_channels: true,
+    memory_channel_max: 99,
     // FTDX10 CAT RTS is menu 03-03-10, read as hierarchical `EX030310;`.
     cat_rts_menu: Some("030310"),
 };
@@ -532,6 +536,7 @@ pub const FTDX101D_PROFILE: YaesuCatProfile = YaesuCatProfile {
     supports_split: true,
     supports_repeater_settings: true,
     supports_memory_channels: true,
+    memory_channel_max: 99,
     // FTDX101D CAT RTS is menu 03-03-13, read as hierarchical `EX030313;`.
     cat_rts_menu: Some("030313"),
 };
@@ -555,6 +560,7 @@ pub const FTDX101MP_PROFILE: YaesuCatProfile = YaesuCatProfile {
     supports_split: true,
     supports_repeater_settings: true,
     supports_memory_channels: true,
+    memory_channel_max: 99,
     // FTDX101MP CAT RTS is menu 03-03-13, read as hierarchical `EX030313;`.
     cat_rts_menu: Some("030313"),
 };
@@ -579,6 +585,7 @@ pub const FT991A_PROFILE: YaesuCatProfile = YaesuCatProfile {
     supports_split: true,
     supports_repeater_settings: true,
     supports_memory_channels: true,
+    memory_channel_max: 117,
     // FT-991A CAT RTS is the flat menu 033, read as `EX033;` (not the
     // hierarchical selectors used by the FTDX10/FTDX101 family).
     cat_rts_menu: Some("033"),
@@ -654,6 +661,11 @@ mod tests {
         let profile = profile_for_model(YaesuCatModel::Ft991A);
         assert!(profile.supports_split);
         assert!(profile.supports_control(ControlId::Split));
+        assert_eq!(profile.memory_channel_max, 117);
+        assert_eq!(
+            profile_for_model(YaesuCatModel::Ftdx10).memory_channel_max,
+            99
+        );
     }
 
     #[test]
