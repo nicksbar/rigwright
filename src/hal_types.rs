@@ -46,6 +46,32 @@ pub struct OperatingMode {
     pub filter: Option<u8>,
 }
 
+/// Driver-reported receiver filter bandwidth for one normalized operating
+/// mode and filter selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FilterBandwidth {
+    pub mode: Mode,
+    pub filter: u8,
+    pub bandwidth_hz: u32,
+}
+
+/// Documented setup required before a driver can perform a safe SWR sweep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SwrSweepSetup {
+    pub carrier_mode: Mode,
+    pub rf_power: u8,
+}
+
+/// A physical presentation supplied by the driver for a normalized meter.
+/// The UI formats this value but does not perform model-specific calibration.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeterPresentation {
+    pub value: f32,
+    pub unit: &'static str,
+    pub precision: u8,
+    pub upper_bound: Option<f32>,
+}
+
 /// Protocol-neutral native scope configuration. `None` leaves a setting
 /// unchanged; drivers validate supported values against their model profile.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

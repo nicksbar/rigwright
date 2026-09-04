@@ -583,6 +583,24 @@ impl Radio for ConfiguredRadio {
             _ => false,
         }
     }
+    fn filter_bandwidth_hz(&self, mode: crate::Mode, filter: u8) -> Option<u32> {
+        match self {
+            Self::Icom(r) => r.filter_bandwidth_hz(mode, filter),
+            _ => None,
+        }
+    }
+    fn swr_sweep_setup(&self) -> Option<crate::SwrSweepSetup> {
+        match self {
+            Self::Icom(r) => r.swr_sweep_setup(),
+            _ => None,
+        }
+    }
+    fn meter_presentation(&self, id: crate::MeterId, normalized: u8) -> Option<crate::MeterPresentation> {
+        match self {
+            Self::Icom(r) => r.meter_presentation(id, normalized),
+            _ => None,
+        }
+    }
     fn supports_repeater_settings(&self) -> bool {
         match self {
             Self::Icom(r) => r.supports_repeater_settings(),

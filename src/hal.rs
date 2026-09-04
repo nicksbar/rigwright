@@ -2,8 +2,9 @@
 
 pub use crate::events::RadioEventRouter;
 pub use crate::hal_types::{
-    BaseMode, ControlId, ControlValue, CoreState, DtmfSequence, MemoryChannel, MeterId, Mode,
-    OperatingMode, RepeaterSettings, RepeaterShift, ScopeConfiguration, ToneSettings, TunerStatus,
+    BaseMode, ControlId, ControlValue, CoreState, DtmfSequence, FilterBandwidth, MemoryChannel,
+    MeterId, MeterPresentation, Mode, OperatingMode, RepeaterSettings, RepeaterShift,
+    ScopeConfiguration, SwrSweepSetup, ToneSettings, TunerStatus,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -124,6 +125,19 @@ pub trait Radio: Send + Sync {
     }
     fn supports_scope(&self) -> bool {
         false
+    }
+    /// Return documented bandwidth metadata for a normalized filter choice.
+    fn filter_bandwidth_hz(&self, _mode: Mode, _filter: u8) -> Option<u32> {
+        None
+    }
+    /// Return the documented carrier mode and normalized RF power for SWR
+    /// measurements. `None` means this radio has no supported procedure.
+    fn swr_sweep_setup(&self) -> Option<SwrSweepSetup> {
+        None
+    }
+    /// Convert a normalized meter value to a driver-calibrated presentation.
+    fn meter_presentation(&self, _id: MeterId, _normalized: u8) -> Option<MeterPresentation> {
+        None
     }
     async fn set_scope_configuration(&self, _config: ScopeConfiguration) -> Result<()> {
         anyhow::bail!("native scope configuration is not supported by this radio")

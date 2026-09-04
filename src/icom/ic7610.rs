@@ -124,6 +124,8 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     memory_layout: MemoryLayout::Hf,
     supports_repeater_settings: true,
     supports_memory_channels: true,
+    filter_bandwidths: &[],
+    swr_sweep_setup: None,
 };
 
 #[cfg(test)]

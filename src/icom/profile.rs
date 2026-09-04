@@ -1,7 +1,7 @@
 //! Shared declarative profiles for Icom CI-V models.
 
 use crate::controls::ControlId;
-use crate::hal_types::MeterId;
+use crate::hal_types::{MeterId, MeterPresentation, Mode, SwrSweepSetup};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlEncoding {
@@ -210,6 +210,8 @@ pub struct IcomCivProfile {
     pub memory_layout: MemoryLayout,
     pub supports_repeater_settings: bool,
     pub supports_memory_channels: bool,
+    pub filter_bandwidths: &'static [(Mode, u8, u32)],
+    pub swr_sweep_setup: Option<SwrSweepSetup>,
 }
 
 /// Conservative CI-V defaults used by current Icom profiles unless a model
@@ -241,6 +243,43 @@ impl IcomCivProfile {
             || (id == ControlId::Vfo && self.control_capabilities.supports_vfo)
             || (id == ControlId::MainSub && self.main_sub.is_some())
             || (id == ControlId::ExternalPreamp && self.external_preamp.is_some())
+    }
+
+    pub fn filter_bandwidth_hz(self, mode: Mode, filter: u8) -> Option<u32> {
+        self.filter_bandwidths
+            .iter()
+            .find(|&&(entry_mode, entry_filter, _)| entry_mode == mode && entry_filter == filter)
+            .map(|&(_, _, bandwidth)| bandwidth)
+    }
+
+    pub fn meter_presentation(self, id: MeterId, raw: u8) -> Option<MeterPresentation> {
+        if self.model != crate::models::IcomCivModel::Ic7300 {
+            return None;
+        }
+        match id {
+            MeterId::Swr => {
+                let anchors = [(0_u8, 1.0_f32), (48, 1.5), (80, 2.0), (120, 3.0)];
+                let value = anchors
+                    .windows(2)
+                    .find(|window| raw <= window[1].0)
+                    .map(|window| {
+                        let (low_level, low_ratio) = window[0];
+                        let (high_level, high_ratio) = window[1];
+                        low_ratio
+                            + f32::from(raw.saturating_sub(low_level))
+                                / f32::from(high_level - low_level)
+                                * (high_ratio - low_ratio)
+                    })
+                    .unwrap_or(3.0);
+                Some(MeterPresentation { value, unit: ":1", precision: 2, upper_bound: Some(3.0) })
+            }
+            MeterId::Voltage => {
+                let value = f32::from(raw);
+                let value = if raw <= 13 { value * 10.0 / 13.0 } else { 10.0 + (value - 13.0) * 6.0 / (241.0 - 13.0) };
+                Some(MeterPresentation { value: value.clamp(0.0, 16.0), unit: "V", precision: 1, upper_bound: Some(16.0) })
+            }
+            _ => None,
+        }
     }
 }
 

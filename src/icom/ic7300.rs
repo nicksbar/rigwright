@@ -5,6 +5,7 @@ use super::profile::{
 };
 use crate::controls::ControlId;
 use crate::hal_types::MeterId;
+use crate::hal_types::{Mode, SwrSweepSetup};
 use anyhow::Result;
 
 const FREQUENCY_RANGES: &[(u64, u64)] = &[(30_000, 74_800_000)];
@@ -56,6 +57,13 @@ const METERS: &[MeterId] = &[
     MeterId::Voltage,
     MeterId::Current,
 ];
+const FILTER_BANDWIDTHS: &[(Mode, u8, u32)] = &[
+    (Mode::Usb, 1, 3_000), (Mode::Usb, 2, 2_400), (Mode::Usb, 3, 1_800),
+    (Mode::Lsb, 1, 3_000), (Mode::Lsb, 2, 2_400), (Mode::Lsb, 3, 1_800),
+    (Mode::Cw, 1, 500), (Mode::Cw, 2, 250), (Mode::Cw, 3, 100),
+    (Mode::Rtty, 1, 500), (Mode::Rtty, 2, 350), (Mode::Rtty, 3, 250),
+    (Mode::Fm, 1, 15_000), (Mode::Fm, 2, 10_000), (Mode::Fm, 3, 7_000),
+];
 
 pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     model: crate::models::IcomCivModel::Ic7300,
@@ -90,6 +98,8 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     memory_layout: MemoryLayout::Hf,
     supports_repeater_settings: true,
     supports_memory_channels: true,
+    filter_bandwidths: FILTER_BANDWIDTHS,
+    swr_sweep_setup: Some(SwrSweepSetup { carrier_mode: Mode::Rtty, rf_power: 77 }),
 };
 
 /// IC-7300-specific scope configuration operations.

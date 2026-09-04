@@ -17,8 +17,9 @@ use super::profile::{meter_command_prefix, profile_for_model, MemoryLayout};
 use crate::events::{RadioEvent, RadioEventRouter, RadioEventSubscription};
 pub use crate::hal_types::{BaseMode, Mode, OperatingMode};
 use crate::hal_types::{
-    ControlId, ControlValue, MemoryChannel, MeterId, RepeaterSettings, RepeaterShift,
-    ScopeConfiguration, ToneMode, ToneSettings, TunerStatus,
+    ControlId, ControlValue, MemoryChannel, MeterId, MeterPresentation, Mode,
+    RepeaterSettings, RepeaterShift, ScopeConfiguration, SwrSweepSetup, ToneMode, ToneSettings,
+    TunerStatus,
 };
 
 const CI_V_FRAME_START: u8 = 0xFE;
@@ -2158,6 +2159,24 @@ impl Radio for IcomCiVRadio {
         self.model()
             .map(profile_for_model)
             .is_some_and(|profile| profile.supports_meter(id))
+    }
+
+    fn filter_bandwidth_hz(&self, mode: Mode, filter: u8) -> Option<u32> {
+        self.model()
+            .map(profile_for_model)
+            .and_then(|profile| profile.filter_bandwidth_hz(mode, filter))
+    }
+
+    fn swr_sweep_setup(&self) -> Option<SwrSweepSetup> {
+        self.model()
+            .map(profile_for_model)
+            .and_then(|profile| profile.swr_sweep_setup)
+    }
+
+    fn meter_presentation(&self, id: MeterId, normalized: u8) -> Option<MeterPresentation> {
+        self.model()
+            .map(profile_for_model)
+            .and_then(|profile| profile.meter_presentation(id, normalized))
     }
 
     fn supports_control(&self, id: ControlId) -> bool {
