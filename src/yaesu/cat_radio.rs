@@ -17,8 +17,8 @@ use crate::{
     hal::{Mode, Radio, RadioCapabilities},
     hal_types::{
         denormalize_meter_level, normalize_meter_level, ControlId, ControlValue, CoreState,
-        MemoryChannel, MeterId, RepeaterSettings, RepeaterShift, SwrSweepSetup, ToneMode,
-        ToneSettings, TunerStatus,
+        MemoryChannel, MeterId, MeterMetadata, RepeaterSettings, RepeaterShift, SwrSweepSetup,
+        ToneMode, ToneSettings, TunerStatus,
     },
     models::YaesuCatModel,
     protocol::ascii_cat,
@@ -1041,6 +1041,58 @@ impl Radio for YaesuCatRadio {
                 }
                 Ok(Some(ControlValue::U8(value)))
             }
+            ControlId::MicGain => Ok(Some(ControlValue::U8(normalize_percent(
+                self.get_yaesu_level(self.control_command(id)?, 100)?,
+            )))),
+            ControlId::MonitorLevel => {
+                let command = self.control_command(id)?;
+                let response = self.query(command, Some("1"), 4)?;
+                let payload = parse_payload(&response, command)?;
+                Ok(Some(ControlValue::U8(normalize_percent(
+                    payload.parse::<u8>()?,
+                ))))
+            }
+            ControlId::SpeechProcessor => {
+                let command = self.control_command(id)?;
+                let response = self.query(command, Some("0"), 2)?;
+                let payload = parse_payload(&response, command)?;
+                Ok(Some(ControlValue::Bool(payload.ends_with('2'))))
+            }
+            ControlId::SpeechProcessorLevel | ControlId::VoxGain => {
+                let command = self.control_command(id)?;
+                Ok(Some(ControlValue::U8(normalize_percent(
+                    self.get_yaesu_level(command, 100)?,
+                ))))
+            }
+            ControlId::IfShift => {
+                let command = self.control_command(id)?;
+                let response = self.query(command, Some("00"), 7)?;
+                let payload = parse_payload(&response, command)?;
+                let sign = match payload.as_bytes().get(2) {
+                    Some(b'-') => -1,
+                    Some(b'+') => 1,
+                    _ => bail!("invalid Yaesu IF-shift response: {payload}"),
+                };
+                Ok(Some(ControlValue::I32(sign * payload[3..].parse::<i32>()?)))
+            }
+            ControlId::Vox | ControlId::BreakIn | ControlId::Lock => {
+                let command = self.control_command(id)?;
+                let response = self.query(command, None, 1)?;
+                let payload = parse_payload(&response, command)?;
+                Ok(Some(ControlValue::Bool(payload == "1")))
+            }
+            ControlId::VoxDelay => {
+                let command = self.control_command(id)?;
+                let response = self.query(command, None, 4)?;
+                let payload = parse_payload(&response, command)?;
+                Ok(Some(ControlValue::U8(payload.parse()?)))
+            }
+            ControlId::NoiseBlankerLevel => {
+                let command = self.control_command(id)?;
+                let response = self.query(command, Some("0"), 4)?;
+                let payload = parse_payload(&response, command)?;
+                Ok(Some(ControlValue::U8(payload[1..].parse()?)))
+            }
             _ => Ok(None),
         }
     }
@@ -1112,6 +1164,35 @@ impl Radio for YaesuCatRadio {
                 if (1..=15).contains(&value) =>
             {
                 self.send_set(command()?, &format!("0{value:02}"))
+            }
+            (ControlId::MicGain, ControlValue::U8(value))
+            | (ControlId::SpeechProcessorLevel, ControlValue::U8(value))
+            | (ControlId::VoxGain, ControlValue::U8(value)) => {
+                self.set_yaesu_level(command()?, denormalize_percent(value))
+            }
+            (ControlId::MonitorLevel, ControlValue::U8(value)) => {
+                self.send_set(command()?, &format!("1{:03}", denormalize_percent(value)))
+            }
+            (ControlId::SpeechProcessor, ControlValue::Bool(enabled)) => {
+                self.send_set(command()?, &format!("0{}", if enabled { '2' } else { '1' }))
+            }
+            (ControlId::IfShift, ControlValue::I32(value)) => {
+                anyhow::ensure!(
+                    (-1200..=1200).contains(&value),
+                    "Yaesu IF shift must be -1200..=1200 Hz"
+                );
+                let sign = if value < 0 { '-' } else { '+' };
+                self.send_set(command()?, &format!("00{sign}{:04}", value.unsigned_abs()))
+            }
+            (
+                ControlId::Vox | ControlId::BreakIn | ControlId::Lock,
+                ControlValue::Bool(enabled),
+            ) => self.send_set(command()?, if enabled { "1" } else { "0" }),
+            (ControlId::VoxDelay, ControlValue::U8(value)) if value <= 33 => {
+                self.send_set(command()?, &format!("{value:04}"))
+            }
+            (ControlId::NoiseBlankerLevel, ControlValue::U8(value)) if value <= 10 => {
+                self.send_set(command()?, &format!("0{value:03}"))
             }
             (_, value) => bail!("unsupported Yaesu CAT control/value: {id:?} = {value:?}"),
         }
@@ -1187,6 +1268,11 @@ impl Radio for YaesuCatRadio {
     fn meter_poll_spec(&self, id: MeterId) -> Option<crate::MeterPollSpec> {
         self.profile()
             .and_then(|profile| profile.meter_poll_spec(id))
+    }
+
+    fn meter_metadata(&self, id: MeterId) -> Option<MeterMetadata> {
+        self.profile()
+            .and_then(|profile| profile.meter_metadata(id))
     }
 
     fn supports_control(&self, id: ControlId) -> bool {

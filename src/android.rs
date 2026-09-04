@@ -292,6 +292,10 @@ impl Radio for RadioAndroid {
         self.radio().meter_poll_spec(id)
     }
 
+    fn meter_metadata(&self, id: MeterId) -> Option<crate::MeterMetadata> {
+        self.radio().meter_metadata(id)
+    }
+
     async fn set_scope_configuration(&self, config: crate::ScopeConfiguration) -> Result<()> {
         self.radio().set_scope_configuration(config).await
     }

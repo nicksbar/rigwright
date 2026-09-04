@@ -27,10 +27,11 @@ pub use events::{RadioEvent, RadioEventRouter, RadioEventSubscription, Subscript
 pub use hal::{LinkHealth, NullRadio, Radio, RadioCapabilities, RadioStatus};
 pub use hal_types::{
     denormalize_meter_level, normalize_meter_level, BaseMode, ControlId, ControlValue, CoreState,
-    DtmfSequence, FilterBandwidth, MemoryChannel, MeterId, MeterPollSpec, MeterPresentation, Mode,
-    OperatingMode, RepeaterSettings, RepeaterShift, ScopeCenterType, ScopeColor,
-    ScopeConfiguration, ScopeEdgeBank, ScopeMarkerPosition, ScopeMaxHold, ScopeMetadata,
-    ScopeState, ScopeWaveformType, SwrSweepSetup, ToneMode, ToneSettings, TunerStatus,
+    DtmfSequence, FilterBandwidth, MemoryChannel, MeterId, MeterMetadata, MeterPollSpec,
+    MeterPresentation, Mode, OperatingMode, RepeaterSettings, RepeaterShift, ScopeCenterType,
+    ScopeColor, ScopeConfiguration, ScopeEdgeBank, ScopeMarkerPosition, ScopeMaxHold,
+    ScopeMetadata, ScopeState, ScopeWaveformType, SwrSweepSetup, ToneMode, ToneSettings,
+    TunerStatus,
 };
 pub use icom::civ_radio::{
     enumerate_serial_port_descriptors, enumerate_serial_ports, IcomCiVRadio, IcomProbeResult,

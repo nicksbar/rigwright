@@ -184,6 +184,17 @@ pub struct MeterPollSpec {
     pub tx_priority: bool,
 }
 
+/// Protocol-level meter facts that a client may use when it needs to
+/// understand a driver's raw polling contract. The HAL value returned by
+/// `get_meter` is still normalized to `0..=255`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MeterMetadata {
+    pub meter: MeterId,
+    pub raw_min: u16,
+    pub raw_max: u16,
+    pub raw_width: u8,
+}
+
 impl OperatingMode {
     pub fn label(self) -> String {
         let base = match self.base {
@@ -249,6 +260,17 @@ pub enum ControlId {
     ExternalPreamp,
     /// Model-specific antenna connector selection.
     Antenna,
+    MicGain,
+    MonitorLevel,
+    SpeechProcessor,
+    SpeechProcessorLevel,
+    IfShift,
+    Vox,
+    VoxGain,
+    VoxDelay,
+    BreakIn,
+    Lock,
+    NoiseBlankerLevel,
 }
 
 impl ControlId {
@@ -281,6 +303,17 @@ impl ControlId {
         Self::MainSub,
         Self::ExternalPreamp,
         Self::Antenna,
+        Self::MicGain,
+        Self::MonitorLevel,
+        Self::SpeechProcessor,
+        Self::SpeechProcessorLevel,
+        Self::IfShift,
+        Self::Vox,
+        Self::VoxGain,
+        Self::VoxDelay,
+        Self::BreakIn,
+        Self::Lock,
+        Self::NoiseBlankerLevel,
     ];
 }
 

@@ -13,7 +13,8 @@ use serialport::{DataBits, FlowControl, Parity, StopBits};
 use crate::{
     hal::{Mode, Radio, RadioCapabilities},
     hal_types::{
-        normalize_meter_level, ControlId, ControlValue, MeterId, RepeaterSettings, ToneMode,
+        normalize_meter_level, ControlId, ControlValue, MeterId, MeterMetadata, MeterPollSpec,
+        RepeaterSettings, ToneMode,
     },
     models::YaesuLegacyModel,
     protocol::yaesu_legacy_cat::{self, FrequencyModeStatus, LegacyMode, RxStatus, TxStatus},
@@ -484,7 +485,18 @@ impl Radio for LegacyYaesuRadio {
     }
 
     fn supports_meter(&self, id: MeterId) -> bool {
-        matches!(id, MeterId::Signal | MeterId::Power)
+        self.profile()
+            .is_some_and(|profile| profile.supports_meter(id))
+    }
+
+    fn meter_poll_spec(&self, id: MeterId) -> Option<MeterPollSpec> {
+        self.profile()
+            .and_then(|profile| profile.meter_poll_spec(id))
+    }
+
+    fn meter_metadata(&self, id: MeterId) -> Option<MeterMetadata> {
+        self.profile()
+            .and_then(|profile| profile.meter_metadata(id))
     }
 
     fn capabilities(&self) -> RadioCapabilities {

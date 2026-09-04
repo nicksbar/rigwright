@@ -8,7 +8,7 @@ use anyhow::{bail, Result};
 
 use crate::{
     hal::Mode,
-    hal_types::{ControlId, MeterId, MeterPollSpec, SwrSweepSetup},
+    hal_types::{ControlId, MeterId, MeterMetadata, MeterPollSpec, SwrSweepSetup},
     models::YaesuCatModel,
 };
 
@@ -59,6 +59,7 @@ pub struct YaesuCatProfile {
     /// Explicit meter surface and polling guidance for CAT clients.
     pub meters: &'static [MeterId],
     pub meter_poll_specs: &'static [MeterPollSpec],
+    pub meter_metadata: &'static [MeterMetadata],
     /// Inclusive `PC` power setting range, when implemented.
     pub power_range_watts: Option<(u16, u16)>,
     /// Whether the `ST` split command is implemented by this profile.
@@ -166,7 +167,20 @@ impl YaesuCatProfile {
     }
 
     pub fn meter_poll_spec(self, id: MeterId) -> Option<MeterPollSpec> {
+        if !self.supports_meter(id) {
+            return None;
+        }
         self.meter_poll_specs
+            .iter()
+            .copied()
+            .find(|spec| spec.meter == id)
+    }
+
+    pub fn meter_metadata(self, id: MeterId) -> Option<MeterMetadata> {
+        if !self.supports_meter(id) {
+            return None;
+        }
+        self.meter_metadata
             .iter()
             .copied()
             .find(|spec| spec.meter == id)
@@ -251,6 +265,17 @@ const COMMON_CONTROLS: &[YaesuControlSpec] = &[
     control(ControlId::Xit, "XT"),
     control(ControlId::Tuner, "AC"),
     control(ControlId::Vfo, "VS"),
+    control(ControlId::MicGain, "MG"),
+    control(ControlId::MonitorLevel, "ML"),
+    control(ControlId::SpeechProcessor, "PR"),
+    control(ControlId::SpeechProcessorLevel, "PL"),
+    control(ControlId::IfShift, "IS"),
+    control(ControlId::Vox, "VX"),
+    control(ControlId::VoxGain, "VG"),
+    control(ControlId::VoxDelay, "VD"),
+    control(ControlId::BreakIn, "BI"),
+    control(ControlId::Lock, "LK"),
+    control(ControlId::NoiseBlankerLevel, "NL"),
 ];
 
 const fn control(id: ControlId, command: &'static str) -> YaesuControlSpec {
@@ -274,6 +299,17 @@ const CONTROL_VALUES: &[(ControlId, &[u8])] = &[
     (ControlId::Filter, FILTER_VALUES),
     (ControlId::Agc, AGC_VALUES),
     (ControlId::NoiseReductionLevel, NOISE_REDUCTION_LEVEL_VALUES),
+    (
+        ControlId::VoxDelay,
+        &[
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+            24, 25, 26, 27, 28, 29, 30, 31, 32, 33,
+        ],
+    ),
+    (
+        ControlId::NoiseBlankerLevel,
+        &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    ),
 ];
 const COMMON_METERS: &[MeterId] = &[
     MeterId::Signal,
@@ -336,6 +372,56 @@ const METER_POLL_SPECS: &[MeterPollSpec] = &[
         tx_priority: false,
     },
 ];
+const METER_METADATA: &[MeterMetadata] = &[
+    MeterMetadata {
+        meter: MeterId::Signal,
+        raw_min: 0,
+        raw_max: 255,
+        raw_width: 3,
+    },
+    MeterMetadata {
+        meter: MeterId::Power,
+        raw_min: 0,
+        raw_max: 255,
+        raw_width: 3,
+    },
+    MeterMetadata {
+        meter: MeterId::Swr,
+        raw_min: 0,
+        raw_max: 255,
+        raw_width: 3,
+    },
+    MeterMetadata {
+        meter: MeterId::Alc,
+        raw_min: 0,
+        raw_max: 255,
+        raw_width: 3,
+    },
+    MeterMetadata {
+        meter: MeterId::Compression,
+        raw_min: 0,
+        raw_max: 255,
+        raw_width: 3,
+    },
+    MeterMetadata {
+        meter: MeterId::Current,
+        raw_min: 0,
+        raw_max: 255,
+        raw_width: 3,
+    },
+    MeterMetadata {
+        meter: MeterId::Voltage,
+        raw_min: 0,
+        raw_max: 255,
+        raw_width: 3,
+    },
+    MeterMetadata {
+        meter: MeterId::Temperature,
+        raw_min: 0,
+        raw_max: 255,
+        raw_width: 3,
+    },
+];
 
 const MODERN_HF_MODES: &[YaesuModeSpec] = &[
     mode('1', Mode::Lsb, true),
@@ -394,6 +480,7 @@ pub const FT710_PROFILE: YaesuCatProfile = YaesuCatProfile {
     control_values: CONTROL_VALUES,
     meters: COMMON_METERS,
     meter_poll_specs: METER_POLL_SPECS,
+    meter_metadata: METER_METADATA,
     power_range_watts: Some((5, 100)),
     supports_split: true,
     supports_repeater_settings: true,
@@ -417,6 +504,7 @@ pub const FTDX10_PROFILE: YaesuCatProfile = YaesuCatProfile {
     control_values: CONTROL_VALUES,
     meters: COMMON_METERS,
     meter_poll_specs: METER_POLL_SPECS,
+    meter_metadata: METER_METADATA,
     power_range_watts: Some((5, 100)),
     supports_split: true,
     supports_repeater_settings: true,
@@ -439,6 +527,7 @@ pub const FTDX101D_PROFILE: YaesuCatProfile = YaesuCatProfile {
     control_values: CONTROL_VALUES,
     meters: FTDX101_METERS,
     meter_poll_specs: METER_POLL_SPECS,
+    meter_metadata: METER_METADATA,
     power_range_watts: Some((5, 100)),
     supports_split: true,
     supports_repeater_settings: true,
@@ -461,6 +550,7 @@ pub const FTDX101MP_PROFILE: YaesuCatProfile = YaesuCatProfile {
     control_values: CONTROL_VALUES,
     meters: FTDX101_METERS,
     meter_poll_specs: METER_POLL_SPECS,
+    meter_metadata: METER_METADATA,
     power_range_watts: Some((5, 200)),
     supports_split: true,
     supports_repeater_settings: true,
@@ -483,6 +573,7 @@ pub const FT991A_PROFILE: YaesuCatProfile = YaesuCatProfile {
     control_values: CONTROL_VALUES,
     meters: COMMON_METERS,
     meter_poll_specs: METER_POLL_SPECS,
+    meter_metadata: METER_METADATA,
     power_range_watts: Some((5, 100)),
     // The FT-991A CAT manual lists ST (SPLIT) as supported.
     supports_split: true,
@@ -620,11 +711,20 @@ mod tests {
             assert!(profile.baud_rates.contains(&profile.preferred_baud_rate));
             assert!(profile.supports_meter(MeterId::Signal));
             assert!(profile.meter_poll_spec(MeterId::Signal).is_some());
+            let metadata = profile
+                .meter_metadata(MeterId::Signal)
+                .expect("signal meter metadata");
+            assert_eq!(metadata.raw_min, 0);
+            assert_eq!(metadata.raw_max, 255);
+            assert_eq!(metadata.raw_width, 3);
             assert!(profile
                 .supported_control_values(ControlId::Filter)
                 .is_some());
         }
         assert!(profile_for_model(YaesuCatModel::Ftdx101D).supports_meter(MeterId::Temperature));
-        assert!(!profile_for_model(YaesuCatModel::Ft710).supports_meter(MeterId::Temperature));
+        let ft710 = profile_for_model(YaesuCatModel::Ft710);
+        assert!(!ft710.supports_meter(MeterId::Temperature));
+        assert!(ft710.meter_poll_spec(MeterId::Temperature).is_none());
+        assert!(ft710.meter_metadata(MeterId::Temperature).is_none());
     }
 }

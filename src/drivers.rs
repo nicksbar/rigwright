@@ -470,6 +470,17 @@ impl Radio for ConfiguredRadio {
     fn meter_poll_spec(&self, id: crate::MeterId) -> Option<crate::MeterPollSpec> {
         match self {
             Self::Icom(r) => r.meter_poll_spec(id),
+            Self::Yaesu(r) => r.meter_poll_spec(id),
+            Self::LegacyYaesu(r) => r.meter_poll_spec(id),
+            _ => None,
+        }
+    }
+
+    fn meter_metadata(&self, id: crate::MeterId) -> Option<crate::MeterMetadata> {
+        match self {
+            Self::Icom(r) => r.meter_metadata(id),
+            Self::Yaesu(r) => r.meter_metadata(id),
+            Self::LegacyYaesu(r) => r.meter_metadata(id),
             _ => None,
         }
     }
@@ -596,6 +607,7 @@ impl Radio for ConfiguredRadio {
         match self {
             Self::Icom(r) => r.get_meter(id).await,
             Self::Yaesu(r) => r.get_meter(id).await,
+            Self::LegacyYaesu(r) => r.get_meter(id).await,
             Self::Kenwood(r) => Radio::get_meter(r, id).await,
             Self::Elecraft(r) => r.get_meter(id).await,
             _ => Ok(None),
@@ -605,6 +617,7 @@ impl Radio for ConfiguredRadio {
         match self {
             Self::Icom(r) => r.supports_meter(id),
             Self::Yaesu(r) => r.supports_meter(id),
+            Self::LegacyYaesu(r) => r.supports_meter(id),
             Self::Kenwood(r) => r.supports_meter(id),
             Self::Elecraft(r) => r.supports_meter(id),
             _ => false,

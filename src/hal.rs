@@ -3,9 +3,9 @@
 pub use crate::events::RadioEventRouter;
 pub use crate::hal_types::{
     BaseMode, ControlId, ControlValue, CoreState, DtmfSequence, FilterBandwidth, MemoryChannel,
-    MeterId, MeterPollSpec, MeterPresentation, Mode, OperatingMode, RepeaterSettings,
-    RepeaterShift, ScopeConfiguration, ScopeMetadata, ScopeState, SwrSweepSetup, ToneSettings,
-    TunerStatus,
+    MeterId, MeterMetadata, MeterPollSpec, MeterPresentation, Mode, OperatingMode,
+    RepeaterSettings, RepeaterShift, ScopeConfiguration, ScopeMetadata, ScopeState, SwrSweepSetup,
+    ToneSettings, TunerStatus,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -153,6 +153,9 @@ pub trait Radio: Send + Sync {
         None
     }
     fn meter_poll_spec(&self, _id: MeterId) -> Option<MeterPollSpec> {
+        None
+    }
+    fn meter_metadata(&self, _id: MeterId) -> Option<MeterMetadata> {
         None
     }
     async fn set_scope_configuration(&self, _config: ScopeConfiguration) -> Result<()> {
