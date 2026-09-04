@@ -509,6 +509,7 @@ impl Radio for ConfiguredRadio {
             Self::Yaesu(r) => r.protocol_write_read(request).await,
             Self::Kenwood(r) => r.protocol_write_read(request).await,
             Self::LegacyYaesu(r) => r.protocol_write_read(request).await,
+            Self::Elecraft(r) => r.protocol_write_read(request).await,
             _ => bail!("raw protocol access is not available for this driver"),
         }
     }
@@ -973,6 +974,8 @@ mod tests {
 
         let elecraft = open_model("K4", "/dev/null", 38_400, 0xE0).unwrap();
         assert!(elecraft.supports_repeater_settings());
+        assert!(!elecraft.supports_memory_channels());
+        assert!(elecraft.capabilities().can_raw_protocol);
         assert!(elecraft
             .supported_control_values(crate::ControlId::Attenuator)
             .is_some());
@@ -1040,6 +1043,7 @@ mod tests {
             open_model("FTDX10", "/dev/null", 38_400, 0xE0).unwrap(),
             open_model("TS-590SG", "/dev/null", 115_200, 0xE0).unwrap(),
             open_model("FT-857D", "/dev/null", 9_600, 0xE0).unwrap(),
+            open_model("K4", "/dev/null", 38_400, 0xE0).unwrap(),
             ConfiguredRadio::Ascii(AsciiCatRadio::new("", 9_600, AsciiCatFlavor::Yaesu)),
             open_dxlab_localhost(),
             open_rigctld("127.0.0.1:4532"),
@@ -1061,6 +1065,7 @@ mod tests {
             let _ = radio.as_kenwood();
             let _ = radio.as_rigctld();
             let _ = radio.as_dxlab();
+            let _ = radio.as_elecraft();
         }
     }
 
