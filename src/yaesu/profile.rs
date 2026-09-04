@@ -6,7 +6,11 @@
 
 use anyhow::{bail, Result};
 
-use crate::{hal::Mode, hal_types::ControlId, models::YaesuCatModel};
+use crate::{
+    hal::Mode,
+    hal_types::{ControlId, SwrSweepSetup},
+    models::YaesuCatModel,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct YaesuModeSpec {
@@ -53,6 +57,14 @@ pub struct YaesuCatProfile {
 }
 
 impl YaesuCatProfile {
+    pub fn swr_sweep_setup(self) -> Option<SwrSweepSetup> {
+        self.power_range_watts.map(|(_, maximum)| SwrSweepSetup {
+            carrier_mode: Mode::Rtty,
+            rf_power: crate::normalize_meter_level(maximum.min(30), maximum)
+                .expect("profile power range must be nonzero"),
+        })
+    }
+
     pub fn supports_control(self, id: ControlId) -> bool {
         self.controls.contains(&id)
             || (id == ControlId::RfPower && self.power_range_watts.is_some())

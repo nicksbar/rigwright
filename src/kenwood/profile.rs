@@ -4,7 +4,7 @@ use anyhow::{bail, Result};
 
 use crate::{
     hal::Mode,
-    hal_types::{ControlId, MeterId},
+    hal_types::{ControlId, MeterId, SwrSweepSetup},
     models::KenwoodCatModel,
 };
 
@@ -94,6 +94,14 @@ pub struct KenwoodCatProfile {
 }
 
 impl KenwoodCatProfile {
+    pub fn swr_sweep_setup(self) -> Option<SwrSweepSetup> {
+        self.power_range_watts.map(|(_, maximum)| SwrSweepSetup {
+            carrier_mode: Mode::Rtty,
+            rf_power: crate::normalize_meter_level(maximum.min(30), maximum)
+                .expect("profile power range must be nonzero"),
+        })
+    }
+
     pub fn supports_frequency(self, hz: u64) -> bool {
         self.frequency_ranges
             .iter()

@@ -17,7 +17,7 @@ use crate::{
     hal::{Mode, Radio, RadioCapabilities},
     hal_types::{
         denormalize_meter_level, normalize_meter_level, ControlId, ControlValue, MemoryChannel,
-        MeterId, RepeaterSettings, RepeaterShift, ToneMode, ToneSettings,
+        MeterId, RepeaterSettings, RepeaterShift, SwrSweepSetup, ToneMode, ToneSettings,
     },
     models::KenwoodCatModel,
     protocol::ascii_cat,
@@ -956,6 +956,10 @@ impl KenwoodCatRadio {
 
 #[async_trait]
 impl Radio for KenwoodCatRadio {
+    fn swr_sweep_setup(&self) -> Option<SwrSweepSetup> {
+        self.profile().and_then(|profile| profile.swr_sweep_setup())
+    }
+
     fn event_router(&self) -> Option<RadioEventRouter> {
         Some(self.event_router.clone())
     }

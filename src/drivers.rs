@@ -592,6 +592,9 @@ impl Radio for ConfiguredRadio {
     fn swr_sweep_setup(&self) -> Option<crate::SwrSweepSetup> {
         match self {
             Self::Icom(r) => r.swr_sweep_setup(),
+            Self::Yaesu(r) => r.swr_sweep_setup(),
+            Self::Kenwood(r) => r.swr_sweep_setup(),
+            Self::Elecraft(r) => r.swr_sweep_setup(),
             _ => None,
         }
     }

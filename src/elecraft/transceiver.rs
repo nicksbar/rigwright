@@ -3,7 +3,7 @@
 use crate::{
     events::{RadioEvent, RadioEventRouter},
     hal::{Mode, Radio, RadioCapabilities},
-    hal_types::{ControlId, ControlValue, MeterId},
+    hal_types::{ControlId, ControlValue, MeterId, SwrSweepSetup},
     transport::RadioTransport,
 };
 use anyhow::{bail, Context, Result};
@@ -565,6 +565,14 @@ fn publish_event(router: &RadioEventRouter, model: Option<ElecraftModel>, frame:
 
 #[async_trait]
 impl Radio for ElecraftRadio {
+    fn swr_sweep_setup(&self) -> Option<SwrSweepSetup> {
+        self.profile().and_then(|profile| {
+            (profile.model != ElecraftModel::K4 && profile.model != ElecraftModel::Kh1)
+                .then(|| profile.swr_sweep_setup())
+                .flatten()
+        })
+    }
+
     fn event_router(&self) -> Option<RadioEventRouter> {
         Some(self.event_router.clone())
     }

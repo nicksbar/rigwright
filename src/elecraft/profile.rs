@@ -1,6 +1,9 @@
 //! Shared Elecraft profile contracts and model lookup.
 
-use crate::{hal::Mode, hal_types::ControlId};
+use crate::{
+    hal::Mode,
+    hal_types::{ControlId, SwrSweepSetup},
+};
 use anyhow::{bail, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +90,22 @@ pub struct ElecraftProfile {
 }
 
 impl ElecraftProfile {
+    pub fn swr_sweep_setup(self) -> Option<SwrSweepSetup> {
+        let carrier_mode = if self.modes.iter().any(|spec| spec.mode == Mode::Rtty) {
+            Mode::Rtty
+        } else if self.modes.iter().any(|spec| spec.mode == Mode::RttyReverse) {
+            Mode::RttyReverse
+        } else {
+            return None;
+        };
+        let maximum = self.power_max_watts?;
+        Some(SwrSweepSetup {
+            carrier_mode,
+            rf_power: crate::normalize_meter_level(maximum / 4, maximum)
+                .expect("profile power maximum must be nonzero"),
+        })
+    }
+
     pub fn supports_frequency(self, frequency_hz: u64) -> bool {
         self.frequency_ranges
             .iter()
