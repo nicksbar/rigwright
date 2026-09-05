@@ -10,6 +10,62 @@ pub use crate::hal_types::{
 use anyhow::Result;
 use async_trait::async_trait;
 use std::time::Duration;
+use std::{error::Error, fmt};
+
+/// Structured failures exposed when a [`Radio`] operation is mediated by a
+/// session or another HAL boundary.
+///
+/// Driver methods continue to return `anyhow::Result` for compatibility, but
+/// callers can downcast to this type instead of parsing diagnostic strings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HalError {
+    Invalid(String),
+    Unsupported(String),
+    QueueFull,
+    Closed,
+    Superseded,
+    Backend(String),
+    InvalidFrame(String),
+    StaleGeneration,
+    TimedOut,
+    Disconnected,
+}
+
+impl fmt::Display for HalError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Invalid(error) => write!(f, "invalid radio operation: {error}"),
+            Self::Unsupported(error) => write!(f, "unsupported radio operation: {error}"),
+            Self::QueueFull => write!(f, "radio operation queue is full"),
+            Self::Closed => write!(f, "radio session is closed"),
+            Self::Superseded => write!(f, "radio operation was superseded"),
+            Self::Backend(error) => write!(f, "radio backend error: {error}"),
+            Self::InvalidFrame(error) => write!(f, "invalid radio frame: {error}"),
+            Self::StaleGeneration => write!(f, "radio operation belongs to a stale generation"),
+            Self::TimedOut => write!(f, "radio operation timed out"),
+            Self::Disconnected => write!(f, "radio is disconnected"),
+        }
+    }
+}
+
+impl Error for HalError {}
+
+impl From<crate::SessionError> for HalError {
+    fn from(error: crate::SessionError) -> Self {
+        match error {
+            crate::SessionError::Invalid(error) => Self::Invalid(error),
+            crate::SessionError::Unsupported(error) => Self::Unsupported(error),
+            crate::SessionError::QueueFull => Self::QueueFull,
+            crate::SessionError::Closed => Self::Closed,
+            crate::SessionError::Superseded => Self::Superseded,
+            crate::SessionError::Backend(error) => Self::Backend(error),
+            crate::SessionError::InvalidFrame(error) => Self::InvalidFrame(error),
+            crate::SessionError::StaleGeneration => Self::StaleGeneration,
+            crate::SessionError::TimedOut => Self::TimedOut,
+            crate::SessionError::Disconnected => Self::Disconnected,
+        }
+    }
+}
 
 /// Operations a backend can actually perform.
 ///
@@ -504,6 +560,27 @@ mod tests {
             .is_none());
         assert!(!radio.capabilities().can_get_frequency);
         let _ = NullRadio::default();
+    }
+
+    #[test]
+    fn hal_error_conversion_and_display_cover_all_categories() {
+        let errors = [
+            crate::SessionError::Invalid("invalid".into()),
+            crate::SessionError::Unsupported("unsupported".into()),
+            crate::SessionError::QueueFull,
+            crate::SessionError::Closed,
+            crate::SessionError::Superseded,
+            crate::SessionError::Backend("backend".into()),
+            crate::SessionError::InvalidFrame("frame".into()),
+            crate::SessionError::StaleGeneration,
+            crate::SessionError::TimedOut,
+            crate::SessionError::Disconnected,
+        ];
+
+        for error in errors {
+            let hal_error = HalError::from(error);
+            assert!(!hal_error.to_string().is_empty());
+        }
     }
 
     #[test]

@@ -17,11 +17,13 @@ use std::{
 };
 
 const DEFAULT_QUEUE_CAPACITY: usize = 32;
+const MAX_SESSION_EVENTS: usize = 256;
 const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 /// Default ceiling for a continuous transmit hold before the session forces
 /// PTT off as a safety measure.
 const DEFAULT_MAX_TX_HOLD: Duration = Duration::from_secs(180);
+const MAX_PTT_WATCHDOG_ATTEMPTS: u8 = 3;
 /// How fresh the radio's unsolicited event stream must be for a refresh to
 /// trust the streamed observed state instead of issuing wire polls. Well
 /// under any reasonable CI-V/CAT event cadence, so a live stream makes
@@ -187,6 +189,53 @@ impl Error for SessionError {}
 
 pub type SessionTicket = oneshot::Receiver<Result<RadioSnapshot, SessionError>>;
 
+enum SessionRequestKind {
+    GetPower,
+    SetPower(bool),
+    GetControl(ControlId),
+    GetMeter(crate::MeterId),
+    GetScopeState,
+    SetScopeConfiguration(crate::ScopeConfiguration),
+    ProtocolWriteRead(Vec<u8>),
+    GetRepeaterSettings,
+    SetRepeaterSettings(crate::RepeaterSettings),
+    GetRitOffset,
+    SetRitOffset(i32),
+    GetXitOffset,
+    SetXitOffset(i32),
+    SelectMemoryChannel(u16),
+    ReadMemoryChannel(u16),
+    WriteMemoryChannel(crate::MemoryChannel),
+    SendDtmf(crate::DtmfSequence),
+    StartTuner,
+    GetTunerStatus,
+}
+
+enum SessionResponse {
+    Unit,
+    Bool(bool),
+    Control(Option<ControlValue>),
+    Meter(Option<u8>),
+    ScopeState(crate::ScopeState),
+    Bytes(Vec<u8>),
+    RepeaterSettings(crate::RepeaterSettings),
+    Offset(i32),
+    MemoryChannel(crate::MemoryChannel),
+    TunerStatus(Option<crate::TunerStatus>),
+}
+
+struct QueuedRequest {
+    kind: SessionRequestKind,
+    generation: u64,
+    deadline: Instant,
+    response: oneshot::Sender<Result<SessionResponse, SessionError>>,
+}
+
+enum WorkerWork {
+    Operation(QueuedOperation),
+    Request(QueuedRequest),
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct SessionConfig {
     pub queue_capacity: usize,
@@ -220,17 +269,24 @@ pub enum SessionEvent {
     /// The safety watchdog forced PTT off after the configured maximum
     /// continuous transmit hold elapsed.
     PttWatchdogTripped,
+    /// The safety watchdog could not confirm PTT-off after bounded emergency
+    /// retries. The snapshot deliberately retains PTT as active.
+    PttWatchdogFailed {
+        attempts: u8,
+        error: String,
+    },
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct SessionEventRouter {
-    state: Arc<Mutex<Vec<Vec<SessionEvent>>>>,
+    state: Arc<Mutex<Vec<VecDeque<SessionEvent>>>>,
+    dropped_events: Arc<Mutex<u64>>,
 }
 
 impl SessionEventRouter {
     pub fn subscribe(&self) -> SessionEventSubscription {
         let mut state = self.state.lock().expect("session event lock poisoned");
-        state.push(Vec::new());
+        state.push(VecDeque::new());
         SessionEventSubscription {
             index: state.len() - 1,
             router: self.clone(),
@@ -239,17 +295,52 @@ impl SessionEventRouter {
 
     fn publish(&self, event: SessionEvent) {
         if let Ok(mut state) = self.state.lock() {
+            let mut dropped = 0;
             for queue in &mut *state {
-                queue.push(event.clone());
+                if queue.len() >= MAX_SESSION_EVENTS {
+                    if matches!(&event, SessionEvent::SnapshotChanged(_)) {
+                        if let Some(index) = queue
+                            .iter()
+                            .position(|queued| matches!(queued, SessionEvent::SnapshotChanged(_)))
+                        {
+                            queue.remove(index);
+                        } else {
+                            dropped += 1;
+                            continue;
+                        }
+                    } else if let Some(index) = queue
+                        .iter()
+                        .position(|queued| matches!(queued, SessionEvent::SnapshotChanged(_)))
+                    {
+                        queue.remove(index);
+                    } else {
+                        dropped += 1;
+                        continue;
+                    }
+                    dropped += 1;
+                }
+                queue.push_back(event.clone());
+            }
+            if dropped > 0 {
+                if let Ok(mut total) = self.dropped_events.lock() {
+                    *total = total.saturating_add(dropped);
+                }
             }
         }
+    }
+
+    pub fn dropped_events(&self) -> u64 {
+        self.dropped_events
+            .lock()
+            .map(|count| *count)
+            .unwrap_or_default()
     }
 
     fn drain(&self, index: usize) -> Vec<SessionEvent> {
         self.state
             .lock()
             .ok()
-            .and_then(|mut state| state.get_mut(index).map(std::mem::take))
+            .and_then(|mut state| state.get_mut(index).map(|queue| queue.drain(..).collect()))
             .unwrap_or_default()
     }
 }
@@ -275,12 +366,15 @@ struct QueuedOperation {
 
 struct SharedState {
     queue: VecDeque<QueuedOperation>,
+    requests: VecDeque<QueuedRequest>,
     snapshot: RadioSnapshot,
     closed: bool,
     diagnostics: SessionDiagnostics,
     /// When the transmitter was last observed or commanded on. `Some` only
     /// while PTT is believed active; used by the safety watchdog.
     ptt_on_since: Option<Instant>,
+    ptt_watchdog_attempts: u8,
+    ptt_watchdog_failed: bool,
 }
 
 struct Shared {
@@ -339,6 +433,116 @@ impl Radio for RadioSession {
             .ok_or_else(|| anyhow::anyhow!("radio refresh returned no PTT state"))
     }
 
+    async fn read_core_state(&self) -> anyhow::Result<crate::CoreState> {
+        let snapshot = self.wait(self.refresh()).await?;
+        Ok(crate::CoreState {
+            frequency_hz: snapshot.observed.frequency_hz,
+            mode: snapshot.observed.mode,
+            ptt: snapshot.observed.ptt,
+        })
+    }
+
+    fn link_health(&self) -> crate::hal::LinkHealth {
+        self.current_radio().link_health()
+    }
+
+    fn event_stream_age(&self) -> Option<Duration> {
+        self.current_radio().event_stream_age()
+    }
+
+    async fn get_power(&self) -> anyhow::Result<bool> {
+        match self.wait_request(SessionRequestKind::GetPower).await? {
+            SessionResponse::Bool(value) => Ok(value),
+            _ => unreachable!("get_power returned the wrong session response"),
+        }
+    }
+
+    async fn set_power(&self, enabled: bool) -> anyhow::Result<()> {
+        self.wait_request(SessionRequestKind::SetPower(enabled))
+            .await
+            .map(|_| ())
+    }
+
+    fn supports_scope(&self) -> bool {
+        self.current_radio().supports_scope()
+    }
+
+    fn supports_iq_output(&self) -> bool {
+        self.current_radio().supports_iq_output()
+    }
+
+    fn scope_metadata(&self) -> Option<crate::ScopeMetadata> {
+        self.current_radio().scope_metadata()
+    }
+
+    async fn get_scope_state(&self) -> anyhow::Result<crate::ScopeState> {
+        match self.wait_request(SessionRequestKind::GetScopeState).await? {
+            SessionResponse::ScopeState(state) => Ok(state),
+            _ => unreachable!("get_scope_state returned the wrong session response"),
+        }
+    }
+
+    fn filter_bandwidth_hz(&self, mode: Mode, filter: u8) -> Option<u32> {
+        self.current_radio().filter_bandwidth_hz(mode, filter)
+    }
+
+    fn swr_sweep_setup(&self) -> Option<crate::SwrSweepSetup> {
+        self.current_radio().swr_sweep_setup()
+    }
+
+    fn meter_presentation(
+        &self,
+        id: crate::MeterId,
+        normalized: u8,
+    ) -> Option<crate::MeterPresentation> {
+        self.current_radio().meter_presentation(id, normalized)
+    }
+
+    fn control_max(&self, id: ControlId) -> Option<u8> {
+        self.current_radio().control_max(id)
+    }
+
+    fn supported_control_values(&self, id: ControlId) -> Option<&'static [u8]> {
+        self.current_radio().supported_control_values(id)
+    }
+
+    fn meter_poll_spec(&self, id: crate::MeterId) -> Option<crate::MeterPollSpec> {
+        self.current_radio().meter_poll_spec(id)
+    }
+
+    fn meter_metadata(&self, id: crate::MeterId) -> Option<crate::MeterMetadata> {
+        self.current_radio().meter_metadata(id)
+    }
+
+    async fn set_scope_configuration(
+        &self,
+        config: crate::ScopeConfiguration,
+    ) -> anyhow::Result<()> {
+        self.wait_request(SessionRequestKind::SetScopeConfiguration(config))
+            .await
+            .map(|_| ())
+    }
+
+    async fn protocol_write_read(&self, request: &[u8]) -> anyhow::Result<Vec<u8>> {
+        match self
+            .wait_request(SessionRequestKind::ProtocolWriteRead(request.to_vec()))
+            .await?
+        {
+            SessionResponse::Bytes(response) => Ok(response),
+            _ => unreachable!("protocol_write_read returned the wrong session response"),
+        }
+    }
+
+    async fn get_control(&self, id: ControlId) -> anyhow::Result<Option<ControlValue>> {
+        match self
+            .wait_request(SessionRequestKind::GetControl(id))
+            .await?
+        {
+            SessionResponse::Control(value) => Ok(value),
+            _ => unreachable!("get_control returned the wrong session response"),
+        }
+    }
+
     async fn set_control(&self, id: ControlId, value: ControlValue) -> anyhow::Result<()> {
         self.wait(self.set_control(id, value)).await.map(|_| ())
     }
@@ -353,6 +557,127 @@ impl Radio for RadioSession {
 
     fn supports_control_write(&self, id: ControlId) -> bool {
         self.current_radio().supports_control_write(id)
+    }
+
+    async fn get_repeater_settings(&self) -> anyhow::Result<crate::RepeaterSettings> {
+        match self
+            .wait_request(SessionRequestKind::GetRepeaterSettings)
+            .await?
+        {
+            SessionResponse::RepeaterSettings(settings) => Ok(settings),
+            _ => unreachable!("get_repeater_settings returned the wrong session response"),
+        }
+    }
+
+    async fn set_repeater_settings(&self, settings: crate::RepeaterSettings) -> anyhow::Result<()> {
+        self.wait_request(SessionRequestKind::SetRepeaterSettings(settings))
+            .await
+            .map(|_| ())
+    }
+
+    async fn get_rit_offset_hz(&self) -> anyhow::Result<i32> {
+        match self.wait_request(SessionRequestKind::GetRitOffset).await? {
+            SessionResponse::Offset(offset) => Ok(offset),
+            _ => unreachable!("get_rit_offset_hz returned the wrong session response"),
+        }
+    }
+
+    async fn set_rit_offset_hz(&self, offset_hz: i32) -> anyhow::Result<()> {
+        self.wait_request(SessionRequestKind::SetRitOffset(offset_hz))
+            .await
+            .map(|_| ())
+    }
+
+    async fn get_xit_offset_hz(&self) -> anyhow::Result<i32> {
+        match self.wait_request(SessionRequestKind::GetXitOffset).await? {
+            SessionResponse::Offset(offset) => Ok(offset),
+            _ => unreachable!("get_xit_offset_hz returned the wrong session response"),
+        }
+    }
+
+    async fn set_xit_offset_hz(&self, offset_hz: i32) -> anyhow::Result<()> {
+        self.wait_request(SessionRequestKind::SetXitOffset(offset_hz))
+            .await
+            .map(|_| ())
+    }
+
+    async fn select_memory_channel(&self, channel: u16) -> anyhow::Result<()> {
+        self.wait_request(SessionRequestKind::SelectMemoryChannel(channel))
+            .await
+            .map(|_| ())
+    }
+
+    async fn read_memory_channel(&self, channel: u16) -> anyhow::Result<crate::MemoryChannel> {
+        match self
+            .wait_request(SessionRequestKind::ReadMemoryChannel(channel))
+            .await?
+        {
+            SessionResponse::MemoryChannel(memory) => Ok(memory),
+            _ => unreachable!("read_memory_channel returned the wrong session response"),
+        }
+    }
+
+    async fn write_memory_channel(&self, channel: crate::MemoryChannel) -> anyhow::Result<()> {
+        self.wait_request(SessionRequestKind::WriteMemoryChannel(channel))
+            .await
+            .map(|_| ())
+    }
+
+    async fn send_dtmf(&self, sequence: crate::DtmfSequence) -> anyhow::Result<()> {
+        self.wait_request(SessionRequestKind::SendDtmf(sequence))
+            .await
+            .map(|_| ())
+    }
+
+    fn supports_repeater_settings(&self) -> bool {
+        self.current_radio().supports_repeater_settings()
+    }
+
+    fn supports_memory_channels(&self) -> bool {
+        self.current_radio().supports_memory_channels()
+    }
+
+    fn supports_memory_selection(&self) -> bool {
+        self.current_radio().supports_memory_selection()
+    }
+
+    fn supports_send_dtmf(&self) -> bool {
+        self.current_radio().supports_send_dtmf()
+    }
+
+    async fn get_meter(&self, id: crate::MeterId) -> anyhow::Result<Option<u8>> {
+        match self.wait_request(SessionRequestKind::GetMeter(id)).await? {
+            SessionResponse::Meter(value) => Ok(value),
+            _ => unreachable!("get_meter returned the wrong session response"),
+        }
+    }
+
+    fn supports_meter(&self, id: crate::MeterId) -> bool {
+        self.current_radio().supports_meter(id)
+    }
+
+    fn supported_controls(&self) -> Vec<ControlId> {
+        self.current_radio().supported_controls()
+    }
+
+    fn supported_meters(&self) -> Vec<crate::MeterId> {
+        self.current_radio().supported_meters()
+    }
+
+    async fn start_tuner(&self) -> anyhow::Result<()> {
+        self.wait_request(SessionRequestKind::StartTuner)
+            .await
+            .map(|_| ())
+    }
+
+    async fn get_tuner_status(&self) -> anyhow::Result<Option<crate::TunerStatus>> {
+        match self
+            .wait_request(SessionRequestKind::GetTunerStatus)
+            .await?
+        {
+            SessionResponse::TunerStatus(status) => Ok(status),
+            _ => unreachable!("get_tuner_status returned the wrong session response"),
+        }
     }
 
     fn capabilities(&self) -> RadioCapabilities {
@@ -395,10 +720,13 @@ impl RadioSession {
         let shared = Arc::new(Shared {
             state: Mutex::new(SharedState {
                 queue: VecDeque::new(),
+                requests: VecDeque::new(),
                 snapshot,
                 closed: false,
                 diagnostics: SessionDiagnostics::default(),
                 ptt_on_since: None,
+                ptt_watchdog_attempts: 0,
+                ptt_watchdog_failed: false,
             }),
             wake: Condvar::new(),
             events: SessionEventRouter::default(),
@@ -488,10 +816,79 @@ impl RadioSession {
         ticket: Result<SessionTicket, SessionError>,
     ) -> anyhow::Result<RadioSnapshot> {
         ticket
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?
+            .map_err(|error| anyhow::Error::new(crate::HalError::from(error)))?
             .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?
-            .map_err(|error| anyhow::anyhow!(error.to_string()))
+            .map_err(|_| anyhow::Error::new(crate::HalError::Closed))?
+            .map_err(|error| anyhow::Error::new(crate::HalError::from(error)))
+    }
+
+    async fn wait_request(&self, request: SessionRequestKind) -> anyhow::Result<SessionResponse> {
+        let receiver = self
+            .submit_request(request)
+            .map_err(|error| anyhow::Error::new(crate::HalError::from(error)))?;
+        receiver
+            .await
+            .map_err(|_| anyhow::Error::new(crate::HalError::Closed))?
+            .map_err(|error| anyhow::Error::new(crate::HalError::from(error)))
+    }
+
+    fn submit_request(
+        &self,
+        request: SessionRequestKind,
+    ) -> Result<oneshot::Receiver<Result<SessionResponse, SessionError>>, SessionError> {
+        self.validate_request(&request)?;
+        let (response, receiver) = oneshot::channel();
+        let mut state = self.shared.state.lock().map_err(|_| SessionError::Closed)?;
+        if state.closed {
+            return Err(SessionError::Closed);
+        }
+        if state.queue.len() + state.requests.len() >= self.shared.queue_capacity {
+            return Err(SessionError::QueueFull);
+        }
+        let generation = state.diagnostics.generation;
+        state.requests.push_back(QueuedRequest {
+            kind: request,
+            generation,
+            deadline: Instant::now() + DEFAULT_COMMAND_TIMEOUT,
+            response,
+        });
+        state.diagnostics.queued = state.diagnostics.queued.wrapping_add(1);
+        self.shared.wake.notify_one();
+        Ok(receiver)
+    }
+
+    fn validate_request(&self, request: &SessionRequestKind) -> Result<(), SessionError> {
+        let capabilities = self.current_radio().capabilities();
+        match request {
+            SessionRequestKind::SetPower(_) if !capabilities.can_set_power => {
+                Err(SessionError::Unsupported("power write".into()))
+            }
+            SessionRequestKind::ProtocolWriteRead(frame) if frame.is_empty() => Err(
+                SessionError::InvalidFrame("raw frame cannot be empty".into()),
+            ),
+            SessionRequestKind::ProtocolWriteRead(_) if !capabilities.can_raw_protocol => {
+                Err(SessionError::Unsupported("raw protocol write".into()))
+            }
+            SessionRequestKind::SetScopeConfiguration(_) if !self.supports_scope() => {
+                Err(SessionError::Unsupported("scope configuration".into()))
+            }
+            SessionRequestKind::SetRepeaterSettings(_) if !self.supports_repeater_settings() => {
+                Err(SessionError::Unsupported("repeater settings write".into()))
+            }
+            SessionRequestKind::SelectMemoryChannel(_) if !self.supports_memory_selection() => {
+                Err(SessionError::Unsupported("memory selection".into()))
+            }
+            SessionRequestKind::ReadMemoryChannel(_)
+            | SessionRequestKind::WriteMemoryChannel(_)
+                if !self.supports_memory_channels() =>
+            {
+                Err(SessionError::Unsupported("memory channel".into()))
+            }
+            SessionRequestKind::SendDtmf(_) if !self.supports_send_dtmf() => {
+                Err(SessionError::Unsupported("DTMF".into()))
+            }
+            _ => Ok(()),
+        }
     }
 
     pub fn submit(&self, operation: SessionOperation) -> Result<SessionTicket, SessionError> {
@@ -553,7 +950,7 @@ impl RadioSession {
             let _ = sender.send(Ok(state.snapshot.clone()));
             return Ok(receiver);
         }
-        if state.queue.len() >= self.shared.queue_capacity {
+        if state.queue.len() + state.requests.len() >= self.shared.queue_capacity {
             self.shared
                 .events
                 .publish(SessionEvent::OperationCompleted {
@@ -690,6 +1087,9 @@ impl RadioSession {
                 let _ = waiter.send(Err(SessionError::StaleGeneration));
             }
         }
+        for request in state.requests.drain(..) {
+            let _ = request.response.send(Err(SessionError::StaleGeneration));
+        }
         state.snapshot.pending.clear();
         self.shared.wake.notify_one();
         Ok(state.diagnostics.generation)
@@ -703,6 +1103,9 @@ impl RadioSession {
                 for waiter in queued.waiters {
                     let _ = waiter.send(Err(SessionError::Closed));
                 }
+            }
+            for request in state.requests.drain(..) {
+                let _ = request.response.send(Err(SessionError::Closed));
             }
             state.snapshot.pending.clear();
             self.shared.wake.notify_all();
@@ -773,7 +1176,7 @@ fn worker_loop(
         let Some(shared) = weak.upgrade() else { break };
         ingest_events(&shared);
         enforce_ptt_watchdog(&shared, &radio);
-        let operation = {
+        let work = {
             let mut state = match shared.state.lock() {
                 Ok(state) => state,
                 Err(_) => break,
@@ -787,14 +1190,16 @@ fn worker_loop(
                     .iter()
                     .map(|item| item.operation.clone())
                     .collect();
-                Some(queued)
+                Some(WorkerWork::Operation(queued))
+            } else if let Some(request) = state.requests.pop_front() {
+                Some(WorkerWork::Request(request))
             } else if refresh_interval.is_some_and(|_| Instant::now() >= next_refresh) {
-                Some(QueuedOperation {
+                Some(WorkerWork::Operation(QueuedOperation {
                     operation: SessionOperation::Refresh,
                     generation: state.diagnostics.generation,
                     deadline: Instant::now() + DEFAULT_COMMAND_TIMEOUT,
                     waiters: Vec::new(),
-                })
+                }))
             } else {
                 let timeout = refresh_interval
                     .map(|_| next_refresh.saturating_duration_since(Instant::now()))
@@ -804,7 +1209,59 @@ fn worker_loop(
                 None
             }
         };
-        let Some(queued) = operation else { continue };
+        let Some(work) = work else { continue };
+        let WorkerWork::Operation(queued) = work else {
+            let WorkerWork::Request(request) = work else {
+                unreachable!("worker request branch was already matched")
+            };
+            let timed_out = Instant::now() >= request.deadline;
+            let result = if timed_out {
+                Err(anyhow::anyhow!("radio session request deadline expired"))
+            } else {
+                radio
+                    .lock()
+                    .map(|radio| execute_request(&radio, &request.kind))
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("radio session backend lock poisoned")))
+            };
+            let mut state = match shared.state.lock() {
+                Ok(state) => state,
+                Err(_) => break,
+            };
+            let response = match result {
+                Ok(response) if request.generation == state.diagnostics.generation => {
+                    if !state.ptt_watchdog_failed {
+                        state.snapshot.status = SessionStatus::Ready;
+                        state.snapshot.synchronized = true;
+                        state.snapshot.last_error = None;
+                    }
+                    state.snapshot.sequence = state.snapshot.sequence.wrapping_add(1);
+                    state.diagnostics.completed = state.diagnostics.completed.wrapping_add(1);
+                    shared
+                        .events
+                        .publish(SessionEvent::SnapshotChanged(state.snapshot.clone()));
+                    Ok(response)
+                }
+                Ok(_) => Err(SessionError::StaleGeneration),
+                Err(error) => {
+                    state.snapshot.status = SessionStatus::Recovering;
+                    state.snapshot.synchronized = false;
+                    state.snapshot.last_error = Some(error.to_string());
+                    state.snapshot.sequence = state.snapshot.sequence.wrapping_add(1);
+                    state.diagnostics.failed = state.diagnostics.failed.wrapping_add(1);
+                    state.diagnostics.recoveries = state.diagnostics.recoveries.wrapping_add(1);
+                    shared
+                        .events
+                        .publish(SessionEvent::SnapshotChanged(state.snapshot.clone()));
+                    Err(if timed_out {
+                        SessionError::TimedOut
+                    } else {
+                        SessionError::Backend(error.to_string())
+                    })
+                }
+            };
+            let _ = request.response.send(response);
+            continue;
+        };
         let timed_out = Instant::now() >= queued.deadline;
         let result = if timed_out {
             Err(anyhow::anyhow!("radio session command deadline expired"))
@@ -842,10 +1299,14 @@ fn worker_loop(
                 // can force PTT off if the client never will.
                 if let SessionOperation::SetPtt(enabled) = queued.operation {
                     state.ptt_on_since = if enabled { Some(Instant::now()) } else { None };
+                    state.ptt_watchdog_attempts = 0;
+                    state.ptt_watchdog_failed = false;
                 }
-                state.snapshot.status = SessionStatus::Ready;
-                state.snapshot.synchronized = true;
-                state.snapshot.last_error = None;
+                if !state.ptt_watchdog_failed {
+                    state.snapshot.status = SessionStatus::Ready;
+                    state.snapshot.synchronized = true;
+                    state.snapshot.last_error = None;
+                }
                 state.snapshot.sequence = state.snapshot.sequence.wrapping_add(1);
                 state.diagnostics.completed = state.diagnostics.completed.wrapping_add(1);
                 let snapshot = state.snapshot.clone();
@@ -917,34 +1378,54 @@ fn enforce_ptt_watchdog(shared: &Shared, radio: &Arc<Mutex<Arc<dyn Radio>>>) {
     let Some(max_hold) = shared.max_tx_hold else {
         return;
     };
-    let exceeded = shared
-        .state
-        .lock()
-        .ok()
-        .and_then(|state| state.ptt_on_since)
-        .is_some_and(|since| since.elapsed() >= max_hold);
+    let exceeded = shared.state.lock().ok().is_some_and(|state| {
+        state
+            .ptt_on_since
+            .is_some_and(|since| since.elapsed() >= max_hold)
+            && state.ptt_watchdog_attempts < MAX_PTT_WATCHDOG_ATTEMPTS
+    });
     if !exceeded {
         return;
     }
-    let result = radio
-        .lock()
-        .map(|radio| futures::executor::block_on(radio.set_ptt(false)))
-        .unwrap_or_else(|_| Err(anyhow::anyhow!("radio session backend lock poisoned")));
+    let mut attempts = 0;
+    let result = loop {
+        attempts += 1;
+        let result = radio
+            .lock()
+            .map(|radio| futures::executor::block_on(radio.set_ptt(false)))
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("radio session backend lock poisoned")));
+        match result {
+            Ok(()) => break Ok(()),
+            Err(_error) if attempts < MAX_PTT_WATCHDOG_ATTEMPTS => {}
+            Err(error) => break Err(error),
+        }
+    };
     if let Ok(mut state) = shared.state.lock() {
-        state.ptt_on_since = None;
-        state.snapshot.observed.ptt = Some(false);
+        state.ptt_watchdog_attempts = attempts;
         state.snapshot.sequence = state.snapshot.sequence.wrapping_add(1);
         match result {
             Ok(()) => {
+                state.ptt_on_since = None;
+                state.ptt_watchdog_attempts = 0;
+                state.ptt_watchdog_failed = false;
+                state.snapshot.observed.ptt = Some(false);
                 shared.events.publish(SessionEvent::PttWatchdogTripped);
                 shared
                     .events
                     .publish(SessionEvent::SnapshotChanged(state.snapshot.clone()));
             }
             Err(error) => {
+                let error_text = error.to_string();
+                state.ptt_watchdog_failed = true;
+                state.snapshot.status = SessionStatus::Degraded;
+                state.snapshot.synchronized = false;
                 state.snapshot.last_error = Some(format!(
-                    "PTT watchdog failed to drop the transmitter: {error}"
+                    "PTT watchdog failed to drop the transmitter after {attempts} attempts: {error_text}"
                 ));
+                shared.events.publish(SessionEvent::PttWatchdogFailed {
+                    attempts,
+                    error: error_text,
+                });
                 shared
                     .events
                     .publish(SessionEvent::SnapshotChanged(state.snapshot.clone()));
@@ -1052,6 +1533,80 @@ fn execute(
     }
 }
 
+fn execute_request(
+    radio: &Arc<dyn Radio>,
+    request: &SessionRequestKind,
+) -> anyhow::Result<SessionResponse> {
+    match request {
+        SessionRequestKind::GetPower => Ok(SessionResponse::Bool(futures::executor::block_on(
+            radio.get_power(),
+        )?)),
+        SessionRequestKind::SetPower(enabled) => {
+            futures::executor::block_on(radio.set_power(*enabled))?;
+            Ok(SessionResponse::Unit)
+        }
+        SessionRequestKind::GetControl(id) => Ok(SessionResponse::Control(
+            futures::executor::block_on(radio.get_control(*id))?,
+        )),
+        SessionRequestKind::GetMeter(id) => Ok(SessionResponse::Meter(
+            futures::executor::block_on(radio.get_meter(*id))?,
+        )),
+        SessionRequestKind::GetScopeState => Ok(SessionResponse::ScopeState(
+            futures::executor::block_on(radio.get_scope_state())?,
+        )),
+        SessionRequestKind::SetScopeConfiguration(config) => {
+            futures::executor::block_on(radio.set_scope_configuration(*config))?;
+            Ok(SessionResponse::Unit)
+        }
+        SessionRequestKind::ProtocolWriteRead(request) => Ok(SessionResponse::Bytes(
+            futures::executor::block_on(radio.protocol_write_read(request))?,
+        )),
+        SessionRequestKind::GetRepeaterSettings => Ok(SessionResponse::RepeaterSettings(
+            futures::executor::block_on(radio.get_repeater_settings())?,
+        )),
+        SessionRequestKind::SetRepeaterSettings(settings) => {
+            futures::executor::block_on(radio.set_repeater_settings(*settings))?;
+            Ok(SessionResponse::Unit)
+        }
+        SessionRequestKind::GetRitOffset => Ok(SessionResponse::Offset(
+            futures::executor::block_on(radio.get_rit_offset_hz())?,
+        )),
+        SessionRequestKind::SetRitOffset(offset) => {
+            futures::executor::block_on(radio.set_rit_offset_hz(*offset))?;
+            Ok(SessionResponse::Unit)
+        }
+        SessionRequestKind::GetXitOffset => Ok(SessionResponse::Offset(
+            futures::executor::block_on(radio.get_xit_offset_hz())?,
+        )),
+        SessionRequestKind::SetXitOffset(offset) => {
+            futures::executor::block_on(radio.set_xit_offset_hz(*offset))?;
+            Ok(SessionResponse::Unit)
+        }
+        SessionRequestKind::SelectMemoryChannel(channel) => {
+            futures::executor::block_on(radio.select_memory_channel(*channel))?;
+            Ok(SessionResponse::Unit)
+        }
+        SessionRequestKind::ReadMemoryChannel(channel) => Ok(SessionResponse::MemoryChannel(
+            futures::executor::block_on(radio.read_memory_channel(*channel))?,
+        )),
+        SessionRequestKind::WriteMemoryChannel(channel) => {
+            futures::executor::block_on(radio.write_memory_channel(channel.clone()))?;
+            Ok(SessionResponse::Unit)
+        }
+        SessionRequestKind::SendDtmf(sequence) => {
+            futures::executor::block_on(radio.send_dtmf(sequence.clone()))?;
+            Ok(SessionResponse::Unit)
+        }
+        SessionRequestKind::StartTuner => {
+            futures::executor::block_on(radio.start_tuner())?;
+            Ok(SessionResponse::Unit)
+        }
+        SessionRequestKind::GetTunerStatus => Ok(SessionResponse::TunerStatus(
+            futures::executor::block_on(radio.get_tuner_status())?,
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1062,6 +1617,7 @@ mod tests {
         frequency: Mutex<u64>,
         mode: Mutex<Mode>,
         ptt: Mutex<bool>,
+        ptt_failures_remaining: AtomicUsize,
         writes: AtomicUsize,
         core_reads: AtomicUsize,
         stream_age: Mutex<Option<Duration>>,
@@ -1102,6 +1658,20 @@ mod tests {
         }
         async fn set_ptt(&self, value: bool) -> anyhow::Result<()> {
             self.writes.fetch_add(1, Ordering::SeqCst);
+            if !value
+                && self
+                    .ptt_failures_remaining
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                        if remaining > 0 {
+                            Some(remaining - 1)
+                        } else {
+                            None
+                        }
+                    })
+                    .is_ok()
+            {
+                return Err(anyhow::anyhow!("simulated PTT-off failure"));
+            }
             *self.ptt.lock().unwrap() = value;
             Ok(())
         }
@@ -1131,11 +1701,123 @@ mod tests {
             frequency: Mutex::new(14_074_000),
             mode: Mutex::new(Mode::Usb),
             ptt: Mutex::new(false),
+            ptt_failures_remaining: AtomicUsize::new(0),
             writes: AtomicUsize::new(0),
             core_reads: AtomicUsize::new(0),
             stream_age: Mutex::new(None),
             events: RadioEventRouter::default(),
         })
+    }
+
+    struct OptionalSurfaceRadio;
+
+    #[async_trait::async_trait]
+    impl Radio for OptionalSurfaceRadio {
+        async fn get_frequency_hz(&self) -> anyhow::Result<u64> {
+            Ok(14_074_000)
+        }
+
+        async fn set_frequency_hz(&self, _hz: u64) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn get_mode(&self) -> anyhow::Result<Mode> {
+            Ok(Mode::Usb)
+        }
+
+        async fn set_mode(&self, _mode: Mode) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn set_ptt(&self, _enabled: bool) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn get_power(&self) -> anyhow::Result<bool> {
+            Ok(true)
+        }
+
+        async fn protocol_write_read(&self, _request: &[u8]) -> anyhow::Result<Vec<u8>> {
+            Ok(vec![0xAA])
+        }
+
+        async fn get_control(&self, _id: ControlId) -> anyhow::Result<Option<ControlValue>> {
+            Ok(Some(ControlValue::U8(7)))
+        }
+
+        fn supports_scope(&self) -> bool {
+            true
+        }
+
+        fn supports_iq_output(&self) -> bool {
+            true
+        }
+
+        fn swr_sweep_setup(&self) -> Option<crate::SwrSweepSetup> {
+            Some(crate::SwrSweepSetup {
+                carrier_mode: Mode::Rtty,
+                rf_power: 1,
+            })
+        }
+
+        async fn get_meter(&self, _id: crate::MeterId) -> anyhow::Result<Option<u8>> {
+            Ok(Some(42))
+        }
+
+        fn supports_meter(&self, _id: crate::MeterId) -> bool {
+            true
+        }
+
+        fn supports_control(&self, _id: ControlId) -> bool {
+            true
+        }
+
+        fn capabilities(&self) -> RadioCapabilities {
+            RadioCapabilities {
+                can_get_frequency: true,
+                can_set_frequency: true,
+                can_get_mode: true,
+                can_set_mode: true,
+                can_get_ptt: false,
+                can_set_ptt: true,
+                can_get_power: true,
+                can_set_power: false,
+                can_raw_protocol: true,
+            }
+        }
+    }
+
+    #[test]
+    fn session_forwards_optional_radio_surface_without_trait_defaults() {
+        let session = RadioSession::from_radio(
+            Arc::new(OptionalSurfaceRadio),
+            SessionConfig {
+                queue_capacity: 4,
+                refresh_interval: None,
+                max_tx_hold: None,
+            },
+        )
+        .unwrap();
+
+        assert!(Radio::supports_scope(&session));
+        assert!(Radio::supports_iq_output(&session));
+        assert_eq!(Radio::swr_sweep_setup(&session).unwrap().rf_power, 1);
+        assert!(Radio::supports_meter(&session, crate::MeterId::Signal));
+        assert_eq!(
+            futures::executor::block_on(Radio::get_meter(&session, crate::MeterId::Signal))
+                .unwrap(),
+            Some(42)
+        );
+        assert_eq!(
+            futures::executor::block_on(Radio::get_control(&session, ControlId::RfPower)).unwrap(),
+            Some(ControlValue::U8(7))
+        );
+        assert_eq!(
+            futures::executor::block_on(Radio::protocol_write_read(&session, &[0x01])).unwrap(),
+            vec![0xAA]
+        );
+        assert!(futures::executor::block_on(Radio::get_power(&session)).unwrap());
+        assert!(Radio::capabilities(&session).can_raw_protocol);
     }
 
     #[test]
@@ -1250,6 +1932,7 @@ mod tests {
             },
         )
         .unwrap();
+        let subscription = session.events().subscribe();
         // Key the transmitter on through the normal admission path.
         futures::executor::block_on(session.set_ptt(true).unwrap())
             .unwrap()
@@ -1267,6 +1950,46 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(dropped, "watchdog did not force PTT off");
+        assert!(subscription
+            .drain()
+            .iter()
+            .any(|event| matches!(event, SessionEvent::PttWatchdogTripped)));
+    }
+
+    #[test]
+    fn ptt_watchdog_preserves_active_state_after_bounded_shutdown_failure() {
+        let radio = fake();
+        let session = RadioSession::from_radio(
+            Arc::clone(&radio),
+            SessionConfig {
+                queue_capacity: 4,
+                refresh_interval: Some(Duration::from_millis(10)),
+                max_tx_hold: Some(Duration::from_millis(20)),
+            },
+        )
+        .unwrap();
+        let subscription = session.events().subscribe();
+        futures::executor::block_on(session.set_ptt(true).unwrap())
+            .unwrap()
+            .unwrap();
+        radio.ptt_failures_remaining.store(3, Ordering::SeqCst);
+
+        for _ in 0..1000 {
+            if session.snapshot().status == SessionStatus::Degraded {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let snapshot = session.snapshot();
+        assert_eq!(snapshot.status, SessionStatus::Degraded);
+        assert_eq!(snapshot.observed.ptt, Some(true));
+        assert!(snapshot.last_error.is_some());
+        assert_eq!(radio.writes.load(Ordering::SeqCst), 4);
+        assert!(subscription
+            .drain()
+            .iter()
+            .any(|event| matches!(event, SessionEvent::PttWatchdogFailed { attempts: 3, .. })));
     }
 
     #[test]
@@ -1461,5 +2184,65 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn radio_trait_preserves_structured_session_errors() {
+        let session = RadioSession::from_radio(
+            fake(),
+            SessionConfig {
+                queue_capacity: 4,
+                refresh_interval: None,
+                max_tx_hold: None,
+            },
+        )
+        .unwrap();
+
+        let unsupported = futures::executor::block_on(Radio::set_power(&session, true))
+            .expect_err("fake radio does not support power writes");
+        assert!(matches!(
+            unsupported.downcast_ref::<crate::HalError>(),
+            Some(crate::HalError::Unsupported(operation)) if operation == "power write"
+        ));
+
+        session.close();
+        let closed = futures::executor::block_on(Radio::get_frequency_hz(&session))
+            .expect_err("closed session must reject new work");
+        assert!(matches!(
+            closed.downcast_ref::<crate::HalError>(),
+            Some(crate::HalError::Closed)
+        ));
+    }
+
+    #[test]
+    fn session_event_queue_coalesces_snapshots_and_preserves_critical_events() {
+        let router = SessionEventRouter::default();
+        let subscription = router.subscribe();
+        let snapshot = RadioSnapshot {
+            status: SessionStatus::Ready,
+            desired: RadioState::default(),
+            observed: RadioState::default(),
+            pending: Vec::new(),
+            sequence: 0,
+            generation: 0,
+            synchronized: true,
+            last_error: None,
+        };
+        for sequence in 0..300 {
+            let mut snapshot = snapshot.clone();
+            snapshot.sequence = sequence;
+            router.publish(SessionEvent::SnapshotChanged(snapshot));
+        }
+        router.publish(SessionEvent::OperationAccepted(SessionOperation::Refresh));
+
+        let events = subscription.drain();
+        assert_eq!(events.len(), 256);
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                SessionEvent::OperationAccepted(SessionOperation::Refresh)
+            )
+        }));
+        assert_eq!(router.dropped_events(), 45);
     }
 }

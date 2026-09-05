@@ -1,8 +1,10 @@
 //! Protocol-neutral unsolicited radio event routing.
 
 use crate::{ControlId, MeterId, Mode};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+
+const MAX_SUBSCRIBER_EVENTS: usize = 256;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RadioEvent {
@@ -38,7 +40,8 @@ pub struct SubscriptionId(u64);
 #[derive(Debug, Default)]
 struct RouterState {
     next_id: u64,
-    subscribers: HashMap<SubscriptionId, Vec<RadioEvent>>,
+    subscribers: HashMap<SubscriptionId, VecDeque<RadioEvent>>,
+    dropped_events: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -49,7 +52,7 @@ impl RadioEventRouter {
         let mut state = self.0.lock().expect("radio event router lock poisoned");
         state.next_id = state.next_id.wrapping_add(1).max(1);
         let id = SubscriptionId(state.next_id);
-        state.subscribers.insert(id, Vec::new());
+        state.subscribers.insert(id, VecDeque::new());
         RadioEventSubscription {
             id,
             router: self.clone(),
@@ -58,17 +61,35 @@ impl RadioEventRouter {
 
     pub fn publish(&self, event: RadioEvent) {
         if let Ok(mut state) = self.0.lock() {
+            let mut dropped = 0;
             for queue in state.subscribers.values_mut() {
-                queue.push(event.clone());
+                if queue.len() >= MAX_SUBSCRIBER_EVENTS {
+                    queue.pop_front();
+                    dropped += 1;
+                }
+                queue.push_back(event.clone());
             }
+            state.dropped_events = state.dropped_events.saturating_add(dropped);
         }
+    }
+
+    pub fn dropped_events(&self) -> u64 {
+        self.0
+            .lock()
+            .map(|state| state.dropped_events)
+            .unwrap_or_default()
     }
 
     fn drain(&self, id: SubscriptionId) -> Vec<RadioEvent> {
         self.0
             .lock()
             .ok()
-            .and_then(|mut state| state.subscribers.get_mut(&id).map(std::mem::take))
+            .and_then(|mut state| {
+                state
+                    .subscribers
+                    .get_mut(&id)
+                    .map(|queue| queue.drain(..).collect())
+            })
             .unwrap_or_default()
     }
 
@@ -117,5 +138,17 @@ mod tests {
             frequency_hz: 7_000_000,
         });
         assert_eq!(second.drain().len(), 1);
+    }
+
+    #[test]
+    fn subscriber_queue_is_bounded_and_reports_drops() {
+        let router = RadioEventRouter::default();
+        let subscription = router.subscribe();
+        for frequency_hz in 0..300 {
+            router.publish(RadioEvent::FrequencyChanged { frequency_hz });
+        }
+
+        assert_eq!(subscription.drain().len(), 256);
+        assert_eq!(router.dropped_events(), 44);
     }
 }

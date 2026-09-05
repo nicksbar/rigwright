@@ -16,6 +16,7 @@ pub mod probe;
 pub mod protocol;
 pub mod rigctld;
 pub mod session;
+pub mod support;
 pub mod transport;
 pub mod yaesu;
 
@@ -24,7 +25,7 @@ pub use elecraft::profile::ElecraftModel;
 pub use elecraft::transport::{ElecraftSerialPolicy, ElecraftTransportMetrics};
 pub use elecraft::ElecraftRadio;
 pub use events::{RadioEvent, RadioEventRouter, RadioEventSubscription, SubscriptionId};
-pub use hal::{LinkHealth, NullRadio, Radio, RadioCapabilities, RadioStatus};
+pub use hal::{HalError, LinkHealth, NullRadio, Radio, RadioCapabilities, RadioStatus};
 pub use hal_types::{
     denormalize_meter_level, normalize_meter_level, BaseMode, ControlId, ControlValue, CoreState,
     DtmfSequence, FilterBandwidth, MemoryChannel, MeterId, MeterMetadata, MeterPollSpec,
@@ -51,6 +52,7 @@ pub use session::{
     SessionDiagnostics, SessionError, SessionEvent, SessionEventRouter, SessionEventSubscription,
     SessionOperation, SessionOutcome, SessionStatus, SessionTicket,
 };
+pub use support::{SupportEvidence, SupportMatrix, SupportMatrixEntry};
 pub use transport::RadioTransport;
 pub use yaesu::cat_radio::{YaesuSerialPolicy, YaesuTransportMetrics};
 pub use yaesu::legacy_radio::{LegacyYaesuSerialPolicy, LegacyYaesuTransportMetrics};

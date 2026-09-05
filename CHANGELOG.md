@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.1.23 — connection baud metadata
+
+### Added
+- Publish a profile-generated support/evidence contract with JSON and
+  release-preparation Markdown output, explicitly separating cataloged,
+  software-tested, and hardware-tested status.
+- Add sanitized probe-report output for shareable diagnostics and document the
+  release-preparation workflow for refreshing the generated support matrix.
+
+### Removed
+- Remove the obsolete `AsciiCatRadio` compatibility driver and its
+  `AsciiCatFlavor` selector. Use the model-aware `YaesuCatRadio` or
+  `KenwoodCatRadio` drivers (or `open_model`) instead; the shared
+  `protocol::ascii_cat` framing module remains available to those native
+  drivers.
+
+### Fixed
+- Preserve structured `RadioSession`/HAL errors through async `Radio` methods;
+  callers can now downcast `anyhow` failures to `HalError`/`SessionError`
+  instead of parsing error strings.
+- Bound radio and session event subscriber queues, coalescing or evicting
+  telemetry before critical session events and exposing dropped-event counts.
+- Bound pending Icom CI-V response data to 4096 bytes, resynchronize after
+  noisy oversized input, and expose pending-buffer overflow metrics.
+- Make the PTT safety watchdog fail safe: emergency PTT-off now retries a
+  bounded number of times, preserves an active PTT observation when shutdown
+  cannot be confirmed, enters `Degraded`, and emits a distinct failure event.
+- Expose Icom USB/native connection baud choices to clients. Models such as
+  the IC-7300 now offer 38,400, 57,600, and 115,200 baud without changing the
+  narrower physical REMOTE/CI-V port metadata.
+- Preserve write-only power switching in the model capability metadata so
+  QSONaut can send the documented CI-V power command for Icom radios.
+
 ## 0.1.22 — model-aware startup probing
 
 ### Added

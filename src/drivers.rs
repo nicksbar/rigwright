@@ -1,10 +1,5 @@
 //! Model-aware serial drivers and factory.
 
-use std::{
-    io::{Read, Write},
-    time::Duration,
-};
-
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 
@@ -22,236 +17,17 @@ use crate::{
         GENERIC_ICOM_MODEL, GENERIC_KENWOOD_MODEL, GENERIC_YAESU_CLASSIC_MODEL,
         GENERIC_YAESU_MODEL,
     },
-    protocol::ascii_cat,
     rigctld::RigctldRadio,
     yaesu::YaesuCatRadio,
 };
 
 pub use crate::yaesu::LegacyYaesuRadio;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Compatibility selector for the original shared ASCII driver.
-///
-/// New Yaesu integrations should use `YaesuCatRadio`; the model factory does
-/// so automatically. This type remains because existing Kenwood and external
-/// callers still use the original API.
-pub enum AsciiCatFlavor {
-    Yaesu,
-    Kenwood,
-}
-
-#[derive(Debug, Clone)]
-/// Original minimal ASCII CAT driver retained for source compatibility.
-///
-/// Model-factory selection uses profile-backed vendor drivers instead.
-pub struct AsciiCatRadio {
-    port: String,
-    baud_rate: u32,
-    flavor: AsciiCatFlavor,
-}
-
-impl AsciiCatRadio {
-    pub fn new(port: impl Into<String>, baud_rate: u32, flavor: AsciiCatFlavor) -> Self {
-        Self {
-            port: port.into(),
-            baud_rate,
-            flavor,
-        }
-    }
-
-    fn transact(&self, request: &[u8], expect_response: bool) -> Result<Vec<u8>> {
-        if self.port.trim().is_empty() {
-            bail!("a serial port is required for CAT control");
-        }
-        let mut port = serialport::new(&self.port, self.baud_rate)
-            .timeout(Duration::from_millis(750))
-            .open()
-            .with_context(|| format!("failed to open CAT serial port {}", self.port))?;
-        port.write_all(request)
-            .context("failed to write CAT command")?;
-        port.flush().context("failed to flush CAT command")?;
-        if !expect_response {
-            return Ok(Vec::new());
-        }
-        let mut response = Vec::with_capacity(32);
-        let mut byte = [0_u8; 1];
-        loop {
-            port.read_exact(&mut byte)
-                .context("failed to read CAT response")?;
-            response.push(byte[0]);
-            if byte[0] == b';' {
-                return Ok(response);
-            }
-            if response.len() >= 128 {
-                bail!("CAT response exceeded 128 bytes");
-            }
-        }
-    }
-
-    fn command(&self, command: &str, parameter: Option<&str>, response: bool) -> Result<Vec<u8>> {
-        self.transact(&ascii_cat::encode(command, parameter)?, response)
-    }
-}
-
-#[async_trait]
-impl Radio for AsciiCatRadio {
-    async fn get_frequency_hz(&self) -> Result<u64> {
-        let response = self.command("FA", None, true)?;
-        let text = std::str::from_utf8(&response).context("CAT frequency response is not ASCII")?;
-        text.strip_prefix("FA")
-            .and_then(|v| v.strip_suffix(';'))
-            .context("unexpected CAT frequency response")?
-            .parse()
-            .context("invalid CAT frequency")
-    }
-
-    async fn set_frequency_hz(&self, hz: u64) -> Result<()> {
-        let width = if self.flavor == AsciiCatFlavor::Yaesu {
-            9
-        } else {
-            11
-        };
-        self.command("FA", Some(&format!("{hz:0width$}")), false)?;
-        Ok(())
-    }
-
-    async fn get_mode(&self) -> Result<Mode> {
-        let response = self.command(
-            "MD",
-            (self.flavor == AsciiCatFlavor::Yaesu).then_some("0"),
-            true,
-        )?;
-        let text = std::str::from_utf8(&response).context("CAT mode response is not ASCII")?;
-        let raw = text
-            .strip_prefix("MD")
-            .and_then(|v| v.strip_suffix(';'))
-            .context("unexpected CAT mode response")?;
-        decode_ascii_mode(self.flavor, raw)
-    }
-
-    async fn set_mode(&self, mode: Mode) -> Result<()> {
-        let value = match (self.flavor, mode) {
-            (AsciiCatFlavor::Yaesu, Mode::Lsb) => "01",
-            (AsciiCatFlavor::Yaesu, Mode::Usb) => "02",
-            (AsciiCatFlavor::Yaesu, Mode::Cw) => "03",
-            (AsciiCatFlavor::Yaesu, Mode::Data) => "0C",
-            (AsciiCatFlavor::Kenwood, Mode::Lsb) => "1",
-            (AsciiCatFlavor::Kenwood, Mode::Usb | Mode::Data) => "2",
-            (AsciiCatFlavor::Kenwood, Mode::Cw) => "3",
-            (AsciiCatFlavor::Yaesu, Mode::Am) => "05",
-            (AsciiCatFlavor::Yaesu, Mode::Fm) => "04",
-            (AsciiCatFlavor::Yaesu, Mode::Wfm) => {
-                bail!("WFM has no common Yaesu CAT mode mapping")
-            }
-            (AsciiCatFlavor::Yaesu, Mode::Rtty) => "06",
-            (AsciiCatFlavor::Yaesu, Mode::CwReverse) => "07",
-            (AsciiCatFlavor::Yaesu, Mode::RttyReverse) => "09",
-            (AsciiCatFlavor::Kenwood, Mode::Am) => "5",
-            (AsciiCatFlavor::Kenwood, Mode::Fm) => "4",
-            (AsciiCatFlavor::Kenwood, Mode::Wfm) => {
-                bail!("WFM has no common Kenwood CAT mode mapping")
-            }
-            (AsciiCatFlavor::Kenwood, Mode::Rtty) => "6",
-            (AsciiCatFlavor::Kenwood, Mode::CwReverse) => "7",
-            (AsciiCatFlavor::Kenwood, Mode::RttyReverse) => "9",
-        };
-        self.command("MD", Some(value), false)?;
-        Ok(())
-    }
-
-    async fn set_ptt(&self, enabled: bool) -> Result<()> {
-        match self.flavor {
-            AsciiCatFlavor::Yaesu => {
-                self.command("TX", Some(if enabled { "1" } else { "0" }), false)?;
-            }
-            AsciiCatFlavor::Kenwood => {
-                self.command(if enabled { "TX" } else { "RX" }, None, false)?;
-            }
-        }
-        Ok(())
-    }
-    async fn get_ptt(&self) -> Result<bool> {
-        match self.flavor {
-            AsciiCatFlavor::Yaesu => {
-                let response = self.command("TX", None, true)?;
-                match std::str::from_utf8(&response)
-                    .context("CAT PTT response is not ASCII")?
-                    .strip_prefix("TX")
-                    .and_then(|value| value.strip_suffix(';'))
-                {
-                    Some("0") => Ok(false),
-                    Some("1" | "2") => Ok(true),
-                    _ => bail!("unexpected Yaesu CAT PTT response"),
-                }
-            }
-            AsciiCatFlavor::Kenwood => {
-                bail!("reading PTT is not implemented for generic Kenwood CAT")
-            }
-        }
-    }
-    fn capabilities(&self) -> RadioCapabilities {
-        RadioCapabilities {
-            can_get_ptt: self.flavor == AsciiCatFlavor::Yaesu,
-            ..core_capabilities()
-        }
-    }
-}
-
-fn decode_ascii_mode(flavor: AsciiCatFlavor, raw: &str) -> Result<Mode> {
-    let code = raw
-        .trim_start_matches('0')
-        .chars()
-        .next()
-        .unwrap_or('0')
-        .to_ascii_uppercase();
-    let mode = match flavor {
-        AsciiCatFlavor::Yaesu => match code {
-            '1' => Mode::Lsb,
-            '2' => Mode::Usb,
-            '3' => Mode::Cw,
-            '4' => Mode::Fm,
-            '5' => Mode::Am,
-            '6' => Mode::Rtty,
-            '7' => Mode::CwReverse,
-            '9' => Mode::RttyReverse,
-            '8' | 'A' | 'C' | 'E' | 'F' => Mode::Data,
-            _ => bail!("unsupported Yaesu CAT mode: {raw}"),
-        },
-        AsciiCatFlavor::Kenwood => match code {
-            '1' => Mode::Lsb,
-            '2' => Mode::Usb,
-            '3' => Mode::Cw,
-            '4' => Mode::Fm,
-            '5' => Mode::Am,
-            '6' => Mode::Rtty,
-            '7' => Mode::CwReverse,
-            '9' => Mode::RttyReverse,
-            _ => bail!("unsupported Kenwood CAT mode: {raw}"),
-        },
-    };
-    Ok(mode)
-}
-
-fn core_capabilities() -> RadioCapabilities {
-    RadioCapabilities {
-        can_get_frequency: true,
-        can_set_frequency: true,
-        can_get_mode: true,
-        can_set_mode: true,
-        can_get_ptt: false,
-        can_set_ptt: true,
-        can_get_power: false,
-        can_set_power: false,
-        can_raw_protocol: false,
-    }
-}
-
 #[derive(Clone)]
 pub enum ConfiguredRadio {
     Icom(IcomCiVRadio),
     Yaesu(YaesuCatRadio),
     Kenwood(KenwoodCatRadio),
-    Ascii(AsciiCatRadio),
     DxLab(DxLabCommanderRadio),
     LegacyYaesu(LegacyYaesuRadio),
     Rigctld(RigctldRadio),
@@ -269,7 +45,6 @@ impl ConfiguredRadio {
             Self::Yaesu(radio) => radio.verify_model(),
             Self::Kenwood(radio) => radio.verify_model(),
             Self::Icom(radio) => radio.get_frequency_hz().await.map(|_| ()),
-            Self::Ascii(radio) => radio.get_frequency_hz().await.map(|_| ()),
             Self::DxLab(radio) => radio.get_frequency_hz().await.map(|_| ()),
             Self::LegacyYaesu(radio) => radio.get_frequency_hz().await.map(|_| ()),
             Self::Rigctld(radio) => radio.get_frequency_hz().await.map(|_| ()),
@@ -341,7 +116,6 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.get_frequency_hz().await,
             Self::Yaesu(r) => r.get_frequency_hz().await,
             Self::Kenwood(r) => r.get_frequency_hz().await,
-            Self::Ascii(r) => r.get_frequency_hz().await,
             Self::DxLab(r) => r.get_frequency_hz().await,
             Self::LegacyYaesu(r) => r.get_frequency_hz().await,
             Self::Rigctld(r) => r.get_frequency_hz().await,
@@ -354,7 +128,6 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.set_frequency_hz(hz).await,
             Self::Yaesu(r) => r.set_frequency_hz(hz).await,
             Self::Kenwood(r) => r.set_frequency_hz(hz).await,
-            Self::Ascii(r) => r.set_frequency_hz(hz).await,
             Self::DxLab(r) => r.set_frequency_hz(hz).await,
             Self::LegacyYaesu(r) => r.set_frequency_hz(hz).await,
             Self::Rigctld(r) => r.set_frequency_hz(hz).await,
@@ -367,7 +140,6 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => Radio::get_mode(r).await,
             Self::Yaesu(r) => r.get_mode().await,
             Self::Kenwood(r) => r.get_mode().await,
-            Self::Ascii(r) => r.get_mode().await,
             Self::DxLab(r) => r.get_mode().await,
             Self::LegacyYaesu(r) => r.get_mode().await,
             Self::Rigctld(r) => r.get_mode().await,
@@ -380,7 +152,6 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => Radio::set_mode(r, mode).await,
             Self::Yaesu(r) => r.set_mode(mode).await,
             Self::Kenwood(r) => r.set_mode(mode).await,
-            Self::Ascii(r) => r.set_mode(mode).await,
             Self::DxLab(r) => r.set_mode(mode).await,
             Self::LegacyYaesu(r) => r.set_mode(mode).await,
             Self::Rigctld(r) => r.set_mode(mode).await,
@@ -393,7 +164,6 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.set_ptt(enabled).await,
             Self::Yaesu(r) => r.set_ptt(enabled).await,
             Self::Kenwood(r) => r.set_ptt(enabled).await,
-            Self::Ascii(r) => r.set_ptt(enabled).await,
             Self::DxLab(r) => r.set_ptt(enabled).await,
             Self::LegacyYaesu(r) => r.set_ptt(enabled).await,
             Self::Rigctld(r) => r.set_ptt(enabled).await,
@@ -406,7 +176,6 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.get_ptt().await,
             Self::Yaesu(r) => r.get_ptt().await,
             Self::Kenwood(r) => r.get_ptt().await,
-            Self::Ascii(r) => r.get_ptt().await,
             Self::DxLab(r) => r.get_ptt().await,
             Self::LegacyYaesu(r) => r.get_ptt().await,
             Self::Rigctld(r) => r.get_ptt().await,
@@ -419,7 +188,6 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.get_power().await,
             Self::Yaesu(r) => r.get_power().await,
             Self::Kenwood(r) => r.get_power().await,
-            Self::Ascii(r) => r.get_power().await,
             Self::DxLab(r) => r.get_power().await,
             Self::LegacyYaesu(r) => r.get_power().await,
             Self::Rigctld(r) => r.get_power().await,
@@ -432,7 +200,6 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.set_power(enabled).await,
             Self::Yaesu(r) => r.set_power(enabled).await,
             Self::Kenwood(r) => r.set_power(enabled).await,
-            Self::Ascii(r) => r.set_power(enabled).await,
             Self::DxLab(r) => r.set_power(enabled).await,
             Self::LegacyYaesu(r) => r.set_power(enabled).await,
             Self::Rigctld(r) => r.set_power(enabled).await,
@@ -748,7 +515,6 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.capabilities(),
             Self::Yaesu(r) => r.capabilities(),
             Self::Kenwood(r) => r.capabilities(),
-            Self::Ascii(r) => r.capabilities(),
             Self::DxLab(r) => r.capabilities(),
             Self::LegacyYaesu(r) => r.capabilities(),
             Self::Rigctld(r) => r.capabilities(),
@@ -1033,25 +799,6 @@ mod tests {
         assert!(!generic_legacy.supports_repeater_settings());
     }
     #[test]
-    fn decodes_common_ascii_modes() {
-        assert_eq!(
-            decode_ascii_mode(AsciiCatFlavor::Yaesu, "02").unwrap(),
-            Mode::Usb
-        );
-        assert_eq!(
-            decode_ascii_mode(AsciiCatFlavor::Yaesu, "0C").unwrap(),
-            Mode::Data
-        );
-        assert_eq!(
-            decode_ascii_mode(AsciiCatFlavor::Yaesu, "06").unwrap(),
-            Mode::Rtty
-        );
-        assert_eq!(
-            decode_ascii_mode(AsciiCatFlavor::Kenwood, "1").unwrap(),
-            Mode::Lsb
-        );
-    }
-    #[test]
     fn rigctld_factory_wraps_tcp_driver() {
         let radio = open_rigctld("127.0.0.1:4532");
         assert!(radio.as_rigctld().is_some());
@@ -1075,7 +822,6 @@ mod tests {
             open_model("TS-590SG", "/dev/null", 115_200, 0xE0).unwrap(),
             open_model("FT-857D", "/dev/null", 9_600, 0xE0).unwrap(),
             open_model("K4", "/dev/null", 38_400, 0xE0).unwrap(),
-            ConfiguredRadio::Ascii(AsciiCatRadio::new("", 9_600, AsciiCatFlavor::Yaesu)),
             open_dxlab_localhost(),
             open_rigctld("127.0.0.1:4532"),
             open_null(),
@@ -1108,7 +854,6 @@ mod tests {
             open_model("TS-590SG", "/dev/null", 115_200, 0xE0).unwrap(),
             open_model("FT-857D", "/dev/null", 9_600, 0xE0).unwrap(),
             open_model("K4", "/dev/null", 38_400, 0xE0).unwrap(),
-            ConfiguredRadio::Ascii(AsciiCatRadio::new("", 9_600, AsciiCatFlavor::Yaesu)),
         ];
         for radio in &radios {
             let _ = futures::executor::block_on(radio.probe());
@@ -1159,44 +904,6 @@ mod tests {
             }));
             let _ = futures::executor::block_on(radio.send_dtmf(DtmfSequence::new("1").unwrap()));
         }
-    }
-
-    #[test]
-    fn ascii_compatibility_driver_covers_documented_modes_and_capabilities() {
-        for (flavor, modes) in [
-            (
-                AsciiCatFlavor::Yaesu,
-                [
-                    "01", "02", "03", "04", "05", "06", "07", "08", "09", "0A", "0C", "0E", "0F",
-                ],
-            ),
-            (
-                AsciiCatFlavor::Kenwood,
-                [
-                    "1", "2", "3", "4", "5", "6", "7", "9", "8", "0", "A", "C", "E",
-                ],
-            ),
-        ] {
-            for raw in modes {
-                let _ = decode_ascii_mode(flavor, raw);
-            }
-        }
-        assert!(decode_ascii_mode(AsciiCatFlavor::Yaesu, "00").is_err());
-        assert!(decode_ascii_mode(AsciiCatFlavor::Kenwood, "00").is_err());
-        assert!(
-            AsciiCatRadio::new("", 9_600, AsciiCatFlavor::Yaesu)
-                .capabilities()
-                .can_get_ptt
-        );
-        assert!(
-            !AsciiCatRadio::new("", 9_600, AsciiCatFlavor::Kenwood)
-                .capabilities()
-                .can_get_ptt
-        );
-        assert!(futures::executor::block_on(
-            AsciiCatRadio::new("", 9_600, AsciiCatFlavor::Yaesu).set_mode(Mode::Wfm)
-        )
-        .is_err());
     }
 
     #[test]

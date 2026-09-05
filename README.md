@@ -1,6 +1,6 @@
 # Rigwright
 
-[![Version](https://img.shields.io/badge/version-v0.1.22-2ea44f)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-v0.1.23-2ea44f)](Cargo.toml)
 [![CI](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml)
 [![Release workflow](https://github.com/nicksbar/rigwright/actions/workflows/release.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/nicksbar/rigwright?display_name=tag&sort=semver)](https://github.com/nicksbar/rigwright/releases)
@@ -52,6 +52,7 @@ reported through the CodeQL check and GitHub code-scanning alerts.
 - Strict IC-7300 USB scope assembly: ordered 11-division input produces one
   complete 475-bin sweep, with documented center-span and fixed-edge controls.
 - Captured-frame unit tests and a direct CI-V probe example.
+- A typed, profile-generated support/evidence matrix for machine consumers.
 - Profile-driven Elecraft CAT support for K2, KX2, KX3, K3, K3S, K4, and KH1,
   including direct controls, model-specific option probing, normalized meters,
   and explicit accessory/protocol boundaries.
@@ -85,8 +86,29 @@ and hardware-validated behavior. Normalized HAL controls and meter values use
 shared half-up conversion rules; model-native limits remain in profiles, while
 generic undocumented values stay explicitly approximate or unavailable.
 
+Machine consumers can generate the same model facts directly from the catalog;
+the output distinguishes `cataloged`, `software_tested`, and
+`hardware_tested` evidence and never promotes software coverage to hardware
+validation:
+
+```text
+cargo run --example support_matrix -- --pretty > support-matrix.json
+```
+
+During release preparation, refresh the reviewable Markdown projection with:
+
+```text
+cargo run --locked --example support_matrix -- --markdown > docs/generated-support-matrix.md
+```
+
+Probe examples can write shareable diagnostics with `ProbeLog::write_sanitized`.
+That projection excludes serial endpoints and raw protocol data; the existing
+`write` method remains available for local debugging artifacts.
+
 - [Radio capability matrix](docs/radio-capability-matrix.md) — detailed status,
   normalization, model exceptions, and QSONaut coverage.
+- [Generated support matrix](docs/generated-support-matrix.md) — release-time
+  model, profile, baud, HAL, and evidence projection; do not edit manually.
 - [Supported radios and manual sources](docs/supported-radios.md) — supported
   models, maturity labels, and workspace manual editions.
 - [Driver architecture](docs/architecture.md) — HAL boundaries, transport
@@ -94,15 +116,17 @@ generic undocumented values stay explicitly approximate or unavailable.
 - [Driver-owned sessions](docs/session.md) — issue #20 queue, state, event, and
   baud-selection behavior.
 
-Only the capability matrix should be updated for ordinary support-status
-changes; the architecture and model-addition guides are design/maintenance
-references.
+For ordinary model-status changes, regenerate
+`docs/generated-support-matrix.md` during release preparation. Update
+`radio-capability-matrix.md` only for explanatory capability, consumer, or
+validation notes; update `supported-radios.md` when manual citations change.
+The architecture and model-addition guides are design/maintenance references.
 
 ## Use
 
 ```toml
 [dependencies]
-rigwright = "0.1.22"
+rigwright = "0.1.23"
 ```
 
 ```rust,no_run
