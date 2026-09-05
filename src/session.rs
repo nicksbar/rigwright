@@ -17,6 +17,7 @@ use std::{
 };
 
 const DEFAULT_QUEUE_CAPACITY: usize = 32;
+const MAX_SESSION_EVENTS: usize = 256;
 const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 /// Default ceiling for a continuous transmit hold before the session forces
@@ -278,13 +279,14 @@ pub enum SessionEvent {
 
 #[derive(Debug, Default, Clone)]
 pub struct SessionEventRouter {
-    state: Arc<Mutex<Vec<Vec<SessionEvent>>>>,
+    state: Arc<Mutex<Vec<VecDeque<SessionEvent>>>>,
+    dropped_events: Arc<Mutex<u64>>,
 }
 
 impl SessionEventRouter {
     pub fn subscribe(&self) -> SessionEventSubscription {
         let mut state = self.state.lock().expect("session event lock poisoned");
-        state.push(Vec::new());
+        state.push(VecDeque::new());
         SessionEventSubscription {
             index: state.len() - 1,
             router: self.clone(),
@@ -293,17 +295,52 @@ impl SessionEventRouter {
 
     fn publish(&self, event: SessionEvent) {
         if let Ok(mut state) = self.state.lock() {
+            let mut dropped = 0;
             for queue in &mut *state {
-                queue.push(event.clone());
+                if queue.len() >= MAX_SESSION_EVENTS {
+                    if matches!(&event, SessionEvent::SnapshotChanged(_)) {
+                        if let Some(index) = queue
+                            .iter()
+                            .position(|queued| matches!(queued, SessionEvent::SnapshotChanged(_)))
+                        {
+                            queue.remove(index);
+                        } else {
+                            dropped += 1;
+                            continue;
+                        }
+                    } else if let Some(index) = queue
+                        .iter()
+                        .position(|queued| matches!(queued, SessionEvent::SnapshotChanged(_)))
+                    {
+                        queue.remove(index);
+                    } else {
+                        dropped += 1;
+                        continue;
+                    }
+                    dropped += 1;
+                }
+                queue.push_back(event.clone());
+            }
+            if dropped > 0 {
+                if let Ok(mut total) = self.dropped_events.lock() {
+                    *total = total.saturating_add(dropped);
+                }
             }
         }
+    }
+
+    pub fn dropped_events(&self) -> u64 {
+        self.dropped_events
+            .lock()
+            .map(|count| *count)
+            .unwrap_or_default()
     }
 
     fn drain(&self, index: usize) -> Vec<SessionEvent> {
         self.state
             .lock()
             .ok()
-            .and_then(|mut state| state.get_mut(index).map(std::mem::take))
+            .and_then(|mut state| state.get_mut(index).map(|queue| queue.drain(..).collect()))
             .unwrap_or_default()
     }
 }
@@ -2147,5 +2184,37 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn session_event_queue_coalesces_snapshots_and_preserves_critical_events() {
+        let router = SessionEventRouter::default();
+        let subscription = router.subscribe();
+        let snapshot = RadioSnapshot {
+            status: SessionStatus::Ready,
+            desired: RadioState::default(),
+            observed: RadioState::default(),
+            pending: Vec::new(),
+            sequence: 0,
+            generation: 0,
+            synchronized: true,
+            last_error: None,
+        };
+        for sequence in 0..300 {
+            let mut snapshot = snapshot.clone();
+            snapshot.sequence = sequence;
+            router.publish(SessionEvent::SnapshotChanged(snapshot));
+        }
+        router.publish(SessionEvent::OperationAccepted(SessionOperation::Refresh));
+
+        let events = subscription.drain();
+        assert_eq!(events.len(), 256);
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                SessionEvent::OperationAccepted(SessionOperation::Refresh)
+            )
+        }));
+        assert_eq!(router.dropped_events(), 45);
     }
 }

@@ -28,6 +28,7 @@ use crate::hal_types::{
 const CI_V_FRAME_START: u8 = 0xFE;
 const CI_V_FRAME_END: u8 = 0xFD;
 const MAX_RETAINED_CI_V_FRAMES: usize = 128;
+const MAX_PENDING_CI_V_BYTES: usize = 4096;
 
 /// Connection-level counters useful for diagnosing real CI-V links.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -41,6 +42,7 @@ pub struct IcomTransportMetrics {
     pub frames_dropped: u64,
     pub echo_frames_ignored: u64,
     pub unsolicited_events: u64,
+    pub pending_overflows: u64,
     pub total_response_time: Duration,
     pub consecutive_timeouts: u32,
 }
@@ -140,6 +142,7 @@ impl ScopeStreamReader {
         geometry: Option<crate::models::IcomScopeGeometry>,
     ) {
         self.pending.extend_from_slice(bytes);
+        let _ = bound_ci_v_pending(&mut self.pending);
         for frame in drain_ci_v_frames(&mut self.pending) {
             if !is_radio_to_controller_frame(&frame, radio_address, controller_address)
                 || !is_spectrum_data_frame(&frame)
@@ -1425,6 +1428,12 @@ impl IcomCiVRadio {
                                 .and_then(|model| profile_for_model(model).scope_geometry),
                         );
                     pending.extend_from_slice(&buf[..bytes]);
+                    if bound_ci_v_pending(&mut pending) {
+                        if let Ok(mut state) = self.transport_state.lock() {
+                            state.metrics.pending_overflows =
+                                state.metrics.pending_overflows.saturating_add(1);
+                        }
+                    }
                     for frame in drain_ci_v_frames(&mut pending) {
                         if let Ok(mut state) = self.transport_state.lock() {
                             state.metrics.frames_received =
@@ -2503,6 +2512,18 @@ fn drain_ci_v_frames(pending: &mut Vec<u8>) -> Vec<Vec<u8>> {
         }
     }
     frames
+}
+
+fn bound_ci_v_pending(pending: &mut Vec<u8>) -> bool {
+    if pending.len() <= MAX_PENDING_CI_V_BYTES {
+        return false;
+    }
+    if let Some(last_start) = pending.iter().rposition(|byte| *byte == CI_V_FRAME_START) {
+        pending.drain(..last_start);
+    } else {
+        pending.clear();
+    }
+    true
 }
 
 fn is_spectrum_data_frame(frame: &[u8]) -> bool {
@@ -3891,6 +3912,22 @@ mod tests {
         let frames = drain_ci_v_frames(&mut pending);
         assert_eq!(frames, vec![vec![0xFE, 0xFE, 0xE0, 0x94, 0xFB, 0xFD]]);
         assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn oversized_pending_input_resynchronizes_and_recovers() {
+        let mut pending = vec![0xFE, 0xFE];
+        pending.extend(std::iter::repeat_n(0x00, MAX_PENDING_CI_V_BYTES + 32));
+        pending.push(0xFE);
+        assert!(bound_ci_v_pending(&mut pending));
+        assert!(pending.len() <= MAX_PENDING_CI_V_BYTES);
+        assert_eq!(pending, vec![0xFE]);
+
+        pending.extend_from_slice(&[0xFE, 0xE0, 0x94, 0xFB, 0xFD]);
+        assert_eq!(
+            drain_ci_v_frames(&mut pending),
+            vec![vec![0xFE, 0xFE, 0xE0, 0x94, 0xFB, 0xFD]]
+        );
     }
 
     #[test]

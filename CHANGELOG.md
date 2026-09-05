@@ -17,6 +17,10 @@
   drivers.
 
 ### Fixed
+- Bound radio and session event subscriber queues, coalescing or evicting
+  telemetry before critical session events and exposing dropped-event counts.
+- Bound pending Icom CI-V response data to 4096 bytes, resynchronize after
+  noisy oversized input, and expose pending-buffer overflow metrics.
 - Make the PTT safety watchdog fail safe: emergency PTT-off now retries a
   bounded number of times, preserves an active PTT observation when shutdown
   cannot be confirmed, enters `Degraded`, and emits a distinct failure event.
