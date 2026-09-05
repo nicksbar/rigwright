@@ -126,7 +126,7 @@ impl YaesuCatRadio {
     /// This is useful for probing. Model-specific range checks, ID checks, and
     /// controls require [`Self::new_for_model`].
     pub fn new_generic(port: impl Into<String>, baud_rate: u32) -> Self {
-        Self::new_internal(None, port, baud_rate)
+        Self::new_internal(Some(YaesuCatModel::Generic), port, baud_rate)
     }
 
     /// Construct a modern Yaesu driver using a declarative model profile.
@@ -251,10 +251,13 @@ impl YaesuCatRadio {
         let profile = self.selected_profile()?;
         let response = self.query("ID", None, 4)?;
         let id = parse_payload(&response, "ID")?;
-        if id != profile.id_code {
+        let Some(expected_id) = profile.id_code else {
+            return Ok(());
+        };
+        if id != expected_id {
             bail!(
                 "CAT radio identified as {id}, expected {} ({})",
-                profile.id_code,
+                expected_id,
                 profile.model.model_name()
             );
         }
@@ -459,8 +462,12 @@ impl YaesuCatRadio {
         if !self.selected_profile()?.supports_repeater_settings {
             bail!("repeater settings are not documented for this Yaesu model");
         }
-        if settings.tone.index > 49 {
-            bail!("Yaesu tone index must be 0..=49");
+        let profile = self.selected_profile()?;
+        if settings.tone.index > profile.repeater_tone_index_max {
+            bail!(
+                "Yaesu tone index must be 0..={}",
+                profile.repeater_tone_index_max
+            );
         }
         anyhow::ensure!(
             settings.offset_hz.is_none() || settings.offset_hz == Some(0),
@@ -506,7 +513,7 @@ impl YaesuCatRadio {
             "memory records are not profiled for this Yaesu model"
         );
         anyhow::ensure!(
-            channel.frequency_hz <= 999_999_999,
+            channel.frequency_hz <= profile.memory_frequency_max_hz,
             "Yaesu memory frequency exceeds CAT width"
         );
         let mode = profile.encode_mode(channel.mode)?;
@@ -521,11 +528,15 @@ impl YaesuCatRadio {
             RepeaterShift::Plus => '1',
             RepeaterShift::Minus => '2',
         };
-        let offset = channel.repeater.offset_hz.unwrap_or(0).min(9990);
+        let offset = channel
+            .repeater
+            .offset_hz
+            .unwrap_or(0)
+            .min(profile.memory_offset_max_hz);
         let name = channel.name.unwrap_or_default();
         anyhow::ensure!(
-            name.is_ascii() && name.len() <= 12,
-            "Yaesu memory tag must be ASCII and at most 12 characters"
+            name.is_ascii() && name.len() <= profile.memory_name_max_len,
+            "Yaesu memory tag exceeds the profiled length"
         );
         let params = format!(
             "{:03}{:09}+{:04}00{}0{}00{}0{}",
@@ -961,6 +972,7 @@ impl Radio for YaesuCatRadio {
     }
 
     async fn get_control(&self, id: ControlId) -> Result<Option<ControlValue>> {
+        let profile = self.selected_profile()?;
         match id {
             ControlId::AfGain | ControlId::RfGain => {
                 let command = self.control_command(id)?;
@@ -1016,7 +1028,7 @@ impl Radio for YaesuCatRadio {
                     .strip_prefix('0')
                     .context("invalid Yaesu GT response")?
                     .parse::<u8>()?;
-                if value > 4 {
+                if value > profile.control_max(ControlId::Agc).unwrap_or(0) {
                     bail!("invalid Yaesu AGC response: {value}");
                 }
                 Ok(Some(ControlValue::U8(value)))
@@ -1039,7 +1051,11 @@ impl Radio for YaesuCatRadio {
                     .strip_prefix('0')
                     .context("invalid Yaesu RL response")?
                     .parse::<u8>()?;
-                if !(1..=15).contains(&value) {
+                if !(1..=profile
+                    .control_max(ControlId::NoiseReductionLevel)
+                    .unwrap_or(0))
+                    .contains(&value)
+                {
                     bail!("invalid Yaesu NR level response: {value}");
                 }
                 Ok(Some(ControlValue::U8(value)))
@@ -1101,19 +1117,15 @@ impl Radio for YaesuCatRadio {
     }
 
     async fn get_meter(&self, id: MeterId) -> Result<Option<u8>> {
-        match id {
-            MeterId::Signal => Ok(Some(self.get_yaesu_meter(1)?)),
-            MeterId::Compression => Ok(Some(self.get_yaesu_meter(3)?)),
-            MeterId::Alc => Ok(Some(self.get_yaesu_meter(4)?)),
-            MeterId::Power => Ok(Some(self.get_yaesu_meter(5)?)),
-            MeterId::Swr => Ok(Some(self.get_yaesu_meter(6)?)),
-            MeterId::Current => Ok(Some(self.get_yaesu_meter(7)?)),
-            MeterId::Voltage => Ok(Some(self.get_yaesu_meter(8)?)),
-            MeterId::Temperature => Ok(Some(self.get_yaesu_meter(9)?)),
-        }
+        let selector = self
+            .selected_profile()?
+            .meter_selector(id)
+            .context("Yaesu meter selector is not profiled")?;
+        Ok(Some(self.get_yaesu_meter(selector)?))
     }
 
     async fn set_control(&self, id: ControlId, value: ControlValue) -> Result<()> {
+        let profile = self.selected_profile()?;
         let command = || self.control_command(id);
         match (id, value) {
             (ControlId::AfGain, ControlValue::U8(value))
@@ -1123,10 +1135,14 @@ impl Radio for YaesuCatRadio {
             (ControlId::Squelch, ControlValue::U8(value)) => {
                 self.send_set(command()?, &format!("0{:03}", denormalize_percent(value)))
             }
-            (ControlId::Preamp, ControlValue::U8(value)) if value <= 2 => {
+            (ControlId::Preamp, ControlValue::U8(value))
+                if value <= profile.control_max(ControlId::Preamp).unwrap_or(0) =>
+            {
                 self.send_set(command()?, &format!("0{value}"))
             }
-            (ControlId::Attenuator, ControlValue::U8(value)) if value <= 3 => {
+            (ControlId::Attenuator, ControlValue::U8(value))
+                if value <= profile.control_max(ControlId::Attenuator).unwrap_or(0) =>
+            {
                 self.send_set(command()?, &format!("0{value}"))
             }
             (ControlId::NoiseBlanker, ControlValue::Bool(enabled)) => {
@@ -1138,7 +1154,9 @@ impl Radio for YaesuCatRadio {
             (ControlId::ManualNotch, ControlValue::Bool(enabled)) => {
                 self.send_set(command()?, if enabled { "00001" } else { "00000" })
             }
-            (ControlId::Filter, ControlValue::U8(value)) if value <= 23 => {
+            (ControlId::Filter, ControlValue::U8(value))
+                if value <= profile.control_max(ControlId::Filter).unwrap_or(0) =>
+            {
                 self.send_set(command()?, &format!("00{value:02}"))
             }
             (ControlId::Rit, ControlValue::Bool(enabled)) => {
@@ -1157,14 +1175,19 @@ impl Radio for YaesuCatRadio {
                 self.set_power_watts(self.normalized_to_watts(level)?)
             }
             (ControlId::Split, ControlValue::Bool(enabled)) => self.set_split(enabled),
-            (ControlId::Agc, ControlValue::U8(value)) if value <= 4 => {
+            (ControlId::Agc, ControlValue::U8(value))
+                if value <= profile.control_max(ControlId::Agc).unwrap_or(0) =>
+            {
                 self.send_set(command()?, &format!("0{value}"))
             }
             (ControlId::NoiseReduction, ControlValue::Bool(enabled)) => {
                 self.send_set(command()?, if enabled { "01" } else { "00" })
             }
             (ControlId::NoiseReductionLevel, ControlValue::U8(value))
-                if (1..=15).contains(&value) =>
+                if (1..=profile
+                    .control_max(ControlId::NoiseReductionLevel)
+                    .unwrap_or(0))
+                    .contains(&value) =>
             {
                 self.send_set(command()?, &format!("0{value:02}"))
             }
@@ -1180,9 +1203,10 @@ impl Radio for YaesuCatRadio {
                 self.send_set(command()?, &format!("0{}", if enabled { '2' } else { '1' }))
             }
             (ControlId::IfShift, ControlValue::I32(value)) => {
+                let maximum = self.selected_profile()?.if_shift_max_hz;
                 anyhow::ensure!(
-                    (-1200..=1200).contains(&value),
-                    "Yaesu IF shift must be -1200..=1200 Hz"
+                    (-maximum..=maximum).contains(&value),
+                    "Yaesu IF shift exceeds the profiled range"
                 );
                 let sign = if value < 0 { '-' } else { '+' };
                 self.send_set(command()?, &format!("00{sign}{:04}", value.unsigned_abs()))
@@ -1191,10 +1215,12 @@ impl Radio for YaesuCatRadio {
                 ControlId::Vox | ControlId::BreakIn | ControlId::Lock,
                 ControlValue::Bool(enabled),
             ) => self.send_set(command()?, if enabled { "1" } else { "0" }),
-            (ControlId::VoxDelay, ControlValue::U8(value)) if value <= 33 => {
+            (ControlId::VoxDelay, ControlValue::U8(value)) if value <= profile.vox_delay_max => {
                 self.send_set(command()?, &format!("{value:04}"))
             }
-            (ControlId::NoiseBlankerLevel, ControlValue::U8(value)) if value <= 10 => {
+            (ControlId::NoiseBlankerLevel, ControlValue::U8(value))
+                if value <= profile.noise_blanker_level_max =>
+            {
                 self.send_set(command()?, &format!("0{value:03}"))
             }
             (_, value) => bail!("unsupported Yaesu CAT control/value: {id:?} = {value:?}"),
@@ -1221,9 +1247,10 @@ impl Radio for YaesuCatRadio {
     }
 
     async fn set_rit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        let maximum = self.selected_profile()?.rit_offset_max_hz;
         anyhow::ensure!(
-            (-9999..=9999).contains(&offset_hz),
-            "Yaesu RIT offset must be -9999..=9999 Hz"
+            (-maximum..=maximum).contains(&offset_hz),
+            "Yaesu RIT offset exceeds the profiled range"
         );
         let sign = if offset_hz < 0 { '-' } else { '+' };
         self.send_set("CF", &format!("001{sign}{:04}", offset_hz.unsigned_abs()))
@@ -1586,8 +1613,8 @@ fn encode_common_mode(mode: Mode) -> Result<char> {
         Mode::Am => Ok('5'),
         Mode::Rtty => Ok('6'),
         Mode::CwReverse => Ok('7'),
-        Mode::RttyReverse => Ok('9'),
         Mode::Data => Ok('C'),
+        Mode::RttyReverse => Ok('9'),
         Mode::Wfm => bail!("WFM has no common modern Yaesu CAT mode mapping"),
     }
 }

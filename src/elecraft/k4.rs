@@ -1,5 +1,9 @@
 //! K4 profile from the K4 Programmer's Reference.
-use super::profile::{ElecraftModel, ElecraftProfile, HF_RANGES, K4_BAUD_RATES};
+use super::profile::{
+    ElecraftIdentifyStrategy, ElecraftMeterStrategy, ElecraftModel, ElecraftProfile,
+    ElecraftSignalMeterStrategy, ElecraftTxMeterStrategy, ElecraftTxStateStrategy,
+    ElecraftVfoMovementStrategy, HF_RANGES, K4_ATTENUATOR_VALUES, K4_BAUD_RATES,
+};
 pub const PROFILE: ElecraftProfile = ElecraftProfile {
     model: ElecraftModel::K4,
     can_get_frequency: true,
@@ -37,6 +41,23 @@ pub const PROFILE: ElecraftProfile = ElecraftProfile {
     rf_gain_max: Some(60),
     squelch_max: 40,
     rf_gain_is_attenuation: true,
+    identify_strategy: ElecraftIdentifyStrategy::Id,
+    auto_info_max: Some(3),
+    tx_state_strategy: ElecraftTxStateStrategy::Tqx,
+    tx_meter_strategy: ElecraftTxMeterStrategy::K4,
+    vfo_movement_strategy: ElecraftVfoMovementStrategy::CurrentStep,
+    signal_meter_strategy: ElecraftSignalMeterStrategy::K4 { maximum: 42 },
+    power_meter_strategy: Some(ElecraftMeterStrategy {
+        command: "PO",
+        prefix: "PO",
+        maximum: 1100,
+    }),
+    alc_meter_strategy: None,
+    swr_meter_strategy: None,
+    memory_channel_max: None,
+    repeater_offset_max_hz: Some(99_999_000),
+    rit_offset_max_hz: Some(9_999),
+    attenuator_values: K4_ATTENUATOR_VALUES,
 };
 
 #[cfg(test)]

@@ -26,8 +26,8 @@ use crate::{
 };
 
 use super::profile::{
-    profile_for_model, KenwoodCatProfile, KenwoodModeCommand, KenwoodRitXitLayout,
-    KenwoodSplitCommand,
+    profile_for_model, KenwoodCatProfile, KenwoodMeterSelection, KenwoodModeCommand,
+    KenwoodRitXitLayout, KenwoodSplitCommand,
 };
 
 const RESPONSE_TIMEOUT: Duration = Duration::from_millis(1_200);
@@ -301,8 +301,15 @@ impl KenwoodCatRadio {
 
     pub(crate) fn get_swr_meter(&self) -> Result<u8> {
         let profile = self.selected_profile()?;
-        if profile.swr_meter_requires_selection {
-            self.send_set("RM", "21")?;
+        if let Some(selection) = profile.swr_meter_selection {
+            self.send_set(
+                selection.command,
+                &format!(
+                    "{}{suffix}",
+                    profile.swr_rm_selector,
+                    suffix = selection.parameter_suffix
+                ),
+            )?;
         }
         self.get_rm_meter(profile.swr_rm_selector, profile.swr_meter_max)
     }
@@ -365,20 +372,26 @@ impl KenwoodCatRadio {
         self.send_set(command, &value.to_string())
     }
 
-    fn get_ts890_meter(&self, selector: char) -> Result<u8> {
-        // TS-890S meters are initially configured as "do not read" after
-        // power-on. Select this meter for reading before requesting its value.
-        self.send_set("RM", &format!("{selector}1"))?;
-        let response = self.query("RM", None, Some(5))?;
-        let payload = parse_payload(&response, "RM")?;
+    fn get_selected_meter(
+        &self,
+        selector: char,
+        maximum: u16,
+        selection: KenwoodMeterSelection,
+    ) -> Result<u8> {
+        self.send_set(
+            selection.command,
+            &format!("{selector}{}", selection.parameter_suffix),
+        )?;
+        let response = self.query(selection.command, None, Some(5))?;
+        let payload = parse_payload(&response, selection.command)?;
         anyhow::ensure!(
             payload.starts_with(selector),
-            "unexpected TS-890S RM meter: {payload}"
+            "unexpected Kenwood selected RM meter: {payload}"
         );
         let value: u16 = payload[1..]
             .parse()
-            .context("invalid TS-890S meter response")?;
-        normalize_meter_level(value, 70).context("TS-890S meter exceeds 0..70")
+            .context("invalid Kenwood selected meter response")?;
+        normalize_meter_level(value, maximum).context("Kenwood meter exceeds its profiled range")
     }
 
     fn get_level_control(&self, id: ControlId) -> Result<u8> {
@@ -423,8 +436,8 @@ impl KenwoodCatRadio {
             .selected_profile()?
             .control(ControlId::Filter)
             .context("Kenwood filter selection is not profiled")?;
-        if spec.max_value.is_some_and(|maximum| value <= maximum)
-            && !(spec.max_value == Some(2) && spec.command == "FL" && value == 0)
+        if value >= self.selected_profile()?.filter_minimum
+            && spec.max_value.is_some_and(|maximum| value <= maximum)
         {
             self.send_set(spec.command, &value.to_string())
         } else {
@@ -550,14 +563,26 @@ impl KenwoodCatRadio {
     /// are intentionally not synthesized here because their command forms
     /// differ by model.
     pub fn get_repeater_settings(&self) -> Result<RepeaterSettings> {
-        let tone_index = parse_payload(&self.query("CN", None, Some(2))?, "CN")?
-            .parse::<u8>()
-            .context("invalid Kenwood CN tone index")?;
-        let mode = match parse_payload(&self.query("CT", None, Some(1))?, "CT")? {
-            "0" => ToneMode::Off,
-            "1" => ToneMode::Encode,
-            "2" => ToneMode::EncodeDecode,
-            value => bail!("invalid Kenwood CT tone mode: {value}"),
+        let repeater = self
+            .selected_profile()?
+            .repeater
+            .context("repeater settings are not profiled for this Kenwood model")?;
+        let tone_index = parse_payload(
+            &self.query(repeater.tone_command, None, Some(2))?,
+            repeater.tone_command,
+        )?
+        .parse::<u8>()
+        .context("invalid Kenwood tone index")?;
+        let mode_response = self.query(repeater.tone_mode_command, None, Some(1))?;
+        let mode_value = parse_payload(&mode_response, repeater.tone_mode_command)?;
+        let mode = if mode_value == repeater.off_value {
+            ToneMode::Off
+        } else if mode_value == repeater.encode_value {
+            ToneMode::Encode
+        } else if mode_value == repeater.encode_decode_value {
+            ToneMode::EncodeDecode
+        } else {
+            bail!("invalid Kenwood tone mode: {mode_value}")
         };
         Ok(RepeaterSettings {
             shift: RepeaterShift::Simplex,
@@ -573,20 +598,30 @@ impl KenwoodCatRadio {
     }
 
     pub fn set_repeater_settings(&self, settings: RepeaterSettings) -> Result<()> {
+        let repeater = self
+            .selected_profile()?
+            .repeater
+            .context("repeater settings are not profiled for this Kenwood model")?;
         if !matches!(settings.shift, RepeaterShift::Simplex) || settings.offset_hz.is_some() {
             bail!("Kenwood repeater shift/offset is not yet model-profiled");
         }
-        if settings.tone.index > 41 {
-            bail!("Kenwood CTCSS tone index must be 0..=41");
+        if settings.tone.index > repeater.tone_index_max {
+            bail!(
+                "Kenwood CTCSS tone index must be 0..={}",
+                repeater.tone_index_max
+            );
         }
         let mode = match settings.tone.mode {
-            ToneMode::Off => "0",
-            ToneMode::Encode => "1",
+            ToneMode::Off => repeater.off_value,
+            ToneMode::Encode => repeater.encode_value,
             ToneMode::Dtcs => anyhow::bail!("DTCS is not supported by this Kenwood profile"),
-            ToneMode::EncodeDecode => "2",
+            ToneMode::EncodeDecode => repeater.encode_decode_value,
         };
-        self.send_set("CN", &format!("{:02}", settings.tone.index))?;
-        self.send_set("CT", mode)
+        self.send_set(
+            repeater.tone_command,
+            &format!("{:02}", settings.tone.index),
+        )?;
+        self.send_set(repeater.tone_mode_command, mode)
     }
 
     pub fn select_memory_channel(&self, channel: u16) -> Result<()> {
@@ -1088,8 +1123,8 @@ impl Radio for KenwoodCatRadio {
                     .meter(id)
                     .context("Kenwood meter is not profiled")?;
                 Ok(Some(
-                    if self.selected_profile()?.swr_meter_requires_selection {
-                        self.get_ts890_meter(spec.selector)?
+                    if let Some(selection) = self.selected_profile()?.extra_meter_selection {
+                        self.get_selected_meter(spec.selector, spec.maximum, selection)?
                     } else {
                         self.get_rm_meter(spec.selector, spec.maximum)?
                     },
@@ -1220,7 +1255,7 @@ impl Radio for KenwoodCatRadio {
 
     fn supports_repeater_settings(&self) -> bool {
         self.profile()
-            .is_some_and(|profile| profile.model != KenwoodCatModel::Generic)
+            .is_some_and(|profile| profile.supports_repeater_settings())
     }
 
     fn supports_control(&self, id: ControlId) -> bool {

@@ -886,11 +886,17 @@ mod tests {
 
         let yaesu = open_model(GENERIC_YAESU_MODEL, "/dev/null", 38_400, 0xE0).unwrap();
         assert!(yaesu.as_yaesu().is_some());
-        assert!(yaesu.as_yaesu().unwrap().model().is_none());
+        assert_eq!(
+            yaesu.as_yaesu().unwrap().model(),
+            Some(YaesuCatModel::Generic)
+        );
 
         let classic = open_model(GENERIC_YAESU_CLASSIC_MODEL, "/dev/null", 4_800, 0xE0).unwrap();
         assert!(classic.as_legacy_yaesu().is_some());
-        assert!(classic.as_legacy_yaesu().unwrap().model().is_none());
+        assert_eq!(
+            classic.as_legacy_yaesu().unwrap().model(),
+            Some(YaesuLegacyModel::Generic)
+        );
 
         let kenwood = open_model(GENERIC_KENWOOD_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
         assert!(kenwood.as_kenwood().is_some());
@@ -997,7 +1003,7 @@ mod tests {
         assert!(!elecraft_k3.supports_memory_channels());
 
         let generic = open_model(GENERIC_KENWOOD_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
-        assert!(generic.supports_control(crate::ControlId::RfPower));
+        assert!(!generic.supports_control(crate::ControlId::RfPower));
         assert!(generic.supports_meter(crate::MeterId::Signal));
         assert!(generic.supports_meter(crate::MeterId::Power));
         assert!(!generic.supports_meter(crate::MeterId::Swr));
@@ -1010,8 +1016,12 @@ mod tests {
         assert!(!generic_icom.supports_meter(crate::MeterId::Swr));
 
         let generic_yaesu = open_model(GENERIC_YAESU_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
+        assert!(!generic_yaesu.supports_control(crate::ControlId::RfPower));
         assert!(!generic_yaesu.supports_control(crate::ControlId::Agc));
         assert!(!generic_yaesu.supports_meter(crate::MeterId::Swr));
+        assert!(generic_yaesu.supports_meter(crate::MeterId::Signal));
+        assert!(!generic_yaesu.supports_repeater_settings());
+        assert!(!generic_yaesu.supports_memory_channels());
 
         let legacy = open_model("FT-857D", "/dev/null", 9_600, 0xE0).unwrap();
         assert!(legacy.supports_control(crate::ControlId::Split));
@@ -1020,6 +1030,7 @@ mod tests {
         let generic_legacy =
             open_model(GENERIC_YAESU_CLASSIC_MODEL, "/dev/null", 4_800, 0xE0).unwrap();
         assert!(generic_legacy.supports_control(crate::ControlId::Split));
+        assert!(!generic_legacy.supports_repeater_settings());
     }
     #[test]
     fn decodes_common_ascii_modes() {

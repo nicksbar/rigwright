@@ -288,6 +288,8 @@ pub const CAT_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     swr_meter_max: 70,
     swr_rm_selector: '2',
     controls: CONTROLS,
+    preamp_values: &[0, 1, 2],
+    filter_minimum: 1,
     extra_meters: METERS,
     supports_signal_meter: true,
     supports_power_meter: true,
@@ -297,7 +299,15 @@ pub const CAT_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     ai_on_value: "2",
     sm_payload_len: 4,
     sm_value_start: 0,
-    swr_meter_requires_selection: true,
+    swr_meter_selection: Some(super::profile::KenwoodMeterSelection {
+        command: "RM",
+        parameter_suffix: "21",
+    }),
+    extra_meter_selection: Some(super::profile::KenwoodMeterSelection {
+        command: "RM",
+        parameter_suffix: "1",
+    }),
+    repeater: Some(super::profile::STANDARD_REPEATER),
 };
 
 pub use CAT_PROFILE as TS890S_PROFILE;

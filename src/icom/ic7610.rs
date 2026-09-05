@@ -210,6 +210,7 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     default_address: 0x98,
     frequency_ranges: FREQUENCY_RANGES,
     controls: CONTROLS,
+    modes: super::profile::DEFAULT_MODES,
     scope_geometry: Some(crate::models::IcomScopeGeometry {
         divisions: 15,
         bins: 689,
@@ -241,6 +242,8 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     filter_bandwidths: &[],
     swr_sweep_setup: Some(super::profile::SWR_SWEEP_SETUP),
     meter_presentation: Some(super::profile::swr_meter_presentation),
+    scope_ack_optional: false,
+    usb_detection: &[],
 };
 
 #[cfg(test)]

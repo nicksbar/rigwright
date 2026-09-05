@@ -74,6 +74,7 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     default_address: 0x5E,
     frequency_ranges: FREQUENCY_RANGES,
     controls: CONTROLS,
+    modes: super::profile::DEFAULT_MODES,
     scope_geometry: None,
     scope: None,
     scope_options: super::profile::EMPTY_SCOPE_OPTIONS,
@@ -98,6 +99,8 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     filter_bandwidths: &[],
     swr_sweep_setup: None,
     meter_presentation: None,
+    scope_ack_optional: false,
+    usb_detection: &[],
 };
 
 #[cfg(test)]

@@ -137,6 +137,7 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     default_address: 0x94,
     frequency_ranges: FREQUENCY_RANGES,
     controls: CONTROLS,
+    modes: super::profile::DEFAULT_MODES,
     scope_geometry: Some(crate::models::IcomScopeGeometry {
         divisions: 11,
         bins: 475,
@@ -168,6 +169,17 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     filter_bandwidths: FILTER_BANDWIDTHS,
     swr_sweep_setup: Some(super::profile::SWR_SWEEP_SETUP),
     meter_presentation: Some(super::profile::swr_meter_presentation),
+    scope_ack_optional: true,
+    usb_detection: &[
+        super::profile::UsbDetectionSpec {
+            product_tokens: &["ic-7300"],
+            vendor_id: None,
+        },
+        super::profile::UsbDetectionSpec {
+            product_tokens: &["7300"],
+            vendor_id: Some(0x0C26),
+        },
+    ],
 };
 
 /// IC-7300-specific scope configuration operations.

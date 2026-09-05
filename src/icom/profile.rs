@@ -1,6 +1,7 @@
 //! Shared declarative profiles for Icom CI-V models.
 
 use crate::controls::ControlId;
+use crate::hal::BaseMode;
 use crate::hal_types::{
     MeterId, MeterPollSpec, MeterPresentation, Mode, ScopeCenterType, ScopeMarkerPosition,
     ScopeMaxHold, ScopeMetadata, ScopeWaveformType, SwrSweepSetup,
@@ -171,6 +172,15 @@ pub struct ScopeMenuSpec {
     pub waveform_color_max_hold: u16,
 }
 
+/// USB identity hints used during discovery before CI-V communication begins.
+/// Matching remains deliberately conservative and only identifies models with
+/// an unambiguous product-string signature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UsbDetectionSpec {
+    pub product_tokens: &'static [&'static str],
+    pub vendor_id: Option<u16>,
+}
+
 /// Model-owned catalog of scope and waterfall settings. Empty lists mean the
 /// setting has not been validated for that model yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -233,6 +243,8 @@ pub struct IcomCivProfile {
     pub frequency_ranges: &'static [(u64, u64)],
     /// Controls implemented by the generic profile executor.
     pub controls: &'static [ControlSpec],
+    /// Base operating modes documented by this model.
+    pub modes: &'static [BaseMode],
     /// Waveform frame geometry, if the model's scope stream is supported.
     pub scope_geometry: Option<crate::models::IcomScopeGeometry>,
     /// Commands required to start and stop the model's scope stream.
@@ -267,6 +279,10 @@ pub struct IcomCivProfile {
     pub filter_bandwidths: &'static [(Mode, u8, u32)],
     pub swr_sweep_setup: Option<SwrSweepSetup>,
     pub meter_presentation: Option<fn(MeterId, u8) -> Option<MeterPresentation>>,
+    /// Some CI-V firmware accepts scope writes without returning an ACK.
+    pub scope_ack_optional: bool,
+    /// USB product signatures that can identify this model during discovery.
+    pub usb_detection: &'static [UsbDetectionSpec],
 }
 
 impl PartialEq for IcomCivProfile {
@@ -285,6 +301,7 @@ impl PartialEq for IcomCivProfile {
             && self.default_address == other.default_address
             && self.frequency_ranges == other.frequency_ranges
             && self.controls == other.controls
+            && self.modes == other.modes
             && self.scope_geometry == other.scope_geometry
             && self.scope == other.scope
             && self.scope_options == other.scope_options
@@ -303,6 +320,8 @@ impl PartialEq for IcomCivProfile {
             && self.supports_memory_channels == other.supports_memory_channels
             && self.filter_bandwidths == other.filter_bandwidths
             && self.swr_sweep_setup == other.swr_sweep_setup
+            && self.scope_ack_optional == other.scope_ack_optional
+            && self.usb_detection == other.usb_detection
             && meter_presentation_eq
     }
 }
@@ -312,6 +331,29 @@ impl Eq for IcomCivProfile {}
 /// Conservative CI-V defaults used by current Icom profiles unless a model
 /// documents a narrower serial menu.
 pub const DEFAULT_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
+
+pub const DEFAULT_MODES: &[BaseMode] = &[
+    BaseMode::Lsb,
+    BaseMode::Usb,
+    BaseMode::Am,
+    BaseMode::Cw,
+    BaseMode::CwR,
+    BaseMode::Fm,
+    BaseMode::Rtty,
+    BaseMode::RttyR,
+];
+
+pub const ALL_MODE_MODES: &[BaseMode] = &[
+    BaseMode::Lsb,
+    BaseMode::Usb,
+    BaseMode::Am,
+    BaseMode::Cw,
+    BaseMode::CwR,
+    BaseMode::Fm,
+    BaseMode::Rtty,
+    BaseMode::RttyR,
+    BaseMode::Wfm,
+];
 
 /// Low-power carrier setup shared by the Icom models whose CI-V manuals
 /// document both RTTY operation and SWR meter readback.
@@ -412,11 +454,16 @@ impl IcomCivProfile {
             .iter()
             .any(|&(low, high)| (low..=high).contains(&hz))
     }
+
+    pub fn supports_mode(self, mode: BaseMode) -> bool {
+        self.modes.contains(&mode)
+    }
     pub fn control(self, id: ControlId) -> Option<&'static ControlSpec> {
-        self.controls
-            .iter()
-            .find(|spec| spec.id == id)
-            .or_else(|| COMMON_CONTROLS.iter().find(|spec| spec.id == id))
+        self.controls.iter().find(|spec| spec.id == id).or_else(|| {
+            (self.model != crate::models::IcomCivModel::Generic)
+                .then(|| COMMON_CONTROLS.iter().find(|spec| spec.id == id))
+                .flatten()
+        })
     }
 
     pub fn supports_meter(self, id: MeterId) -> bool {
@@ -489,6 +536,7 @@ impl IcomCivProfile {
 
 pub fn profile_for_model(model: crate::models::IcomCivModel) -> &'static IcomCivProfile {
     match model {
+        crate::models::IcomCivModel::Generic => &crate::icom::generic::CIV_PROFILE,
         crate::models::IcomCivModel::Ic705 => &crate::icom::ic705::CIV_PROFILE,
         crate::models::IcomCivModel::Ic718 => &crate::icom::ic718::CIV_PROFILE,
         crate::models::IcomCivModel::Ic7200 => &crate::icom::ic7200::CIV_PROFILE,
@@ -496,6 +544,35 @@ pub fn profile_for_model(model: crate::models::IcomCivModel) -> &'static IcomCiv
         crate::models::IcomCivModel::Ic7610 => &crate::icom::ic7610::CIV_PROFILE,
         crate::models::IcomCivModel::Ic9700 => &crate::icom::ic9700::CIV_PROFILE,
     }
+}
+
+pub fn model_from_usb_identity(
+    vid: u16,
+    _manufacturer: &str,
+    product: &str,
+) -> Option<crate::models::IcomCivModel> {
+    let product = product.to_ascii_lowercase();
+
+    for model in [
+        crate::models::IcomCivModel::Ic705,
+        crate::models::IcomCivModel::Ic718,
+        crate::models::IcomCivModel::Ic7200,
+        crate::models::IcomCivModel::Ic7300,
+        crate::models::IcomCivModel::Ic7610,
+        crate::models::IcomCivModel::Ic9700,
+    ] {
+        let profile = profile_for_model(model);
+        if profile.usb_detection.iter().any(|spec| {
+            spec.vendor_id.is_none_or(|expected| expected == vid)
+                && spec
+                    .product_tokens
+                    .iter()
+                    .any(|token| product.contains(token))
+        }) {
+            return Some(model);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -717,17 +794,11 @@ mod tests {
         let ic705 = profile_for_model(IcomCivModel::Ic705);
         assert!(ic705.supports_frequency(145_000_000));
         assert!(ic705.supports_frequency(450_000_000));
-        assert!(crate::icom::modes::supports_mode(
-            IcomCivModel::Ic705,
-            crate::hal::BaseMode::Wfm
-        ));
+        assert!(ic705.supports_mode(crate::hal::BaseMode::Wfm));
 
         let ic7300 = profile_for_model(IcomCivModel::Ic7300);
         assert_eq!(ic7300.attenuator_values, &[0, 20]);
-        assert!(crate::icom::modes::supports_mode(
-            IcomCivModel::Ic7300,
-            crate::hal::BaseMode::Fm
-        ));
+        assert!(ic7300.supports_mode(crate::hal::BaseMode::Fm));
 
         let ic7610 = profile_for_model(IcomCivModel::Ic7610);
         assert!(!ic7610.supports_frequency(70_000_000));
@@ -735,10 +806,7 @@ mod tests {
 
         let ic9700 = profile_for_model(IcomCivModel::Ic9700);
         assert!(ic9700.supports_frequency(1_296_000_000));
-        assert!(!crate::icom::modes::supports_mode(
-            IcomCivModel::Ic9700,
-            crate::hal::BaseMode::Wfm
-        ));
+        assert!(!ic9700.supports_mode(crate::hal::BaseMode::Wfm));
     }
 
     #[test]

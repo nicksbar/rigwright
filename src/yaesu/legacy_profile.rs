@@ -23,6 +23,7 @@ pub struct YaesuLegacyProfile {
     pub meters: &'static [MeterId],
     pub meter_poll_specs: &'static [MeterPollSpec],
     pub meter_metadata: &'static [MeterMetadata],
+    pub supports_repeater_settings: bool,
     /// FT-817ND/FT-818 document radio power commands; these remain deliberately
     /// outside the protocol-neutral HAL because remote power-off is hazardous.
     pub documents_power_commands: bool,
@@ -147,6 +148,23 @@ const MOBILE_RANGES: &[(u64, u64)] = &[
     (420_000_000, 470_000_000),
 ];
 
+const GENERIC_RANGES: &[(u64, u64)] = &[(100_000, 470_000_000)];
+
+pub const GENERIC_PROFILE: YaesuLegacyProfile = YaesuLegacyProfile {
+    model: YaesuLegacyModel::Generic,
+    frequency_ranges: GENERIC_RANGES,
+    baud_rates: BAUD_RATES,
+    writable_modes: BASE_MODES,
+    controls: CONTROLS,
+    readable_controls: READABLE_CONTROLS,
+    writable_controls: WRITABLE_CONTROLS,
+    meters: METERS,
+    meter_poll_specs: METER_POLL_SPECS,
+    meter_metadata: METER_METADATA,
+    supports_repeater_settings: false,
+    documents_power_commands: false,
+};
+
 pub const FT817ND_PROFILE: YaesuLegacyProfile = YaesuLegacyProfile {
     model: YaesuLegacyModel::Ft817Nd,
     frequency_ranges: FT817_RANGES,
@@ -158,6 +176,7 @@ pub const FT817ND_PROFILE: YaesuLegacyProfile = YaesuLegacyProfile {
     meters: METERS,
     meter_poll_specs: METER_POLL_SPECS,
     meter_metadata: METER_METADATA,
+    supports_repeater_settings: true,
     documents_power_commands: true,
 };
 
@@ -172,6 +191,7 @@ pub const FT818_PROFILE: YaesuLegacyProfile = YaesuLegacyProfile {
     meters: METERS,
     meter_poll_specs: METER_POLL_SPECS,
     meter_metadata: METER_METADATA,
+    supports_repeater_settings: true,
     documents_power_commands: true,
 };
 
@@ -186,6 +206,7 @@ pub const FT857D_PROFILE: YaesuLegacyProfile = YaesuLegacyProfile {
     meters: METERS,
     meter_poll_specs: METER_POLL_SPECS,
     meter_metadata: METER_METADATA,
+    supports_repeater_settings: true,
     documents_power_commands: false,
 };
 
@@ -200,11 +221,13 @@ pub const FT897D_PROFILE: YaesuLegacyProfile = YaesuLegacyProfile {
     meters: METERS,
     meter_poll_specs: METER_POLL_SPECS,
     meter_metadata: METER_METADATA,
+    supports_repeater_settings: true,
     documents_power_commands: false,
 };
 
 pub fn profile_for_model(model: YaesuLegacyModel) -> &'static YaesuLegacyProfile {
     match model {
+        YaesuLegacyModel::Generic => &GENERIC_PROFILE,
         YaesuLegacyModel::Ft817Nd => &FT817ND_PROFILE,
         YaesuLegacyModel::Ft818 => &FT818_PROFILE,
         YaesuLegacyModel::Ft857D => &FT857D_PROFILE,
@@ -260,5 +283,13 @@ mod tests {
             );
             assert_eq!(profile.meter_metadata(MeterId::Power).unwrap().raw_max, 15);
         }
+    }
+
+    #[test]
+    fn generic_profile_does_not_claim_repeater_support() {
+        let profile = profile_for_model(YaesuLegacyModel::Generic);
+        assert!(!profile.supports_repeater_settings);
+        assert!(GENERIC_PROFILE.supports_control(ControlId::Split));
+        assert!(GENERIC_PROFILE.supports_meter(MeterId::Signal));
     }
 }

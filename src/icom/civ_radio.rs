@@ -13,7 +13,9 @@ use std::{
 };
 
 use super::profile::ControlEncoding;
-use super::profile::{meter_command_prefix, profile_for_model, MemoryLayout, ScopeMenuSpec};
+use super::profile::{
+    meter_command_prefix, model_from_usb_identity, profile_for_model, MemoryLayout, ScopeMenuSpec,
+};
 use crate::events::{RadioEvent, RadioEventRouter, RadioEventSubscription};
 pub use crate::hal_types::{BaseMode, Mode, OperatingMode};
 use crate::hal_types::{
@@ -327,11 +329,8 @@ fn detect_likely_radio_model(
     let manufacturer_lc = manufacturer.to_ascii_lowercase();
     let product_lc = product.to_ascii_lowercase();
 
-    if product_lc.contains("ic-7300") || (vid == 0x0C26 && product_lc.contains("7300")) {
-        return Some("Icom IC-7300 (CI-V)".to_string());
-    }
-    if product_lc.contains("ic-7200") || product_lc.contains("7200") {
-        return Some("Icom IC-7200 (CI-V)".to_string());
+    if let Some(model) = model_from_usb_identity(vid, manufacturer, product) {
+        return Some(format!("Icom {} (CI-V)", model.model_name()));
     }
 
     if manufacturer_lc.contains("icom") || product_lc.contains("icom") {
@@ -617,25 +616,20 @@ impl IcomCiVRadio {
         data_mode: bool,
         filter: u8,
     ) -> Result<()> {
-        if let Some(model) = self.model {
-            anyhow::ensure!(
-                super::modes::supports_mode(model, base_mode),
-                "mode {base_mode:?} is not documented for {}",
-                model.model_name()
-            );
-        }
+        let profile = self.active_profile();
+        anyhow::ensure!(
+            profile.supports_mode(base_mode),
+            "mode {base_mode:?} is not documented for {}",
+            profile.model.model_name()
+        );
         let mode_byte = base_mode_to_civ_mode(base_mode)
             .with_context(|| format!("unsupported base mode for CI-V set: {base_mode:?}"))?;
-        if let Some(model) = self.model {
-            let profile = profile_for_model(model);
-            anyhow::ensure!(
-                profile.control_capabilities.filter_values.contains(&filter),
-                "CI-V filter value is not documented for {}",
-                model.model_name()
-            );
-        } else {
-            anyhow::ensure!((1..=3).contains(&filter), "CI-V filter must be in 1..=3");
-        }
+        anyhow::ensure!(
+            profile.control_capabilities.filter_values.contains(&filter)
+                || (self.model.is_none() && (1..=3).contains(&filter)),
+            "CI-V filter value is not documented for {}",
+            profile.model.model_name()
+        );
         let data_byte = if data_mode { 0x01 } else { 0x00 };
         let _ = self.transact(&[0x26, 0x00, mode_byte, data_byte, filter], false)?;
         Ok(())
@@ -823,6 +817,12 @@ impl IcomCiVRadio {
     fn selected_model(&self) -> Result<crate::models::IcomCivModel> {
         self.model
             .context("this CI-V operation requires a selected Icom model profile")
+    }
+
+    fn active_profile(&self) -> &'static super::profile::IcomCivProfile {
+        self.model
+            .map(profile_for_model)
+            .unwrap_or(&super::generic::CIV_PROFILE)
     }
 
     pub(crate) fn require_model(&self, expected: crate::models::IcomCivModel) -> Result<()> {
@@ -1558,11 +1558,12 @@ impl IcomCiVRadio {
     fn transact_scope_setting(&self, payload: &[u8]) -> Result<()> {
         match self.transact_ack(payload) {
             Ok(()) => Ok(()),
-            Err(error) if error.to_string().contains("did not acknowledge") => {
-                // IC-7300 scope setting writes are accepted without an ACK on
-                // some CI-V firmware/configuration combinations. The scope
-                // waveform is the authoritative confirmation; continue to
-                // the output-enable command and validate by waiting for data.
+            Err(error)
+                if self.active_profile().scope_ack_optional
+                    && error.to_string().contains("did not acknowledge") =>
+            {
+                // Some CI-V firmware accepts scope writes without an ACK; the
+                // selected profile owns that exception.
                 Ok(())
             }
             Err(error) => Err(error),
@@ -1574,13 +1575,12 @@ impl IcomCiVRadio {
             hz <= 9_999_999_999,
             "frequency {hz} Hz does not fit the five-byte CI-V BCD format"
         );
-        if let Some(model) = self.model {
-            if !profile_for_model(model).supports_frequency(hz) {
-                anyhow::bail!(
-                    "frequency {hz} Hz is outside the documented CAT range for {}",
-                    model.model_name()
-                );
-            }
+        let profile = self.active_profile();
+        if !profile.supports_frequency(hz) {
+            anyhow::bail!(
+                "frequency {hz} Hz is outside the documented CAT range for {}",
+                profile.model.model_name()
+            );
         }
         let mut payload = Vec::with_capacity(1 + 5);
         payload.push(0x05);
@@ -1676,7 +1676,7 @@ impl IcomCiVRadio {
     }
 
     fn get_meter_blocking_with_timeout(&self, id: MeterId, timeout: Duration) -> Result<u8> {
-        let profile = profile_for_model(self.selected_model()?);
+        let profile = self.active_profile();
         anyhow::ensure!(
             profile.supports_meter(id),
             "meter {id:?} is not supported by this Icom profile"
@@ -2340,38 +2340,26 @@ impl Radio for IcomCiVRadio {
     }
 
     fn supports_meter(&self, id: MeterId) -> bool {
-        self.model()
-            .map(profile_for_model)
-            .is_some_and(|profile| profile.supports_meter(id))
+        self.active_profile().supports_meter(id)
     }
 
     fn filter_bandwidth_hz(&self, mode: Mode, filter: u8) -> Option<u32> {
-        self.model()
-            .map(profile_for_model)
-            .and_then(|profile| profile.filter_bandwidth_hz(mode, filter))
+        self.active_profile().filter_bandwidth_hz(mode, filter)
     }
 
     fn swr_sweep_setup(&self) -> Option<SwrSweepSetup> {
-        self.model()
-            .map(profile_for_model)
-            .and_then(|profile| profile.swr_sweep_setup)
+        self.active_profile().swr_sweep_setup
     }
 
     fn meter_presentation(&self, id: MeterId, normalized: u8) -> Option<MeterPresentation> {
-        self.model()
-            .map(profile_for_model)
-            .and_then(|profile| profile.meter_presentation(id, normalized))
+        self.active_profile().meter_presentation(id, normalized)
     }
 
     fn meter_poll_spec(&self, id: MeterId) -> Option<MeterPollSpec> {
-        self.model()
-            .map(profile_for_model)
-            .and_then(|profile| {
-                profile
-                    .meter_poll_specs
-                    .iter()
-                    .find(|spec| spec.meter == id)
-            })
+        self.active_profile()
+            .meter_poll_specs
+            .iter()
+            .find(|spec| spec.meter == id)
             .copied()
     }
 
@@ -2382,23 +2370,15 @@ impl Radio for IcomCiVRadio {
     }
 
     fn control_max(&self, id: ControlId) -> Option<u8> {
-        self.model()
-            .map(profile_for_model)
-            .and_then(|profile| profile.control_max(id))
+        self.active_profile().control_max(id)
     }
 
     fn supported_control_values(&self, id: ControlId) -> Option<&'static [u8]> {
-        self.model()
-            .map(profile_for_model)
-            .and_then(|profile| profile.supported_control_values(id))
+        self.active_profile().supported_control_values(id)
     }
 
     fn supports_control(&self, id: ControlId) -> bool {
-        let Some(model) = self.model() else {
-            return false;
-        };
-        let profile = profile_for_model(model);
-        profile.supports_control(id)
+        self.active_profile().supports_control(id)
     }
 
     fn supports_control_read(&self, id: ControlId) -> bool {
@@ -2452,15 +2432,11 @@ impl Radio for IcomCiVRadio {
     }
 
     fn supports_repeater_settings(&self) -> bool {
-        self.model()
-            .map(profile_for_model)
-            .is_some_and(|profile| profile.supports_repeater_settings)
+        self.active_profile().supports_repeater_settings
     }
 
     fn supports_memory_channels(&self) -> bool {
-        self.model()
-            .map(profile_for_model)
-            .is_some_and(|profile| profile.supports_memory_channels)
+        self.active_profile().supports_memory_channels
     }
 
     fn capabilities(&self) -> RadioCapabilities {
@@ -3364,7 +3340,7 @@ mod tests {
     fn generic_and_profiled_controls_have_distinct_capability_surfaces() {
         let generic = IcomCiVRadio::new_generic("", 115_200, 0xE0, 0x94);
         assert!(!generic.supports_control(ControlId::RfPower));
-        assert!(!generic.supports_meter(MeterId::Signal));
+        assert!(generic.supports_meter(MeterId::Signal));
 
         for model in [
             crate::models::IcomCivModel::Ic705,
@@ -3578,6 +3554,7 @@ mod tests {
                     crate::models::IcomCivModel::Ic7300 => 0x94,
                     crate::models::IcomCivModel::Ic7610 => 0x98,
                     crate::models::IcomCivModel::Ic9700 => 0xA2,
+                    crate::models::IcomCivModel::Generic => unreachable!(),
                 },
                 transport,
             );
@@ -3607,6 +3584,7 @@ mod tests {
                     crate::models::IcomCivModel::Ic7300 => 0x94,
                     crate::models::IcomCivModel::Ic7610 => 0x98,
                     crate::models::IcomCivModel::Ic9700 => 0xA2,
+                    crate::models::IcomCivModel::Generic => unreachable!(),
                 },
                 0xE0,
             )]);
@@ -3620,6 +3598,7 @@ mod tests {
                     crate::models::IcomCivModel::Ic7300 => 0x94,
                     crate::models::IcomCivModel::Ic7610 => 0x98,
                     crate::models::IcomCivModel::Ic9700 => 0xA2,
+                    crate::models::IcomCivModel::Generic => unreachable!(),
                 },
                 transport,
             );

@@ -25,9 +25,25 @@ pub struct KenwoodMeterSpec {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KenwoodMeterSelection {
+    pub command: &'static str,
+    pub parameter_suffix: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KenwoodRitXitLayout {
     IfStatus,
     RfAndFunctionState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KenwoodRepeaterSpec {
+    pub tone_command: &'static str,
+    pub tone_mode_command: &'static str,
+    pub tone_index_max: u8,
+    pub off_value: &'static str,
+    pub encode_value: &'static str,
+    pub encode_decode_value: &'static str,
 }
 
 #[derive(Clone, Copy)]
@@ -102,6 +118,9 @@ pub struct KenwoodCatProfile {
     /// RM selector returned when the radio is displaying SWR.
     pub swr_rm_selector: char,
     pub controls: &'static [KenwoodControlSpec],
+    pub preamp_values: &'static [u8],
+    /// Minimum legal value for the profiled IF filter control.
+    pub filter_minimum: u8,
     pub extra_meters: &'static [KenwoodMeterSpec],
     pub supports_signal_meter: bool,
     pub supports_power_meter: bool,
@@ -111,7 +130,9 @@ pub struct KenwoodCatProfile {
     pub ai_on_value: &'static str,
     pub sm_payload_len: usize,
     pub sm_value_start: usize,
-    pub swr_meter_requires_selection: bool,
+    pub swr_meter_selection: Option<KenwoodMeterSelection>,
+    pub extra_meter_selection: Option<KenwoodMeterSelection>,
+    pub repeater: Option<KenwoodRepeaterSpec>,
 }
 
 impl KenwoodCatProfile {
@@ -129,15 +150,13 @@ impl KenwoodCatProfile {
 
     pub fn supported_control_values(self, id: ControlId) -> Option<&'static [u8]> {
         const BINARY: &[u8] = &[0, 1];
-        const PREAMP_TS890: &[u8] = &[0, 1, 2];
         const AGC: &[u8] = &[0, 1, 2, 3];
         if !self.supports_control(id) {
             return None;
         }
         match id {
-            ControlId::Preamp if self.model == KenwoodCatModel::Ts890S => Some(PREAMP_TS890),
-            ControlId::Preamp
-            | ControlId::NoiseBlanker
+            ControlId::Preamp => Some(self.preamp_values),
+            ControlId::NoiseBlanker
             | ControlId::NoiseReduction
             | ControlId::Notch
             | ControlId::Rit
@@ -269,7 +288,20 @@ impl KenwoodCatProfile {
                 (id == ControlId::RfPower && self.power_range_watts.is_some()).then_some(u8::MAX)
             })
     }
+
+    pub fn supports_repeater_settings(self) -> bool {
+        self.repeater.is_some()
+    }
 }
+
+pub const STANDARD_REPEATER: KenwoodRepeaterSpec = KenwoodRepeaterSpec {
+    tone_command: "CN",
+    tone_mode_command: "CT",
+    tone_index_max: 41,
+    off_value: "0",
+    encode_value: "1",
+    encode_decode_value: "2",
+};
 
 pub(crate) fn parse_memory_field<T>(value: &str, label: &str) -> Result<T>
 where

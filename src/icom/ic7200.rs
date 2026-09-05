@@ -78,6 +78,7 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     default_address: 0x76,
     frequency_ranges: FREQUENCY_RANGES,
     controls: CONTROLS,
+    modes: super::profile::DEFAULT_MODES,
     scope_geometry: None,
     scope: None,
     scope_options: super::profile::EMPTY_SCOPE_OPTIONS,
@@ -102,6 +103,11 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     filter_bandwidths: &[],
     swr_sweep_setup: Some(SWR_SWEEP_SETUP),
     meter_presentation: Some(swr_meter_presentation),
+    scope_ack_optional: false,
+    usb_detection: &[super::profile::UsbDetectionSpec {
+        product_tokens: &["7200"],
+        vendor_id: None,
+    }],
 };
 
 #[cfg(test)]

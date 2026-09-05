@@ -104,7 +104,7 @@ impl std::fmt::Debug for LegacyYaesuRadio {
 impl LegacyYaesuRadio {
     /// Construct a model-neutral classic CAT driver.
     pub fn new_generic(port: impl Into<String>, baud_rate: u32) -> Self {
-        Self::new_internal(None, port, baud_rate)
+        Self::new_internal(Some(YaesuLegacyModel::Generic), port, baud_rate)
     }
 
     /// Compatibility constructor. Prefer [`Self::new_for_model`] when the
@@ -207,18 +207,6 @@ impl LegacyYaesuRadio {
                     profile.model.model_name()
                 );
             }
-        } else if !matches!(
-            mode,
-            LegacyMode::Lsb
-                | LegacyMode::Usb
-                | LegacyMode::Cw
-                | LegacyMode::CwReverse
-                | LegacyMode::Am
-                | LegacyMode::Fm
-                | LegacyMode::Digital
-                | LegacyMode::Packet
-        ) {
-            bail!("generic classic Yaesu CAT does not support mode {mode:?}");
         }
         self.transact(yaesu_legacy_cat::set_mode(mode), 0)?;
         Ok(())
@@ -428,6 +416,11 @@ impl Radio for LegacyYaesuRadio {
     }
 
     async fn set_repeater_settings(&self, settings: RepeaterSettings) -> Result<()> {
+        anyhow::ensure!(
+            self.profile()
+                .is_some_and(|profile| profile.supports_repeater_settings),
+            "repeater settings are not profiled for this classic Yaesu model"
+        );
         self.transact(yaesu_legacy_cat::set_repeater_shift(settings.shift), 0)?;
         if let Some(offset_hz) = settings.offset_hz {
             self.transact(
@@ -467,7 +460,8 @@ impl Radio for LegacyYaesuRadio {
     }
 
     fn supports_repeater_settings(&self) -> bool {
-        true
+        self.profile()
+            .is_some_and(|profile| profile.supports_repeater_settings)
     }
 
     async fn get_meter(&self, id: MeterId) -> Result<Option<u8>> {

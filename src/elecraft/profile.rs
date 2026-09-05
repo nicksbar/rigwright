@@ -19,6 +19,46 @@ pub enum ElecraftModel {
     Kh1,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElecraftIdentifyStrategy {
+    Id,
+    Kh1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElecraftTxStateStrategy {
+    Tq,
+    Tqx,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElecraftTxMeterStrategy {
+    None,
+    K3Family,
+    K4,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElecraftSignalMeterStrategy {
+    Sm { maximum: u16 },
+    K4 { maximum: u16 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElecraftVfoMovementStrategy {
+    StepIndexed { maximum: u8 },
+    CurrentStep,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ElecraftMeterStrategy {
+    pub command: &'static str,
+    pub prefix: &'static str,
+    pub maximum: u16,
+}
+
 impl ElecraftModel {
     pub const fn model_name(self) -> &'static str {
         match self {
@@ -89,6 +129,19 @@ pub struct ElecraftProfile {
     pub rf_gain_max: Option<u16>,
     pub squelch_max: u16,
     pub rf_gain_is_attenuation: bool,
+    pub identify_strategy: ElecraftIdentifyStrategy,
+    pub auto_info_max: Option<u8>,
+    pub tx_state_strategy: ElecraftTxStateStrategy,
+    pub tx_meter_strategy: ElecraftTxMeterStrategy,
+    pub vfo_movement_strategy: ElecraftVfoMovementStrategy,
+    pub signal_meter_strategy: ElecraftSignalMeterStrategy,
+    pub power_meter_strategy: Option<ElecraftMeterStrategy>,
+    pub alc_meter_strategy: Option<ElecraftMeterStrategy>,
+    pub swr_meter_strategy: Option<ElecraftMeterStrategy>,
+    pub memory_channel_max: Option<u16>,
+    pub repeater_offset_max_hz: Option<u32>,
+    pub rit_offset_max_hz: Option<i32>,
+    pub attenuator_values: &'static [u8],
 }
 
 impl ElecraftProfile {
@@ -107,7 +160,6 @@ impl ElecraftProfile {
     pub fn supported_control_values(self, id: ControlId) -> Option<&'static [u8]> {
         const BINARY: &[u8] = &[0, 1];
         const AGC: &[u8] = &[0, 1, 2, 3];
-        const K4_ATTENUATION: &[u8] = &[0, 3, 6, 9, 12, 15, 18, 21];
         if !self.supports_control(id) {
             return None;
         }
@@ -118,7 +170,7 @@ impl ElecraftProfile {
             | ControlId::NoiseBlanker
             | ControlId::Tuner => Some(BINARY),
             ControlId::Agc => Some(AGC),
-            ControlId::Attenuator if self.model == ElecraftModel::K4 => Some(K4_ATTENUATION),
+            ControlId::Attenuator => Some(self.attenuator_values),
             _ => None,
         }
     }
@@ -126,9 +178,9 @@ impl ElecraftProfile {
     pub fn supports_meter(self, id: MeterId) -> bool {
         match id {
             MeterId::Signal => true,
-            MeterId::Power => self.power_max_watts.is_some(),
-            MeterId::Swr => self.model != ElecraftModel::K4,
-            MeterId::Alc => matches!(self.model, ElecraftModel::K3 | ElecraftModel::K3s),
+            MeterId::Power => self.power_meter_strategy.is_some(),
+            MeterId::Swr => self.swr_meter_strategy.is_some(),
+            MeterId::Alc => self.alc_meter_strategy.is_some(),
             _ => false,
         }
     }
@@ -150,17 +202,13 @@ impl ElecraftProfile {
             return None;
         }
         let raw_max = match id {
-            MeterId::Signal => match self.model {
-                ElecraftModel::K2 => 15,
-                ElecraftModel::K4 => 42,
-                _ => 30,
+            MeterId::Signal => match self.signal_meter_strategy {
+                ElecraftSignalMeterStrategy::Sm { maximum }
+                | ElecraftSignalMeterStrategy::K4 { maximum } => maximum,
             },
-            MeterId::Power => match self.model {
-                ElecraftModel::K4 => 1100,
-                _ => 12,
-            },
-            MeterId::Alc => 7,
-            MeterId::Swr => 999,
+            MeterId::Power => self.power_meter_strategy?.maximum,
+            MeterId::Alc => self.alc_meter_strategy?.maximum,
+            MeterId::Swr => self.swr_meter_strategy?.maximum,
             _ => return None,
         };
         Some(MeterMetadata {
@@ -177,15 +225,16 @@ impl ElecraftProfile {
     }
 
     pub fn meter_presentation(self, id: MeterId, normalized: u8) -> Option<MeterPresentation> {
-        if id != MeterId::Swr || self.model == ElecraftModel::K4 {
+        let strategy = self.swr_meter_strategy?;
+        if id != MeterId::Swr {
             return None;
         }
-        let raw = crate::denormalize_meter_level(normalized, 999)?;
+        let raw = crate::denormalize_meter_level(normalized, strategy.maximum)?;
         Some(MeterPresentation {
             value: raw as f32 / 10.0,
             unit: ":1",
             precision: 1,
-            upper_bound: Some(99.9),
+            upper_bound: Some(f32::from(strategy.maximum) / 10.0),
         })
     }
 
@@ -294,6 +343,8 @@ impl ElecraftProfile {
 pub(crate) const HF_RANGES: &[(u64, u64)] = &[(100_000, 54_000_000)];
 pub(crate) const BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400];
 pub(crate) const K4_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
+pub(crate) const EMPTY_VALUES: &[u8] = &[];
+pub(crate) const K4_ATTENUATOR_VALUES: &[u8] = &[0, 3, 6, 9, 12, 15, 18, 21];
 
 pub const fn profile_for_model(model: ElecraftModel) -> ElecraftProfile {
     match model {

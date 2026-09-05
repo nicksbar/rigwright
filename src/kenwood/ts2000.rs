@@ -138,6 +138,8 @@ pub const CAT_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     swr_meter_max: 30,
     swr_rm_selector: '1',
     controls: CONTROLS,
+    preamp_values: &[0, 1],
+    filter_minimum: 0,
     extra_meters: &[],
     supports_signal_meter: true,
     supports_power_meter: true,
@@ -147,7 +149,9 @@ pub const CAT_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     ai_on_value: "1",
     sm_payload_len: 5,
     sm_value_start: 1,
-    swr_meter_requires_selection: false,
+    swr_meter_selection: None,
+    extra_meter_selection: None,
+    repeater: Some(super::profile::STANDARD_REPEATER),
 };
 
 pub use CAT_PROFILE as TS2000_PROFILE;

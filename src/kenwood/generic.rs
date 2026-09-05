@@ -74,11 +74,13 @@ pub const CAT_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     supports_vfo: true,
     supports_split: true,
     supports_if_status: false,
-    power_range_watts: Some((5, 100)),
+    power_range_watts: None,
     meter_max: 30,
     swr_meter_max: 30,
     swr_rm_selector: '1',
     controls: &[],
+    preamp_values: &[],
+    filter_minimum: 0,
     extra_meters: &[],
     supports_signal_meter: true,
     supports_power_meter: true,
@@ -89,5 +91,7 @@ pub const CAT_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     // TS-590SG/TS-2000-style SM response is the conservative common default.
     sm_payload_len: 5,
     sm_value_start: 1,
-    swr_meter_requires_selection: false,
+    swr_meter_selection: None,
+    extra_meter_selection: None,
+    repeater: None,
 };
