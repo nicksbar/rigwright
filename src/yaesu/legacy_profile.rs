@@ -291,5 +291,12 @@ mod tests {
         assert!(!profile.supports_repeater_settings);
         assert!(GENERIC_PROFILE.supports_control(ControlId::Split));
         assert!(GENERIC_PROFILE.supports_meter(MeterId::Signal));
+        assert!(!GENERIC_PROFILE.supports_meter(MeterId::Temperature));
+        assert!(GENERIC_PROFILE
+            .meter_poll_spec(MeterId::Temperature)
+            .is_none());
+        assert!(GENERIC_PROFILE
+            .meter_metadata(MeterId::Temperature)
+            .is_none());
     }
 }

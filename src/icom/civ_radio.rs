@@ -4489,7 +4489,6 @@ mod tests {
                 green: 8,
                 blue: 9,
             }),
-            ..ScopeConfiguration::default()
         }))
         .unwrap();
         futures::executor::block_on(radio.select_vfo(IcomVfo::A)).unwrap();

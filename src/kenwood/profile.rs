@@ -693,6 +693,7 @@ mod tests {
     #[test]
     fn memory_command_surfaces_are_profile_owned() {
         let ts590 = TS590SG_PROFILE.memory.unwrap();
+        assert!(format!("{ts590:?}").contains("KenwoodMemorySpec"));
         assert_eq!(ts590.channel_max, 119);
         assert_eq!(ts590.select_command, "MC");
         assert_eq!((ts590.read_parameters)(7), "0007");

@@ -1101,6 +1101,67 @@ mod tests {
     }
 
     #[test]
+    fn configured_radio_dispatches_core_operations_for_each_local_family() {
+        let radios = vec![
+            open_model("IC-7300", "/dev/null", 115_200, 0xE0).unwrap(),
+            open_model("FTDX10", "/dev/null", 38_400, 0xE0).unwrap(),
+            open_model("TS-590SG", "/dev/null", 115_200, 0xE0).unwrap(),
+            open_model("FT-857D", "/dev/null", 9_600, 0xE0).unwrap(),
+            open_model("K4", "/dev/null", 38_400, 0xE0).unwrap(),
+            ConfiguredRadio::Ascii(AsciiCatRadio::new("", 9_600, AsciiCatFlavor::Yaesu)),
+        ];
+        for radio in &radios {
+            let _ = futures::executor::block_on(radio.probe());
+            let _ = futures::executor::block_on(radio.get_frequency_hz());
+            let _ = futures::executor::block_on(radio.set_frequency_hz(14_074_000));
+            let _ = futures::executor::block_on(radio.get_mode());
+            let _ = futures::executor::block_on(radio.set_mode(Mode::Usb));
+            let _ = futures::executor::block_on(radio.set_ptt(false));
+            let _ = futures::executor::block_on(radio.get_ptt());
+            let _ = futures::executor::block_on(radio.get_power());
+            let _ = futures::executor::block_on(radio.set_power(false));
+            let _ = futures::executor::block_on(radio.protocol_write_read(&[]));
+            let _ = futures::executor::block_on(radio.get_control(ControlId::RfPower));
+            let _ = futures::executor::block_on(
+                radio.set_control(ControlId::RfPower, ControlValue::U8(1)),
+            );
+            let _ = futures::executor::block_on(radio.get_meter(MeterId::Signal));
+            let _ = futures::executor::block_on(radio.start_tuner());
+            let _ = futures::executor::block_on(radio.get_tuner_status());
+            let _ = radio.supports_scope();
+            let _ = radio.supports_iq_output();
+            let _ = radio.scope_metadata();
+            let _ = radio.control_max(ControlId::RfPower);
+            let _ = radio.supported_control_values(ControlId::RfPower);
+            let _ = radio.meter_poll_spec(MeterId::Signal);
+            let _ = radio.meter_metadata(MeterId::Signal);
+            let _ = radio.filter_bandwidth_hz(Mode::Usb, 1);
+            let _ = radio.swr_sweep_setup();
+            let _ = radio.meter_presentation(MeterId::Signal, 128);
+            let _ = radio.supports_memory_selection();
+            let _ = futures::executor::block_on(radio.get_repeater_settings());
+            let _ = futures::executor::block_on(
+                radio.set_repeater_settings(RepeaterSettings::default()),
+            );
+            let _ = futures::executor::block_on(radio.get_rit_offset_hz());
+            let _ = futures::executor::block_on(radio.set_rit_offset_hz(0));
+            let _ = futures::executor::block_on(radio.get_xit_offset_hz());
+            let _ = futures::executor::block_on(radio.set_xit_offset_hz(0));
+            let _ = futures::executor::block_on(radio.select_memory_channel(1));
+            let _ = futures::executor::block_on(radio.read_memory_channel(1));
+            let _ = futures::executor::block_on(radio.write_memory_channel(MemoryChannel {
+                channel: 1,
+                name: None,
+                frequency_hz: 14_074_000,
+                transmit_frequency_hz: None,
+                mode: Mode::Usb,
+                repeater: RepeaterSettings::default(),
+            }));
+            let _ = futures::executor::block_on(radio.send_dtmf(DtmfSequence::new("1").unwrap()));
+        }
+    }
+
+    #[test]
     fn ascii_compatibility_driver_covers_documented_modes_and_capabilities() {
         for (flavor, modes) in [
             (
