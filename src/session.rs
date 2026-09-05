@@ -187,6 +187,53 @@ impl Error for SessionError {}
 
 pub type SessionTicket = oneshot::Receiver<Result<RadioSnapshot, SessionError>>;
 
+enum SessionRequestKind {
+    GetPower,
+    SetPower(bool),
+    GetControl(ControlId),
+    GetMeter(crate::MeterId),
+    GetScopeState,
+    SetScopeConfiguration(crate::ScopeConfiguration),
+    ProtocolWriteRead(Vec<u8>),
+    GetRepeaterSettings,
+    SetRepeaterSettings(crate::RepeaterSettings),
+    GetRitOffset,
+    SetRitOffset(i32),
+    GetXitOffset,
+    SetXitOffset(i32),
+    SelectMemoryChannel(u16),
+    ReadMemoryChannel(u16),
+    WriteMemoryChannel(crate::MemoryChannel),
+    SendDtmf(crate::DtmfSequence),
+    StartTuner,
+    GetTunerStatus,
+}
+
+enum SessionResponse {
+    Unit,
+    Bool(bool),
+    Control(Option<ControlValue>),
+    Meter(Option<u8>),
+    ScopeState(crate::ScopeState),
+    Bytes(Vec<u8>),
+    RepeaterSettings(crate::RepeaterSettings),
+    Offset(i32),
+    MemoryChannel(crate::MemoryChannel),
+    TunerStatus(Option<crate::TunerStatus>),
+}
+
+struct QueuedRequest {
+    kind: SessionRequestKind,
+    generation: u64,
+    deadline: Instant,
+    response: oneshot::Sender<Result<SessionResponse, SessionError>>,
+}
+
+enum WorkerWork {
+    Operation(QueuedOperation),
+    Request(QueuedRequest),
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct SessionConfig {
     pub queue_capacity: usize,
@@ -275,6 +322,7 @@ struct QueuedOperation {
 
 struct SharedState {
     queue: VecDeque<QueuedOperation>,
+    requests: VecDeque<QueuedRequest>,
     snapshot: RadioSnapshot,
     closed: bool,
     diagnostics: SessionDiagnostics,
@@ -357,11 +405,16 @@ impl Radio for RadioSession {
     }
 
     async fn get_power(&self) -> anyhow::Result<bool> {
-        self.current_radio().get_power().await
+        match self.wait_request(SessionRequestKind::GetPower).await? {
+            SessionResponse::Bool(value) => Ok(value),
+            _ => unreachable!("get_power returned the wrong session response"),
+        }
     }
 
     async fn set_power(&self, enabled: bool) -> anyhow::Result<()> {
-        self.current_radio().set_power(enabled).await
+        self.wait_request(SessionRequestKind::SetPower(enabled))
+            .await
+            .map(|_| ())
     }
 
     fn supports_scope(&self) -> bool {
@@ -377,7 +430,10 @@ impl Radio for RadioSession {
     }
 
     async fn get_scope_state(&self) -> anyhow::Result<crate::ScopeState> {
-        self.current_radio().get_scope_state().await
+        match self.wait_request(SessionRequestKind::GetScopeState).await? {
+            SessionResponse::ScopeState(state) => Ok(state),
+            _ => unreachable!("get_scope_state returned the wrong session response"),
+        }
     }
 
     fn filter_bandwidth_hz(&self, mode: Mode, filter: u8) -> Option<u32> {
@@ -416,15 +472,29 @@ impl Radio for RadioSession {
         &self,
         config: crate::ScopeConfiguration,
     ) -> anyhow::Result<()> {
-        self.current_radio().set_scope_configuration(config).await
+        self.wait_request(SessionRequestKind::SetScopeConfiguration(config))
+            .await
+            .map(|_| ())
     }
 
     async fn protocol_write_read(&self, request: &[u8]) -> anyhow::Result<Vec<u8>> {
-        self.current_radio().protocol_write_read(request).await
+        match self
+            .wait_request(SessionRequestKind::ProtocolWriteRead(request.to_vec()))
+            .await?
+        {
+            SessionResponse::Bytes(response) => Ok(response),
+            _ => unreachable!("protocol_write_read returned the wrong session response"),
+        }
     }
 
     async fn get_control(&self, id: ControlId) -> anyhow::Result<Option<ControlValue>> {
-        self.current_radio().get_control(id).await
+        match self
+            .wait_request(SessionRequestKind::GetControl(id))
+            .await?
+        {
+            SessionResponse::Control(value) => Ok(value),
+            _ => unreachable!("get_control returned the wrong session response"),
+        }
     }
 
     async fn set_control(&self, id: ControlId, value: ControlValue) -> anyhow::Result<()> {
@@ -444,43 +514,73 @@ impl Radio for RadioSession {
     }
 
     async fn get_repeater_settings(&self) -> anyhow::Result<crate::RepeaterSettings> {
-        self.current_radio().get_repeater_settings().await
+        match self
+            .wait_request(SessionRequestKind::GetRepeaterSettings)
+            .await?
+        {
+            SessionResponse::RepeaterSettings(settings) => Ok(settings),
+            _ => unreachable!("get_repeater_settings returned the wrong session response"),
+        }
     }
 
     async fn set_repeater_settings(&self, settings: crate::RepeaterSettings) -> anyhow::Result<()> {
-        self.current_radio().set_repeater_settings(settings).await
+        self.wait_request(SessionRequestKind::SetRepeaterSettings(settings))
+            .await
+            .map(|_| ())
     }
 
     async fn get_rit_offset_hz(&self) -> anyhow::Result<i32> {
-        self.current_radio().get_rit_offset_hz().await
+        match self.wait_request(SessionRequestKind::GetRitOffset).await? {
+            SessionResponse::Offset(offset) => Ok(offset),
+            _ => unreachable!("get_rit_offset_hz returned the wrong session response"),
+        }
     }
 
     async fn set_rit_offset_hz(&self, offset_hz: i32) -> anyhow::Result<()> {
-        self.current_radio().set_rit_offset_hz(offset_hz).await
+        self.wait_request(SessionRequestKind::SetRitOffset(offset_hz))
+            .await
+            .map(|_| ())
     }
 
     async fn get_xit_offset_hz(&self) -> anyhow::Result<i32> {
-        self.current_radio().get_xit_offset_hz().await
+        match self.wait_request(SessionRequestKind::GetXitOffset).await? {
+            SessionResponse::Offset(offset) => Ok(offset),
+            _ => unreachable!("get_xit_offset_hz returned the wrong session response"),
+        }
     }
 
     async fn set_xit_offset_hz(&self, offset_hz: i32) -> anyhow::Result<()> {
-        self.current_radio().set_xit_offset_hz(offset_hz).await
+        self.wait_request(SessionRequestKind::SetXitOffset(offset_hz))
+            .await
+            .map(|_| ())
     }
 
     async fn select_memory_channel(&self, channel: u16) -> anyhow::Result<()> {
-        self.current_radio().select_memory_channel(channel).await
+        self.wait_request(SessionRequestKind::SelectMemoryChannel(channel))
+            .await
+            .map(|_| ())
     }
 
     async fn read_memory_channel(&self, channel: u16) -> anyhow::Result<crate::MemoryChannel> {
-        self.current_radio().read_memory_channel(channel).await
+        match self
+            .wait_request(SessionRequestKind::ReadMemoryChannel(channel))
+            .await?
+        {
+            SessionResponse::MemoryChannel(memory) => Ok(memory),
+            _ => unreachable!("read_memory_channel returned the wrong session response"),
+        }
     }
 
     async fn write_memory_channel(&self, channel: crate::MemoryChannel) -> anyhow::Result<()> {
-        self.current_radio().write_memory_channel(channel).await
+        self.wait_request(SessionRequestKind::WriteMemoryChannel(channel))
+            .await
+            .map(|_| ())
     }
 
     async fn send_dtmf(&self, sequence: crate::DtmfSequence) -> anyhow::Result<()> {
-        self.current_radio().send_dtmf(sequence).await
+        self.wait_request(SessionRequestKind::SendDtmf(sequence))
+            .await
+            .map(|_| ())
     }
 
     fn supports_repeater_settings(&self) -> bool {
@@ -500,7 +600,10 @@ impl Radio for RadioSession {
     }
 
     async fn get_meter(&self, id: crate::MeterId) -> anyhow::Result<Option<u8>> {
-        self.current_radio().get_meter(id).await
+        match self.wait_request(SessionRequestKind::GetMeter(id)).await? {
+            SessionResponse::Meter(value) => Ok(value),
+            _ => unreachable!("get_meter returned the wrong session response"),
+        }
     }
 
     fn supports_meter(&self, id: crate::MeterId) -> bool {
@@ -516,11 +619,19 @@ impl Radio for RadioSession {
     }
 
     async fn start_tuner(&self) -> anyhow::Result<()> {
-        self.current_radio().start_tuner().await
+        self.wait_request(SessionRequestKind::StartTuner)
+            .await
+            .map(|_| ())
     }
 
     async fn get_tuner_status(&self) -> anyhow::Result<Option<crate::TunerStatus>> {
-        self.current_radio().get_tuner_status().await
+        match self
+            .wait_request(SessionRequestKind::GetTunerStatus)
+            .await?
+        {
+            SessionResponse::TunerStatus(status) => Ok(status),
+            _ => unreachable!("get_tuner_status returned the wrong session response"),
+        }
     }
 
     fn capabilities(&self) -> RadioCapabilities {
@@ -563,6 +674,7 @@ impl RadioSession {
         let shared = Arc::new(Shared {
             state: Mutex::new(SharedState {
                 queue: VecDeque::new(),
+                requests: VecDeque::new(),
                 snapshot,
                 closed: false,
                 diagnostics: SessionDiagnostics::default(),
@@ -662,6 +774,75 @@ impl RadioSession {
             .map_err(|error| anyhow::anyhow!(error.to_string()))
     }
 
+    async fn wait_request(&self, request: SessionRequestKind) -> anyhow::Result<SessionResponse> {
+        let receiver = self
+            .submit_request(request)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        receiver
+            .await
+            .map_err(|_| anyhow::anyhow!("radio session request worker stopped"))?
+            .map_err(|error| anyhow::anyhow!(error.to_string()))
+    }
+
+    fn submit_request(
+        &self,
+        request: SessionRequestKind,
+    ) -> Result<oneshot::Receiver<Result<SessionResponse, SessionError>>, SessionError> {
+        self.validate_request(&request)?;
+        let (response, receiver) = oneshot::channel();
+        let mut state = self.shared.state.lock().map_err(|_| SessionError::Closed)?;
+        if state.closed {
+            return Err(SessionError::Closed);
+        }
+        if state.queue.len() + state.requests.len() >= self.shared.queue_capacity {
+            return Err(SessionError::QueueFull);
+        }
+        let generation = state.diagnostics.generation;
+        state.requests.push_back(QueuedRequest {
+            kind: request,
+            generation,
+            deadline: Instant::now() + DEFAULT_COMMAND_TIMEOUT,
+            response,
+        });
+        state.diagnostics.queued = state.diagnostics.queued.wrapping_add(1);
+        self.shared.wake.notify_one();
+        Ok(receiver)
+    }
+
+    fn validate_request(&self, request: &SessionRequestKind) -> Result<(), SessionError> {
+        let capabilities = self.current_radio().capabilities();
+        match request {
+            SessionRequestKind::SetPower(_) if !capabilities.can_set_power => {
+                Err(SessionError::Unsupported("power write".into()))
+            }
+            SessionRequestKind::ProtocolWriteRead(frame) if frame.is_empty() => Err(
+                SessionError::InvalidFrame("raw frame cannot be empty".into()),
+            ),
+            SessionRequestKind::ProtocolWriteRead(_) if !capabilities.can_raw_protocol => {
+                Err(SessionError::Unsupported("raw protocol write".into()))
+            }
+            SessionRequestKind::SetScopeConfiguration(_) if !self.supports_scope() => {
+                Err(SessionError::Unsupported("scope configuration".into()))
+            }
+            SessionRequestKind::SetRepeaterSettings(_) if !self.supports_repeater_settings() => {
+                Err(SessionError::Unsupported("repeater settings write".into()))
+            }
+            SessionRequestKind::SelectMemoryChannel(_) if !self.supports_memory_selection() => {
+                Err(SessionError::Unsupported("memory selection".into()))
+            }
+            SessionRequestKind::ReadMemoryChannel(_)
+            | SessionRequestKind::WriteMemoryChannel(_)
+                if !self.supports_memory_channels() =>
+            {
+                Err(SessionError::Unsupported("memory channel".into()))
+            }
+            SessionRequestKind::SendDtmf(_) if !self.supports_send_dtmf() => {
+                Err(SessionError::Unsupported("DTMF".into()))
+            }
+            _ => Ok(()),
+        }
+    }
+
     pub fn submit(&self, operation: SessionOperation) -> Result<SessionTicket, SessionError> {
         if let Err(error) = self.validate(&operation) {
             self.shared
@@ -721,7 +902,7 @@ impl RadioSession {
             let _ = sender.send(Ok(state.snapshot.clone()));
             return Ok(receiver);
         }
-        if state.queue.len() >= self.shared.queue_capacity {
+        if state.queue.len() + state.requests.len() >= self.shared.queue_capacity {
             self.shared
                 .events
                 .publish(SessionEvent::OperationCompleted {
@@ -858,6 +1039,9 @@ impl RadioSession {
                 let _ = waiter.send(Err(SessionError::StaleGeneration));
             }
         }
+        for request in state.requests.drain(..) {
+            let _ = request.response.send(Err(SessionError::StaleGeneration));
+        }
         state.snapshot.pending.clear();
         self.shared.wake.notify_one();
         Ok(state.diagnostics.generation)
@@ -871,6 +1055,9 @@ impl RadioSession {
                 for waiter in queued.waiters {
                     let _ = waiter.send(Err(SessionError::Closed));
                 }
+            }
+            for request in state.requests.drain(..) {
+                let _ = request.response.send(Err(SessionError::Closed));
             }
             state.snapshot.pending.clear();
             self.shared.wake.notify_all();
@@ -941,7 +1128,7 @@ fn worker_loop(
         let Some(shared) = weak.upgrade() else { break };
         ingest_events(&shared);
         enforce_ptt_watchdog(&shared, &radio);
-        let operation = {
+        let work = {
             let mut state = match shared.state.lock() {
                 Ok(state) => state,
                 Err(_) => break,
@@ -955,14 +1142,16 @@ fn worker_loop(
                     .iter()
                     .map(|item| item.operation.clone())
                     .collect();
-                Some(queued)
+                Some(WorkerWork::Operation(queued))
+            } else if let Some(request) = state.requests.pop_front() {
+                Some(WorkerWork::Request(request))
             } else if refresh_interval.is_some_and(|_| Instant::now() >= next_refresh) {
-                Some(QueuedOperation {
+                Some(WorkerWork::Operation(QueuedOperation {
                     operation: SessionOperation::Refresh,
                     generation: state.diagnostics.generation,
                     deadline: Instant::now() + DEFAULT_COMMAND_TIMEOUT,
                     waiters: Vec::new(),
-                })
+                }))
             } else {
                 let timeout = refresh_interval
                     .map(|_| next_refresh.saturating_duration_since(Instant::now()))
@@ -972,7 +1161,57 @@ fn worker_loop(
                 None
             }
         };
-        let Some(queued) = operation else { continue };
+        let Some(work) = work else { continue };
+        let WorkerWork::Operation(queued) = work else {
+            let WorkerWork::Request(request) = work else {
+                unreachable!("worker request branch was already matched")
+            };
+            let timed_out = Instant::now() >= request.deadline;
+            let result = if timed_out {
+                Err(anyhow::anyhow!("radio session request deadline expired"))
+            } else {
+                radio
+                    .lock()
+                    .map(|radio| execute_request(&radio, &request.kind))
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("radio session backend lock poisoned")))
+            };
+            let mut state = match shared.state.lock() {
+                Ok(state) => state,
+                Err(_) => break,
+            };
+            let response = match result {
+                Ok(response) if request.generation == state.diagnostics.generation => {
+                    state.snapshot.status = SessionStatus::Ready;
+                    state.snapshot.synchronized = true;
+                    state.snapshot.last_error = None;
+                    state.snapshot.sequence = state.snapshot.sequence.wrapping_add(1);
+                    state.diagnostics.completed = state.diagnostics.completed.wrapping_add(1);
+                    shared
+                        .events
+                        .publish(SessionEvent::SnapshotChanged(state.snapshot.clone()));
+                    Ok(response)
+                }
+                Ok(_) => Err(SessionError::StaleGeneration),
+                Err(error) => {
+                    state.snapshot.status = SessionStatus::Recovering;
+                    state.snapshot.synchronized = false;
+                    state.snapshot.last_error = Some(error.to_string());
+                    state.snapshot.sequence = state.snapshot.sequence.wrapping_add(1);
+                    state.diagnostics.failed = state.diagnostics.failed.wrapping_add(1);
+                    state.diagnostics.recoveries = state.diagnostics.recoveries.wrapping_add(1);
+                    shared
+                        .events
+                        .publish(SessionEvent::SnapshotChanged(state.snapshot.clone()));
+                    Err(if timed_out {
+                        SessionError::TimedOut
+                    } else {
+                        SessionError::Backend(error.to_string())
+                    })
+                }
+            };
+            let _ = request.response.send(response);
+            continue;
+        };
         let timed_out = Instant::now() >= queued.deadline;
         let result = if timed_out {
             Err(anyhow::anyhow!("radio session command deadline expired"))
@@ -1217,6 +1456,80 @@ fn execute(
             futures::executor::block_on(radio.protocol_write_read(frame))?;
             Ok(None)
         }
+    }
+}
+
+fn execute_request(
+    radio: &Arc<dyn Radio>,
+    request: &SessionRequestKind,
+) -> anyhow::Result<SessionResponse> {
+    match request {
+        SessionRequestKind::GetPower => Ok(SessionResponse::Bool(futures::executor::block_on(
+            radio.get_power(),
+        )?)),
+        SessionRequestKind::SetPower(enabled) => {
+            futures::executor::block_on(radio.set_power(*enabled))?;
+            Ok(SessionResponse::Unit)
+        }
+        SessionRequestKind::GetControl(id) => Ok(SessionResponse::Control(
+            futures::executor::block_on(radio.get_control(*id))?,
+        )),
+        SessionRequestKind::GetMeter(id) => Ok(SessionResponse::Meter(
+            futures::executor::block_on(radio.get_meter(*id))?,
+        )),
+        SessionRequestKind::GetScopeState => Ok(SessionResponse::ScopeState(
+            futures::executor::block_on(radio.get_scope_state())?,
+        )),
+        SessionRequestKind::SetScopeConfiguration(config) => {
+            futures::executor::block_on(radio.set_scope_configuration(*config))?;
+            Ok(SessionResponse::Unit)
+        }
+        SessionRequestKind::ProtocolWriteRead(request) => Ok(SessionResponse::Bytes(
+            futures::executor::block_on(radio.protocol_write_read(request))?,
+        )),
+        SessionRequestKind::GetRepeaterSettings => Ok(SessionResponse::RepeaterSettings(
+            futures::executor::block_on(radio.get_repeater_settings())?,
+        )),
+        SessionRequestKind::SetRepeaterSettings(settings) => {
+            futures::executor::block_on(radio.set_repeater_settings(*settings))?;
+            Ok(SessionResponse::Unit)
+        }
+        SessionRequestKind::GetRitOffset => Ok(SessionResponse::Offset(
+            futures::executor::block_on(radio.get_rit_offset_hz())?,
+        )),
+        SessionRequestKind::SetRitOffset(offset) => {
+            futures::executor::block_on(radio.set_rit_offset_hz(*offset))?;
+            Ok(SessionResponse::Unit)
+        }
+        SessionRequestKind::GetXitOffset => Ok(SessionResponse::Offset(
+            futures::executor::block_on(radio.get_xit_offset_hz())?,
+        )),
+        SessionRequestKind::SetXitOffset(offset) => {
+            futures::executor::block_on(radio.set_xit_offset_hz(*offset))?;
+            Ok(SessionResponse::Unit)
+        }
+        SessionRequestKind::SelectMemoryChannel(channel) => {
+            futures::executor::block_on(radio.select_memory_channel(*channel))?;
+            Ok(SessionResponse::Unit)
+        }
+        SessionRequestKind::ReadMemoryChannel(channel) => Ok(SessionResponse::MemoryChannel(
+            futures::executor::block_on(radio.read_memory_channel(*channel))?,
+        )),
+        SessionRequestKind::WriteMemoryChannel(channel) => {
+            futures::executor::block_on(radio.write_memory_channel(channel.clone()))?;
+            Ok(SessionResponse::Unit)
+        }
+        SessionRequestKind::SendDtmf(sequence) => {
+            futures::executor::block_on(radio.send_dtmf(sequence.clone()))?;
+            Ok(SessionResponse::Unit)
+        }
+        SessionRequestKind::StartTuner => {
+            futures::executor::block_on(radio.start_tuner())?;
+            Ok(SessionResponse::Unit)
+        }
+        SessionRequestKind::GetTunerStatus => Ok(SessionResponse::TunerStatus(
+            futures::executor::block_on(radio.get_tuner_status())?,
+        )),
     }
 }
 

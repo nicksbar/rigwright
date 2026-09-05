@@ -318,6 +318,7 @@ mod tests {
     use super::*;
     use std::collections::VecDeque;
     use std::io::{Error, ErrorKind, Read, Write};
+    use std::sync::Arc;
     use std::time::Duration;
 
     struct MockCiVTransport {
@@ -502,5 +503,30 @@ mod tests {
             radio.set_control(ControlId::RawCiV, ControlValue::U8(0),)
         )
         .is_err());
+    }
+
+    #[test]
+    fn android_radio_runs_through_the_serialized_session_worker() {
+        let radio = RadioAndroid::new_icom_civ(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            MockCiVTransport::new(),
+        );
+        let session = crate::RadioSession::from_radio(
+            Arc::new(radio),
+            crate::SessionConfig {
+                queue_capacity: 4,
+                refresh_interval: None,
+                max_tx_hold: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            futures::executor::block_on(session.get_frequency_hz()).unwrap(),
+            7_188_000
+        );
+        futures::executor::block_on(session.set_frequency_hz(7_074_000)).unwrap();
     }
 }
