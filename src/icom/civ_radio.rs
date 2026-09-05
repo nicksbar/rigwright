@@ -3376,6 +3376,102 @@ mod tests {
     }
 
     #[test]
+    fn radio_trait_capability_delegates_use_the_selected_profile() {
+        let radio = IcomCiVRadio::new_for_model(
+            crate::models::IcomCivModel::Ic7300,
+            "",
+            115_200,
+            0xE0,
+            0x94,
+        );
+        assert_eq!(radio.model(), Some(crate::models::IcomCivModel::Ic7300));
+        assert_eq!(radio.controller_address(), 0xE0);
+        assert_eq!(radio.radio_address(), 0x94);
+        assert!(radio.event_router().is_some());
+        assert!(!radio.supports_scope() || radio.scope_metadata().is_some());
+        assert!(!radio.supports_iq_output());
+        assert!(radio.filter_bandwidth_hz(Mode::Usb, 0).is_none());
+        assert!(radio.swr_sweep_setup().is_some());
+        assert!(radio.meter_presentation(MeterId::Swr, 128).is_some());
+        assert!(radio.meter_poll_spec(MeterId::Signal).is_some());
+        assert!(radio.meter_metadata(MeterId::Signal).is_none());
+        assert!(radio.control_max(ControlId::Agc).is_some());
+        assert!(radio.supported_control_values(ControlId::Filter).is_some());
+        assert!(radio.supports_control(ControlId::RfPower));
+        assert!(radio.supports_control_read(ControlId::RfPower));
+        assert!(radio.supports_control_write(ControlId::RfPower));
+        assert!(radio.supports_memory_channels());
+        assert!(radio.supports_repeater_settings());
+        assert!(radio.capabilities().can_get_frequency);
+        assert_eq!(radio.link_health().commands_started, Some(0));
+        assert!(radio.event_stream_age().is_none());
+        assert_eq!(radio.scope_stream_counters(), (0, 0, 0));
+        assert!(!radio
+            .scope_stream_health()
+            .is_stalled(Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn scope_assembler_rejects_bad_geometry_and_incomplete_sweeps() {
+        let geometry = crate::models::IcomScopeGeometry {
+            divisions: 2,
+            full_chunk_bins: 2,
+            last_chunk_bins: 1,
+            bins: 3,
+            bin_max: 255,
+            supports_main_sub_scope: false,
+        };
+        let make_frame = |division: u8, bins: &[u8]| {
+            let mut frame = TestTransport::response(0x94, 0xE0, &[0x27, 0x00, 0, division, 2]);
+            frame.extend_from_slice(bins);
+            frame.push(CI_V_FRAME_END);
+            frame
+        };
+        let mut assembler = ScopeSweepAssembler::default();
+        assert!(assembler
+            .push(&make_frame(1, &[1, 2]), Some(geometry))
+            .is_none());
+        assert!(assembler
+            .push(&make_frame(1, &[1, 2]), Some(geometry))
+            .is_none());
+        assert_eq!(assembler.dropped_sweeps, 1);
+        assert!(assembler
+            .push(&make_frame(3, &[1]), Some(geometry))
+            .is_none());
+        assert!(assembler
+            .push(&make_frame(2, &[1, 2]), Some(geometry))
+            .is_none());
+        assert!(assembler.push(&make_frame(2, &[1]), None).is_none());
+    }
+
+    #[test]
+    fn serial_port_labels_cover_usb_identity_variants() {
+        let known = SerialPortType::UsbPort(serialport::UsbPortInfo {
+            vid: 0x0C26,
+            pid: 0x0001,
+            serial_number: None,
+            manufacturer: Some("Vendor".to_string()),
+            product: Some("7300 USB Serial".to_string()),
+        });
+        let (label, model) = describe_port_type(&known);
+        assert!(label.contains("Vendor 7300 USB Serial"));
+        assert_eq!(model.as_deref(), Some("Icom IC-7300 (CI-V)"));
+
+        let manufacturer_only = SerialPortType::UsbPort(serialport::UsbPortInfo {
+            vid: 1,
+            pid: 2,
+            serial_number: None,
+            manufacturer: Some("Vendor".to_string()),
+            product: None,
+        });
+        assert!(describe_port_type(&manufacturer_only).0.contains("Vendor"));
+        assert_eq!(
+            describe_port_type(&SerialPortType::PciPort).0,
+            "serial device"
+        );
+    }
+
+    #[test]
     fn profiled_set_controls_emit_exact_model_and_common_ci_v_frames() {
         let (transport, writes) = TestTransport::with_reads(vec![TestTransport::ack(0x94, 0xE0)]);
         let radio = IcomCiVRadio::with_transport(
@@ -4352,7 +4448,7 @@ mod tests {
     #[test]
     fn exercises_scope_configuration_and_selection_validation() {
         let ack = || TestTransport::ack(0x94, 0xE0);
-        let (transport, writes) = TestTransport::with_reads((0..9).map(|_| ack()).collect());
+        let (transport, writes) = TestTransport::with_reads((0..32).map(|_| ack()).collect());
         let radio = IcomCiVRadio::with_transport(
             Some(crate::models::IcomCivModel::Ic7300),
             0xE0,
@@ -4368,11 +4464,36 @@ mod tests {
             sweep_speed: Some(2),
             vbw_wide: Some(true),
             fixed_edges_hz: Some((14_000_000, 14_200_000)),
+            center_type: Some(ScopeCenterType::CarrierPoint),
+            tx_display: Some(true),
+            max_hold: Some(ScopeMaxHold::Continuous),
+            marker_position: Some(ScopeMarkerPosition::CarrierPoint),
+            averaging: Some(2),
+            waveform_type: Some(ScopeWaveformType::FillAndLine),
+            waterfall_display: Some(true),
+            waterfall_size: Some(2),
+            waterfall_peak_level: Some(4),
+            marker_auto_hide: Some(false),
+            waveform_color_current: Some(ScopeColor {
+                red: 1,
+                green: 2,
+                blue: 3,
+            }),
+            waveform_color_line: Some(ScopeColor {
+                red: 4,
+                green: 5,
+                blue: 6,
+            }),
+            waveform_color_max_hold: Some(ScopeColor {
+                red: 7,
+                green: 8,
+                blue: 9,
+            }),
             ..ScopeConfiguration::default()
         }))
         .unwrap();
         futures::executor::block_on(radio.select_vfo(IcomVfo::A)).unwrap();
-        assert!(writes.lock().unwrap().len() == 9);
+        assert!(writes.lock().unwrap().len() == 22);
 
         let unsupported = IcomCiVRadio::new_for_model(
             crate::models::IcomCivModel::Ic9700,

@@ -426,6 +426,11 @@ mod tests {
             Mode::Usb
         );
         futures::executor::block_on(radio.ptt(false)).unwrap();
+        let core = futures::executor::block_on(radio.read_core_state()).unwrap();
+        assert_eq!(core.frequency_hz, Some(14_074_000));
+        assert_eq!(core.mode, Some(Mode::Usb));
+        assert_eq!(core.ptt, None);
+        assert!(radio.event_stream_age().is_none());
         assert!(futures::executor::block_on(radio.get_ptt()).is_err());
         assert!(futures::executor::block_on(radio.get_power()).is_err());
         assert!(futures::executor::block_on(radio.set_power(false)).is_err());
@@ -467,6 +472,21 @@ mod tests {
         assert!(!radio.supports_memory_channels());
         assert!(!radio.supports_memory_selection());
         assert!(!radio.supports_send_dtmf());
+        assert!(!radio.supports_scope());
+        assert!(!radio.supports_iq_output());
+        assert!(radio.scope_metadata().is_none());
+        assert!(futures::executor::block_on(radio.get_scope_state()).is_err());
+        assert!(radio.filter_bandwidth_hz(Mode::Usb, 0).is_none());
+        assert!(radio.swr_sweep_setup().is_none());
+        assert!(radio.meter_presentation(MeterId::Signal, 0).is_none());
+        assert!(radio.control_max(ControlId::RfPower).is_none());
+        assert!(radio.supported_control_values(ControlId::RfPower).is_none());
+        assert!(radio.meter_poll_spec(MeterId::Signal).is_none());
+        assert!(radio.meter_metadata(MeterId::Signal).is_none());
+        assert!(futures::executor::block_on(
+            radio.set_scope_configuration(ScopeConfiguration::default())
+        )
+        .is_err());
         assert!(
             futures::executor::block_on(radio.get_meter(MeterId::Signal))
                 .unwrap()
