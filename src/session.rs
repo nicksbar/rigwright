@@ -22,6 +22,7 @@ const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 /// Default ceiling for a continuous transmit hold before the session forces
 /// PTT off as a safety measure.
 const DEFAULT_MAX_TX_HOLD: Duration = Duration::from_secs(180);
+const MAX_PTT_WATCHDOG_ATTEMPTS: u8 = 3;
 /// How fresh the radio's unsolicited event stream must be for a refresh to
 /// trust the streamed observed state instead of issuing wire polls. Well
 /// under any reasonable CI-V/CAT event cadence, so a live stream makes
@@ -267,6 +268,12 @@ pub enum SessionEvent {
     /// The safety watchdog forced PTT off after the configured maximum
     /// continuous transmit hold elapsed.
     PttWatchdogTripped,
+    /// The safety watchdog could not confirm PTT-off after bounded emergency
+    /// retries. The snapshot deliberately retains PTT as active.
+    PttWatchdogFailed {
+        attempts: u8,
+        error: String,
+    },
 }
 
 #[derive(Debug, Default, Clone)]
@@ -329,6 +336,8 @@ struct SharedState {
     /// When the transmitter was last observed or commanded on. `Some` only
     /// while PTT is believed active; used by the safety watchdog.
     ptt_on_since: Option<Instant>,
+    ptt_watchdog_attempts: u8,
+    ptt_watchdog_failed: bool,
 }
 
 struct Shared {
@@ -679,6 +688,8 @@ impl RadioSession {
                 closed: false,
                 diagnostics: SessionDiagnostics::default(),
                 ptt_on_since: None,
+                ptt_watchdog_attempts: 0,
+                ptt_watchdog_failed: false,
             }),
             wake: Condvar::new(),
             events: SessionEventRouter::default(),
@@ -1181,9 +1192,11 @@ fn worker_loop(
             };
             let response = match result {
                 Ok(response) if request.generation == state.diagnostics.generation => {
-                    state.snapshot.status = SessionStatus::Ready;
-                    state.snapshot.synchronized = true;
-                    state.snapshot.last_error = None;
+                    if !state.ptt_watchdog_failed {
+                        state.snapshot.status = SessionStatus::Ready;
+                        state.snapshot.synchronized = true;
+                        state.snapshot.last_error = None;
+                    }
                     state.snapshot.sequence = state.snapshot.sequence.wrapping_add(1);
                     state.diagnostics.completed = state.diagnostics.completed.wrapping_add(1);
                     shared
@@ -1249,10 +1262,14 @@ fn worker_loop(
                 // can force PTT off if the client never will.
                 if let SessionOperation::SetPtt(enabled) = queued.operation {
                     state.ptt_on_since = if enabled { Some(Instant::now()) } else { None };
+                    state.ptt_watchdog_attempts = 0;
+                    state.ptt_watchdog_failed = false;
                 }
-                state.snapshot.status = SessionStatus::Ready;
-                state.snapshot.synchronized = true;
-                state.snapshot.last_error = None;
+                if !state.ptt_watchdog_failed {
+                    state.snapshot.status = SessionStatus::Ready;
+                    state.snapshot.synchronized = true;
+                    state.snapshot.last_error = None;
+                }
                 state.snapshot.sequence = state.snapshot.sequence.wrapping_add(1);
                 state.diagnostics.completed = state.diagnostics.completed.wrapping_add(1);
                 let snapshot = state.snapshot.clone();
@@ -1324,34 +1341,54 @@ fn enforce_ptt_watchdog(shared: &Shared, radio: &Arc<Mutex<Arc<dyn Radio>>>) {
     let Some(max_hold) = shared.max_tx_hold else {
         return;
     };
-    let exceeded = shared
-        .state
-        .lock()
-        .ok()
-        .and_then(|state| state.ptt_on_since)
-        .is_some_and(|since| since.elapsed() >= max_hold);
+    let exceeded = shared.state.lock().ok().is_some_and(|state| {
+        state
+            .ptt_on_since
+            .is_some_and(|since| since.elapsed() >= max_hold)
+            && state.ptt_watchdog_attempts < MAX_PTT_WATCHDOG_ATTEMPTS
+    });
     if !exceeded {
         return;
     }
-    let result = radio
-        .lock()
-        .map(|radio| futures::executor::block_on(radio.set_ptt(false)))
-        .unwrap_or_else(|_| Err(anyhow::anyhow!("radio session backend lock poisoned")));
+    let mut attempts = 0;
+    let result = loop {
+        attempts += 1;
+        let result = radio
+            .lock()
+            .map(|radio| futures::executor::block_on(radio.set_ptt(false)))
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("radio session backend lock poisoned")));
+        match result {
+            Ok(()) => break Ok(()),
+            Err(_error) if attempts < MAX_PTT_WATCHDOG_ATTEMPTS => {}
+            Err(error) => break Err(error),
+        }
+    };
     if let Ok(mut state) = shared.state.lock() {
-        state.ptt_on_since = None;
-        state.snapshot.observed.ptt = Some(false);
+        state.ptt_watchdog_attempts = attempts;
         state.snapshot.sequence = state.snapshot.sequence.wrapping_add(1);
         match result {
             Ok(()) => {
+                state.ptt_on_since = None;
+                state.ptt_watchdog_attempts = 0;
+                state.ptt_watchdog_failed = false;
+                state.snapshot.observed.ptt = Some(false);
                 shared.events.publish(SessionEvent::PttWatchdogTripped);
                 shared
                     .events
                     .publish(SessionEvent::SnapshotChanged(state.snapshot.clone()));
             }
             Err(error) => {
+                let error_text = error.to_string();
+                state.ptt_watchdog_failed = true;
+                state.snapshot.status = SessionStatus::Degraded;
+                state.snapshot.synchronized = false;
                 state.snapshot.last_error = Some(format!(
-                    "PTT watchdog failed to drop the transmitter: {error}"
+                    "PTT watchdog failed to drop the transmitter after {attempts} attempts: {error_text}"
                 ));
+                shared.events.publish(SessionEvent::PttWatchdogFailed {
+                    attempts,
+                    error: error_text,
+                });
                 shared
                     .events
                     .publish(SessionEvent::SnapshotChanged(state.snapshot.clone()));
@@ -1543,6 +1580,7 @@ mod tests {
         frequency: Mutex<u64>,
         mode: Mutex<Mode>,
         ptt: Mutex<bool>,
+        ptt_failures_remaining: AtomicUsize,
         writes: AtomicUsize,
         core_reads: AtomicUsize,
         stream_age: Mutex<Option<Duration>>,
@@ -1583,6 +1621,20 @@ mod tests {
         }
         async fn set_ptt(&self, value: bool) -> anyhow::Result<()> {
             self.writes.fetch_add(1, Ordering::SeqCst);
+            if !value
+                && self
+                    .ptt_failures_remaining
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                        if remaining > 0 {
+                            Some(remaining - 1)
+                        } else {
+                            None
+                        }
+                    })
+                    .is_ok()
+            {
+                return Err(anyhow::anyhow!("simulated PTT-off failure"));
+            }
             *self.ptt.lock().unwrap() = value;
             Ok(())
         }
@@ -1612,6 +1664,7 @@ mod tests {
             frequency: Mutex::new(14_074_000),
             mode: Mutex::new(Mode::Usb),
             ptt: Mutex::new(false),
+            ptt_failures_remaining: AtomicUsize::new(0),
             writes: AtomicUsize::new(0),
             core_reads: AtomicUsize::new(0),
             stream_age: Mutex::new(None),
@@ -1842,6 +1895,7 @@ mod tests {
             },
         )
         .unwrap();
+        let subscription = session.events().subscribe();
         // Key the transmitter on through the normal admission path.
         futures::executor::block_on(session.set_ptt(true).unwrap())
             .unwrap()
@@ -1859,6 +1913,46 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(dropped, "watchdog did not force PTT off");
+        assert!(subscription
+            .drain()
+            .iter()
+            .any(|event| matches!(event, SessionEvent::PttWatchdogTripped)));
+    }
+
+    #[test]
+    fn ptt_watchdog_preserves_active_state_after_bounded_shutdown_failure() {
+        let radio = fake();
+        let session = RadioSession::from_radio(
+            Arc::clone(&radio),
+            SessionConfig {
+                queue_capacity: 4,
+                refresh_interval: Some(Duration::from_millis(10)),
+                max_tx_hold: Some(Duration::from_millis(20)),
+            },
+        )
+        .unwrap();
+        let subscription = session.events().subscribe();
+        futures::executor::block_on(session.set_ptt(true).unwrap())
+            .unwrap()
+            .unwrap();
+        radio.ptt_failures_remaining.store(3, Ordering::SeqCst);
+
+        for _ in 0..1000 {
+            if session.snapshot().status == SessionStatus::Degraded {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let snapshot = session.snapshot();
+        assert_eq!(snapshot.status, SessionStatus::Degraded);
+        assert_eq!(snapshot.observed.ptt, Some(true));
+        assert!(snapshot.last_error.is_some());
+        assert_eq!(radio.writes.load(Ordering::SeqCst), 4);
+        assert!(subscription
+            .drain()
+            .iter()
+            .any(|event| matches!(event, SessionEvent::PttWatchdogFailed { attempts: 3, .. })));
     }
 
     #[test]

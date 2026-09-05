@@ -17,6 +17,9 @@
   drivers.
 
 ### Fixed
+- Make the PTT safety watchdog fail safe: emergency PTT-off now retries a
+  bounded number of times, preserves an active PTT observation when shutdown
+  cannot be confirmed, enters `Degraded`, and emits a distinct failure event.
 - Expose Icom USB/native connection baud choices to clients. Models such as
   the IC-7300 now offer 38,400, 57,600, and 115,200 baud without changing the
   narrower physical REMOTE/CI-V port metadata.
