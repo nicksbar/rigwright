@@ -16,6 +16,7 @@ pub mod probe;
 pub mod protocol;
 pub mod rigctld;
 pub mod session;
+pub mod support;
 pub mod transport;
 pub mod yaesu;
 
@@ -51,6 +52,7 @@ pub use session::{
     SessionDiagnostics, SessionError, SessionEvent, SessionEventRouter, SessionEventSubscription,
     SessionOperation, SessionOutcome, SessionStatus, SessionTicket,
 };
+pub use support::{SupportEvidence, SupportMatrix, SupportMatrixEntry};
 pub use transport::RadioTransport;
 pub use yaesu::cat_radio::{YaesuSerialPolicy, YaesuTransportMetrics};
 pub use yaesu::legacy_radio::{LegacyYaesuSerialPolicy, LegacyYaesuTransportMetrics};

@@ -5,6 +5,8 @@ use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::Serialize;
+
 #[derive(Debug)]
 pub struct ProbeLog {
     tool: String,
@@ -16,7 +18,7 @@ pub struct ProbeLog {
     metrics: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct ProbeRecord {
     name: String,
     status: &'static str,
@@ -90,6 +92,22 @@ impl ProbeLog {
         fs::write(path, document)
     }
 
+    /// Write a shareable report without the physical endpoint or raw protocol
+    /// data. ProbeLog records are intentionally semantic checks only; this
+    /// projection makes that boundary explicit for CI and issue attachments.
+    pub fn write_sanitized(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
+        let document = SanitizedProbeLog {
+            tool: &self.tool,
+            model: &self.model,
+            baud: self.baud,
+            records: &self.records,
+            transport_metrics: self.metrics.as_deref(),
+        };
+        let json = serde_json::to_vec_pretty(&document)
+            .map_err(|error| std::io::Error::other(format!("serializing probe log: {error}")))?;
+        fs::write(path, json)
+    }
+
     fn record(&mut self, name: impl Into<String>, status: &'static str, detail: impl Display) {
         self.records.push(ProbeRecord {
             name: name.into(),
@@ -97,6 +115,15 @@ impl ProbeLog {
             detail: detail.to_string(),
         });
     }
+}
+
+#[derive(Debug, Serialize)]
+struct SanitizedProbeLog<'a> {
+    tool: &'a str,
+    model: &'a str,
+    baud: u32,
+    records: &'a [ProbeRecord],
+    transport_metrics: Option<&'a str>,
 }
 
 fn json_escape(value: &str) -> String {
@@ -142,6 +169,24 @@ mod tests {
         assert!(document.contains("transport_metrics"));
         assert!(document.contains("writes"));
         assert!(document.contains("\"status\":\"skip\""));
+    }
+
+    #[test]
+    fn sanitized_probe_log_omits_endpoint_and_raw_transport_data() {
+        let path = unique_temp_path();
+        let mut log = ProbeLog::new("probe", "IC-7300", "/home/operator/radio.sock", 115_200);
+        log.pass("status", "frequency and mode matched");
+        log.set_metrics(("responses", 2));
+
+        log.write_sanitized(&path)
+            .expect("sanitized probe log should be writable");
+        let document = fs::read_to_string(&path).expect("sanitized probe log should be readable");
+        fs::remove_file(&path).expect("test sanitized probe log should be removable");
+
+        assert!(document.contains("IC-7300"));
+        assert!(document.contains("frequency and mode matched"));
+        assert!(!document.contains("radio.sock"));
+        assert!(!document.contains("raw"));
     }
 
     fn unique_temp_path() -> PathBuf {

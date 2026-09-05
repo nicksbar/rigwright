@@ -52,6 +52,7 @@ reported through the CodeQL check and GitHub code-scanning alerts.
 - Strict IC-7300 USB scope assembly: ordered 11-division input produces one
   complete 475-bin sweep, with documented center-span and fixed-edge controls.
 - Captured-frame unit tests and a direct CI-V probe example.
+- A typed, profile-generated support/evidence matrix for machine consumers.
 - Profile-driven Elecraft CAT support for K2, KX2, KX3, K3, K3S, K4, and KH1,
   including direct controls, model-specific option probing, normalized meters,
   and explicit accessory/protocol boundaries.
@@ -84,6 +85,19 @@ distinguishes documented behavior from implemented, profile-gated, consumed,
 and hardware-validated behavior. Normalized HAL controls and meter values use
 shared half-up conversion rules; model-native limits remain in profiles, while
 generic undocumented values stay explicitly approximate or unavailable.
+
+Machine consumers can generate the same model facts directly from the catalog;
+the output distinguishes `cataloged`, `software_tested`, and
+`hardware_tested` evidence and never promotes software coverage to hardware
+validation:
+
+```text
+cargo run --example support_matrix -- --pretty > support-matrix.json
+```
+
+Probe examples can write shareable diagnostics with `ProbeLog::write_sanitized`.
+That projection excludes serial endpoints and raw protocol data; the existing
+`write` method remains available for local debugging artifacts.
 
 - [Radio capability matrix](docs/radio-capability-matrix.md) — detailed status,
   normalization, model exceptions, and QSONaut coverage.
