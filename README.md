@@ -1,6 +1,6 @@
 # Rigwright
 
-[![Version](https://img.shields.io/badge/version-v0.1.22-2ea44f)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-v0.1.23-2ea44f)](Cargo.toml)
 [![CI](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml)
 [![Release workflow](https://github.com/nicksbar/rigwright/actions/workflows/release.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/nicksbar/rigwright?display_name=tag&sort=semver)](https://github.com/nicksbar/rigwright/releases)
@@ -126,7 +126,7 @@ The architecture and model-addition guides are design/maintenance references.
 
 ```toml
 [dependencies]
-rigwright = "0.1.22"
+rigwright = "0.1.23"
 ```
 
 ```rust,no_run

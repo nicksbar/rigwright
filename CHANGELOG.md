@@ -2,6 +2,13 @@
 
 ## 0.1.23 — connection baud metadata
 
+### Added
+- Publish a profile-generated support/evidence contract with JSON and
+  release-preparation Markdown output, explicitly separating cataloged,
+  software-tested, and hardware-tested status.
+- Add sanitized probe-report output for shareable diagnostics and document the
+  release-preparation workflow for refreshing the generated support matrix.
+
 ### Fixed
 - Expose Icom USB/native connection baud choices to clients. Models such as
   the IC-7300 now offer 38,400, 57,600, and 115,200 baud without changing the
