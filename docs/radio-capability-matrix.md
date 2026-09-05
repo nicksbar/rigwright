@@ -1,7 +1,12 @@
 # Radio capability matrix
 
-This is the canonical detailed support inventory for the radios in
-[`supported-radios.md`](supported-radios.md). It separates documentation,
+This document explains capability semantics, application consumption, manual
+evidence, and model-specific exceptions. The model/status table is generated
+from the catalog and profiles in [`generated-support-matrix.md`](generated-support-matrix.md);
+do not maintain a second model-status table here. The generated report is
+refreshed during release preparation, not during the release build.
+
+The detailed capability notation used below separates documentation,
 implementation, profile, application, and validation claims:
 
 | Code | Meaning |
@@ -17,8 +22,9 @@ implementation, profile, application, and validation claims:
 ## Support and evidence contract
 
 The catalog and vendor profiles are the implementation source of truth. The
-matrix is the maintained, human-readable projection of that source; it must
-not introduce a capability that is absent from the selected profile or driver.
+generated report is the human-readable model projection of that source; this
+document must not introduce a capability that is absent from the selected
+profile or driver.
 
 These dimensions are intentionally separate:
 

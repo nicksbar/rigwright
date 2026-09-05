@@ -40,6 +40,13 @@ agent changes:
   release branch or tag. When a release tag is created, verify the dynamic
   latest-release badge resolves to that tag and update the changelog and
   support documentation as needed.
+- During release preparation, regenerate the support documentation before
+  editing support-status prose: run
+  `cargo run --locked --example support_matrix -- --markdown > docs/generated-support-matrix.md`.
+  Review the generated diff, then update only the manual evidence and
+  explanatory sections around it. Do not regenerate or modify documentation as
+  part of the release build itself. The generated file must retain its header
+  and must not be hand-edited.
 
 Use the vendor model modules for model tables: Icom modules under
 `src/icom/`, modern and classic Yaesu modules under `src/yaesu/`, and Kenwood

@@ -95,12 +95,20 @@ validation:
 cargo run --example support_matrix -- --pretty > support-matrix.json
 ```
 
+During release preparation, refresh the reviewable Markdown projection with:
+
+```text
+cargo run --locked --example support_matrix -- --markdown > docs/generated-support-matrix.md
+```
+
 Probe examples can write shareable diagnostics with `ProbeLog::write_sanitized`.
 That projection excludes serial endpoints and raw protocol data; the existing
 `write` method remains available for local debugging artifacts.
 
 - [Radio capability matrix](docs/radio-capability-matrix.md) — detailed status,
   normalization, model exceptions, and QSONaut coverage.
+- [Generated support matrix](docs/generated-support-matrix.md) — release-time
+  model, profile, baud, HAL, and evidence projection; do not edit manually.
 - [Supported radios and manual sources](docs/supported-radios.md) — supported
   models, maturity labels, and workspace manual editions.
 - [Driver architecture](docs/architecture.md) — HAL boundaries, transport
@@ -108,9 +116,11 @@ That projection excludes serial endpoints and raw protocol data; the existing
 - [Driver-owned sessions](docs/session.md) — issue #20 queue, state, event, and
   baud-selection behavior.
 
-Only the capability matrix should be updated for ordinary support-status
-changes; the architecture and model-addition guides are design/maintenance
-references.
+For ordinary model-status changes, regenerate
+`docs/generated-support-matrix.md` during release preparation. Update
+`radio-capability-matrix.md` only for explanatory capability, consumer, or
+validation notes; update `supported-radios.md` when manual citations change.
+The architecture and model-addition guides are design/maintenance references.
 
 ## Use
 
