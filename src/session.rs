@@ -816,20 +816,20 @@ impl RadioSession {
         ticket: Result<SessionTicket, SessionError>,
     ) -> anyhow::Result<RadioSnapshot> {
         ticket
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?
+            .map_err(|error| anyhow::Error::new(crate::HalError::from(error)))?
             .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?
-            .map_err(|error| anyhow::anyhow!(error.to_string()))
+            .map_err(|_| anyhow::Error::new(crate::HalError::Closed))?
+            .map_err(|error| anyhow::Error::new(crate::HalError::from(error)))
     }
 
     async fn wait_request(&self, request: SessionRequestKind) -> anyhow::Result<SessionResponse> {
         let receiver = self
             .submit_request(request)
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            .map_err(|error| anyhow::Error::new(crate::HalError::from(error)))?;
         receiver
             .await
-            .map_err(|_| anyhow::anyhow!("radio session request worker stopped"))?
-            .map_err(|error| anyhow::anyhow!(error.to_string()))
+            .map_err(|_| anyhow::Error::new(crate::HalError::Closed))?
+            .map_err(|error| anyhow::Error::new(crate::HalError::from(error)))
     }
 
     fn submit_request(
@@ -2184,6 +2184,34 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn radio_trait_preserves_structured_session_errors() {
+        let session = RadioSession::from_radio(
+            fake(),
+            SessionConfig {
+                queue_capacity: 4,
+                refresh_interval: None,
+                max_tx_hold: None,
+            },
+        )
+        .unwrap();
+
+        let unsupported = futures::executor::block_on(Radio::set_power(&session, true))
+            .expect_err("fake radio does not support power writes");
+        assert!(matches!(
+            unsupported.downcast_ref::<crate::HalError>(),
+            Some(crate::HalError::Unsupported(operation)) if operation == "power write"
+        ));
+
+        session.close();
+        let closed = futures::executor::block_on(Radio::get_frequency_hz(&session))
+            .expect_err("closed session must reject new work");
+        assert!(matches!(
+            closed.downcast_ref::<crate::HalError>(),
+            Some(crate::HalError::Closed)
+        ));
     }
 
     #[test]

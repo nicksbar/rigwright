@@ -17,6 +17,9 @@
   drivers.
 
 ### Fixed
+- Preserve structured `RadioSession`/HAL errors through async `Radio` methods;
+  callers can now downcast `anyhow` failures to `HalError`/`SessionError`
+  instead of parsing error strings.
 - Bound radio and session event subscriber queues, coalescing or evicting
   telemetry before critical session events and exposing dropped-event counts.
 - Bound pending Icom CI-V response data to 4096 bytes, resynchronize after
