@@ -427,4 +427,38 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn every_profile_declares_explicit_strategy_boundaries() {
+        let profiles = [
+            k2::PROFILE,
+            crate::elecraft::kx2::PROFILE,
+            crate::elecraft::kx3::PROFILE,
+            k3::PROFILE,
+            crate::elecraft::k3s::PROFILE,
+            k4::PROFILE,
+            crate::elecraft::kh1::PROFILE,
+        ];
+        for profile in profiles {
+            assert!(profile.baud_rates.iter().all(|baud| *baud > 0));
+            assert!(profile
+                .frequency_ranges
+                .iter()
+                .all(|(low, high)| low <= high));
+            assert!(matches!(
+                profile.vfo_movement_strategy,
+                ElecraftVfoMovementStrategy::CurrentStep
+                    | ElecraftVfoMovementStrategy::StepIndexed { .. }
+                    | ElecraftVfoMovementStrategy::Unsupported
+            ));
+        }
+        assert!(matches!(
+            k4::PROFILE.vfo_movement_strategy,
+            ElecraftVfoMovementStrategy::CurrentStep
+        ));
+        assert!(matches!(
+            crate::elecraft::kh1::PROFILE.vfo_movement_strategy,
+            ElecraftVfoMovementStrategy::Unsupported
+        ));
+    }
 }

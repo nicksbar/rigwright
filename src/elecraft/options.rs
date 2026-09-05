@@ -89,4 +89,12 @@ mod tests {
         assert!(!k4.has_flag('D'));
         assert_eq!(k4.model_hint(), Some(ElecraftModel::K4));
     }
+
+    #[test]
+    fn rejects_unsupported_or_malformed_option_responses() {
+        assert!(parse(ElecraftModel::K2, b"OM APX;").is_err());
+        assert!(parse(ElecraftModel::K3, b"ID017;").is_err());
+        assert!(parse(ElecraftModel::K3, b"OM ;").is_err());
+        assert!(parse(ElecraftModel::K3, b"OM \xff;").is_err());
+    }
 }

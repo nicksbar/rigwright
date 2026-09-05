@@ -66,4 +66,11 @@ mod tests {
         );
         assert!(command(kh1::PROFILE, 0, VfoDirection::Up, None).is_err());
     }
+
+    #[test]
+    fn command_rejects_invalid_vfo_and_step_requests() {
+        assert!(command(k3::PROFILE, 2, VfoDirection::Up, Some(1)).is_err());
+        assert!(command(k3::PROFILE, 0, VfoDirection::Up, Some(10)).is_err());
+        assert!(command(crate::elecraft::k4::PROFILE, 0, VfoDirection::Up, Some(1)).is_err());
+    }
 }

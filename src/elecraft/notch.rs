@@ -58,4 +58,13 @@ mod tests {
         assert_eq!(denormalize_position(255), 5000);
         assert_eq!(encode_manual(5000, false), "50000");
     }
+
+    #[test]
+    fn malformed_notch_frames_are_rejected() {
+        assert!(parse_enabled(b"NA$2;", "NA$").is_err());
+        assert!(parse_manual(b"NM$01401;").is_err());
+        assert!(parse_manual(b"NM$50002;").is_err());
+        assert!(parse_manual(b"NM$5000x;").is_err());
+        assert!(parse_manual(b"NM$50000").is_ok());
+    }
 }
