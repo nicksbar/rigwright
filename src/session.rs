@@ -339,6 +339,94 @@ impl Radio for RadioSession {
             .ok_or_else(|| anyhow::anyhow!("radio refresh returned no PTT state"))
     }
 
+    async fn read_core_state(&self) -> anyhow::Result<crate::CoreState> {
+        let snapshot = self.wait(self.refresh()).await?;
+        Ok(crate::CoreState {
+            frequency_hz: snapshot.observed.frequency_hz,
+            mode: snapshot.observed.mode,
+            ptt: snapshot.observed.ptt,
+        })
+    }
+
+    fn link_health(&self) -> crate::hal::LinkHealth {
+        self.current_radio().link_health()
+    }
+
+    fn event_stream_age(&self) -> Option<Duration> {
+        self.current_radio().event_stream_age()
+    }
+
+    async fn get_power(&self) -> anyhow::Result<bool> {
+        self.current_radio().get_power().await
+    }
+
+    async fn set_power(&self, enabled: bool) -> anyhow::Result<()> {
+        self.current_radio().set_power(enabled).await
+    }
+
+    fn supports_scope(&self) -> bool {
+        self.current_radio().supports_scope()
+    }
+
+    fn supports_iq_output(&self) -> bool {
+        self.current_radio().supports_iq_output()
+    }
+
+    fn scope_metadata(&self) -> Option<crate::ScopeMetadata> {
+        self.current_radio().scope_metadata()
+    }
+
+    async fn get_scope_state(&self) -> anyhow::Result<crate::ScopeState> {
+        self.current_radio().get_scope_state().await
+    }
+
+    fn filter_bandwidth_hz(&self, mode: Mode, filter: u8) -> Option<u32> {
+        self.current_radio().filter_bandwidth_hz(mode, filter)
+    }
+
+    fn swr_sweep_setup(&self) -> Option<crate::SwrSweepSetup> {
+        self.current_radio().swr_sweep_setup()
+    }
+
+    fn meter_presentation(
+        &self,
+        id: crate::MeterId,
+        normalized: u8,
+    ) -> Option<crate::MeterPresentation> {
+        self.current_radio().meter_presentation(id, normalized)
+    }
+
+    fn control_max(&self, id: ControlId) -> Option<u8> {
+        self.current_radio().control_max(id)
+    }
+
+    fn supported_control_values(&self, id: ControlId) -> Option<&'static [u8]> {
+        self.current_radio().supported_control_values(id)
+    }
+
+    fn meter_poll_spec(&self, id: crate::MeterId) -> Option<crate::MeterPollSpec> {
+        self.current_radio().meter_poll_spec(id)
+    }
+
+    fn meter_metadata(&self, id: crate::MeterId) -> Option<crate::MeterMetadata> {
+        self.current_radio().meter_metadata(id)
+    }
+
+    async fn set_scope_configuration(
+        &self,
+        config: crate::ScopeConfiguration,
+    ) -> anyhow::Result<()> {
+        self.current_radio().set_scope_configuration(config).await
+    }
+
+    async fn protocol_write_read(&self, request: &[u8]) -> anyhow::Result<Vec<u8>> {
+        self.current_radio().protocol_write_read(request).await
+    }
+
+    async fn get_control(&self, id: ControlId) -> anyhow::Result<Option<ControlValue>> {
+        self.current_radio().get_control(id).await
+    }
+
     async fn set_control(&self, id: ControlId, value: ControlValue) -> anyhow::Result<()> {
         self.wait(self.set_control(id, value)).await.map(|_| ())
     }
@@ -353,6 +441,86 @@ impl Radio for RadioSession {
 
     fn supports_control_write(&self, id: ControlId) -> bool {
         self.current_radio().supports_control_write(id)
+    }
+
+    async fn get_repeater_settings(&self) -> anyhow::Result<crate::RepeaterSettings> {
+        self.current_radio().get_repeater_settings().await
+    }
+
+    async fn set_repeater_settings(&self, settings: crate::RepeaterSettings) -> anyhow::Result<()> {
+        self.current_radio().set_repeater_settings(settings).await
+    }
+
+    async fn get_rit_offset_hz(&self) -> anyhow::Result<i32> {
+        self.current_radio().get_rit_offset_hz().await
+    }
+
+    async fn set_rit_offset_hz(&self, offset_hz: i32) -> anyhow::Result<()> {
+        self.current_radio().set_rit_offset_hz(offset_hz).await
+    }
+
+    async fn get_xit_offset_hz(&self) -> anyhow::Result<i32> {
+        self.current_radio().get_xit_offset_hz().await
+    }
+
+    async fn set_xit_offset_hz(&self, offset_hz: i32) -> anyhow::Result<()> {
+        self.current_radio().set_xit_offset_hz(offset_hz).await
+    }
+
+    async fn select_memory_channel(&self, channel: u16) -> anyhow::Result<()> {
+        self.current_radio().select_memory_channel(channel).await
+    }
+
+    async fn read_memory_channel(&self, channel: u16) -> anyhow::Result<crate::MemoryChannel> {
+        self.current_radio().read_memory_channel(channel).await
+    }
+
+    async fn write_memory_channel(&self, channel: crate::MemoryChannel) -> anyhow::Result<()> {
+        self.current_radio().write_memory_channel(channel).await
+    }
+
+    async fn send_dtmf(&self, sequence: crate::DtmfSequence) -> anyhow::Result<()> {
+        self.current_radio().send_dtmf(sequence).await
+    }
+
+    fn supports_repeater_settings(&self) -> bool {
+        self.current_radio().supports_repeater_settings()
+    }
+
+    fn supports_memory_channels(&self) -> bool {
+        self.current_radio().supports_memory_channels()
+    }
+
+    fn supports_memory_selection(&self) -> bool {
+        self.current_radio().supports_memory_selection()
+    }
+
+    fn supports_send_dtmf(&self) -> bool {
+        self.current_radio().supports_send_dtmf()
+    }
+
+    async fn get_meter(&self, id: crate::MeterId) -> anyhow::Result<Option<u8>> {
+        self.current_radio().get_meter(id).await
+    }
+
+    fn supports_meter(&self, id: crate::MeterId) -> bool {
+        self.current_radio().supports_meter(id)
+    }
+
+    fn supported_controls(&self) -> Vec<ControlId> {
+        self.current_radio().supported_controls()
+    }
+
+    fn supported_meters(&self) -> Vec<crate::MeterId> {
+        self.current_radio().supported_meters()
+    }
+
+    async fn start_tuner(&self) -> anyhow::Result<()> {
+        self.current_radio().start_tuner().await
+    }
+
+    async fn get_tuner_status(&self) -> anyhow::Result<Option<crate::TunerStatus>> {
+        self.current_radio().get_tuner_status().await
     }
 
     fn capabilities(&self) -> RadioCapabilities {
@@ -1136,6 +1304,117 @@ mod tests {
             stream_age: Mutex::new(None),
             events: RadioEventRouter::default(),
         })
+    }
+
+    struct OptionalSurfaceRadio;
+
+    #[async_trait::async_trait]
+    impl Radio for OptionalSurfaceRadio {
+        async fn get_frequency_hz(&self) -> anyhow::Result<u64> {
+            Ok(14_074_000)
+        }
+
+        async fn set_frequency_hz(&self, _hz: u64) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn get_mode(&self) -> anyhow::Result<Mode> {
+            Ok(Mode::Usb)
+        }
+
+        async fn set_mode(&self, _mode: Mode) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn set_ptt(&self, _enabled: bool) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn get_power(&self) -> anyhow::Result<bool> {
+            Ok(true)
+        }
+
+        async fn protocol_write_read(&self, _request: &[u8]) -> anyhow::Result<Vec<u8>> {
+            Ok(vec![0xAA])
+        }
+
+        async fn get_control(&self, _id: ControlId) -> anyhow::Result<Option<ControlValue>> {
+            Ok(Some(ControlValue::U8(7)))
+        }
+
+        fn supports_scope(&self) -> bool {
+            true
+        }
+
+        fn supports_iq_output(&self) -> bool {
+            true
+        }
+
+        fn swr_sweep_setup(&self) -> Option<crate::SwrSweepSetup> {
+            Some(crate::SwrSweepSetup {
+                carrier_mode: Mode::Rtty,
+                rf_power: 1,
+            })
+        }
+
+        async fn get_meter(&self, _id: crate::MeterId) -> anyhow::Result<Option<u8>> {
+            Ok(Some(42))
+        }
+
+        fn supports_meter(&self, _id: crate::MeterId) -> bool {
+            true
+        }
+
+        fn supports_control(&self, _id: ControlId) -> bool {
+            true
+        }
+
+        fn capabilities(&self) -> RadioCapabilities {
+            RadioCapabilities {
+                can_get_frequency: true,
+                can_set_frequency: true,
+                can_get_mode: true,
+                can_set_mode: true,
+                can_get_ptt: false,
+                can_set_ptt: true,
+                can_get_power: true,
+                can_set_power: false,
+                can_raw_protocol: true,
+            }
+        }
+    }
+
+    #[test]
+    fn session_forwards_optional_radio_surface_without_trait_defaults() {
+        let session = RadioSession::from_radio(
+            Arc::new(OptionalSurfaceRadio),
+            SessionConfig {
+                queue_capacity: 4,
+                refresh_interval: None,
+                max_tx_hold: None,
+            },
+        )
+        .unwrap();
+
+        assert!(Radio::supports_scope(&session));
+        assert!(Radio::supports_iq_output(&session));
+        assert_eq!(Radio::swr_sweep_setup(&session).unwrap().rf_power, 1);
+        assert!(Radio::supports_meter(&session, crate::MeterId::Signal));
+        assert_eq!(
+            futures::executor::block_on(Radio::get_meter(&session, crate::MeterId::Signal))
+                .unwrap(),
+            Some(42)
+        );
+        assert_eq!(
+            futures::executor::block_on(Radio::get_control(&session, ControlId::RfPower)).unwrap(),
+            Some(ControlValue::U8(7))
+        );
+        assert_eq!(
+            futures::executor::block_on(Radio::protocol_write_read(&session, &[0x01])).unwrap(),
+            vec![0xAA]
+        );
+        assert!(futures::executor::block_on(Radio::get_power(&session)).unwrap());
+        assert!(Radio::capabilities(&session).can_raw_protocol);
     }
 
     #[test]
