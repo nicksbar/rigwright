@@ -9,6 +9,13 @@
 - Add sanitized probe-report output for shareable diagnostics and document the
   release-preparation workflow for refreshing the generated support matrix.
 
+### Removed
+- Remove the obsolete `AsciiCatRadio` compatibility driver and its
+  `AsciiCatFlavor` selector. Use the model-aware `YaesuCatRadio` or
+  `KenwoodCatRadio` drivers (or `open_model`) instead; the shared
+  `protocol::ascii_cat` framing module remains available to those native
+  drivers.
+
 ### Fixed
 - Expose Icom USB/native connection baud choices to clients. Models such as
   the IC-7300 now offer 38,400, 57,600, and 115,200 baud without changing the
