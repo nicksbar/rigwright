@@ -563,6 +563,27 @@ mod tests {
     }
 
     #[test]
+    fn hal_error_conversion_and_display_cover_all_categories() {
+        let errors = [
+            crate::SessionError::Invalid("invalid".into()),
+            crate::SessionError::Unsupported("unsupported".into()),
+            crate::SessionError::QueueFull,
+            crate::SessionError::Closed,
+            crate::SessionError::Superseded,
+            crate::SessionError::Backend("backend".into()),
+            crate::SessionError::InvalidFrame("frame".into()),
+            crate::SessionError::StaleGeneration,
+            crate::SessionError::TimedOut,
+            crate::SessionError::Disconnected,
+        ];
+
+        for error in errors {
+            let hal_error = HalError::from(error);
+            assert!(!hal_error.to_string().is_empty());
+        }
+    }
+
+    #[test]
     fn link_health_flags_consecutive_timeouts_as_degraded() {
         let healthy = LinkHealth::default();
         assert!(!healthy.is_degraded());
