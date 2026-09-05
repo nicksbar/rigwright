@@ -68,12 +68,16 @@ const BAUD_RATES: &[u32] = &[300, 1_200, 4_800, 9_600, 19_200];
 pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     model: crate::models::IcomCivModel::Ic718,
     baud_rates: BAUD_RATES,
+    usb_baud_rates: BAUD_RATES,
+    supports_auto_baud: true,
     preferred_baud_rate: 19_200,
     default_address: 0x5E,
     frequency_ranges: FREQUENCY_RANGES,
     controls: CONTROLS,
+    modes: super::profile::DEFAULT_MODES,
     scope_geometry: None,
     scope: None,
+    scope_options: super::profile::EMPTY_SCOPE_OPTIONS,
     main_sub: None,
     external_preamp: None,
     attenuator_values: &[0, 20],
@@ -82,6 +86,7 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     noise_reduction_level_max: 15,
     supports_iq_output: false,
     meters: METERS,
+    meter_poll_specs: super::profile::DEFAULT_METER_POLL_SPECS,
     control_capabilities: ControlCapabilities {
         supports_data_mode: true,
         filter_values: &[],
@@ -91,6 +96,11 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     memory_layout: MemoryLayout::Hf,
     supports_repeater_settings: false,
     supports_memory_channels: true,
+    filter_bandwidths: &[],
+    swr_sweep_setup: None,
+    meter_presentation: None,
+    scope_ack_optional: false,
+    usb_detection: &[],
 };
 
 #[cfg(test)]

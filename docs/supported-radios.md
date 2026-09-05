@@ -45,6 +45,13 @@ KH1 is separately profiled for fixed-baud, write-only frequency/mode control;
 its display-mediated status and FT8/CW keying commands are not ordinary
 `Radio` operations.
 
+The K4 reference also documents panadapter, waterfall, and Ethernet dB/bin
+streaming. Its streaming packet protocol is explicitly supplied separately,
+so Rigwright does not advertise K4 native scope or waterfall support yet. The
+stream framing, waveform assembly, configuration readback, and tests must be
+implemented before adding `ScopeMetadata`. P3/PX3 are separate waterfall
+accessories and must not be projected into a transceiver `Radio` profile.
+
 These documents establish command syntax and documented capabilities only.
 They do not constitute physical-radio or accessory validation. The proposed
 component boundary and implementation order are recorded in
@@ -91,11 +98,11 @@ Enhanced CAT port; the other modern Yaesu profiles remain framework-level.
 
 | Model | Manual edition used | Profile details checked |
 |---|---|---|
-| FT-710 | `FT-710_CAT_OM_ENG_2306-C.pdf`, Jun. 2023 | ID `0800`; `FA` 9-digit 0.03-75 MHz range; receiver-qualified `MD`; `TX`; `PC` 5-100 W; `ST`; CAT-1/CAT-2 rates through 115200 |
+| FT-710 | `FT-710_CAT_OM_ENG_2306-C.pdf`, Jun. 2023 | ID `0800`; `FA` 9-digit 0.03-75 MHz range; receiver-qualified `MD`; `TX`; `PC` 5-100 W; `ST`; `MC`/`MR`/`MT` memories 001-099; CAT-1/CAT-2 rates through 115200 |
 | FTDX10 | `FTDX10_CAT_OM_ENG_2308-F.pdf`, Aug. 2023 | ID `0761`; `FA` 9-digit 0.03-75 MHz range; `MD0`; `TX0/1/2`; `PC` 5-100 W; `ST0/1/2`; 4800-38400 baud |
 | FTDX101D | `FTDX101MP_D_CAT_OM_ENG_2308-L.pdf`, Aug. 2023 | ID `0681`; `FA` 9-digit 0.03-75 MHz range; `MD`; `TX`; `PC` 5-100 W; `ST`; 4800-38400 baud |
 | FTDX101MP | `FTDX101MP_D_CAT_OM_ENG_2308-L.pdf`, Aug. 2023 | ID `0682`; common modern commands; distinct `PC` 5-200 W maximum |
-| FT-991A | `FT-991A_CAT_OM_ENG_1711-D.pdf`, Nov. 2017 | ID `0670`; `FA` 9-digit 0.03-470 MHz range; model-specific `MD` table including C4FM; `TX`; `PC` 5-100 W; `ST` split; 4800-38400 baud |
+| FT-991A | `FT-991A_CAT_OM_ENG_1711-D.pdf`, Nov. 2017 | ID `0670`; `FA` 9-digit 0.03-470 MHz range; model-specific `MD` table including C4FM; `TX`; `PC` 5-100 W; `ST` split; `MC`/`MR`/`MT` memories 001-117; 4800-38400 baud |
 
 The shared modern driver implements persistent serial transport, response
 matching in the presence of auto-information frames, frequency, mode, readable
@@ -147,7 +154,10 @@ implements profiled receiver controls, RIT/XIT, VFO selection, tuner, filters,
 and memory records, and routes interleaved Auto Information frames to the
 shared event router. PTT writes are verified on the two models with pollable
 `IF` status. All three remain framework-level until exercised against physical
-radios.
+radios. The profiles expose documented baud choices and preferred rates,
+control direction/legal values, meter selectors/raw ranges/widths, and polling
+guidance. None currently advertises a native Kenwood waterfall; that requires
+a model-specific stream decoder and manual-backed geometry.
 All normalized meters use the HAL's 0..255 meter-deflection scale. Yaesu CAT
 profiles expose signal, power, SWR, ALC, compression, current, and voltage
 through the documented `RM1` and `RM3`..`RM8` selectors; FTDX101D/MP also

@@ -27,13 +27,16 @@ pub use events::{RadioEvent, RadioEventRouter, RadioEventSubscription, Subscript
 pub use hal::{LinkHealth, NullRadio, Radio, RadioCapabilities, RadioStatus};
 pub use hal_types::{
     denormalize_meter_level, normalize_meter_level, BaseMode, ControlId, ControlValue, CoreState,
-    DtmfSequence, MemoryChannel, MeterId, Mode, OperatingMode, RepeaterSettings, RepeaterShift,
-    ToneMode, ToneSettings, TunerStatus,
+    DtmfSequence, FilterBandwidth, MemoryChannel, MeterId, MeterMetadata, MeterPollSpec,
+    MeterPresentation, Mode, OperatingMode, RepeaterSettings, RepeaterShift, ScopeCenterType,
+    ScopeColor, ScopeConfiguration, ScopeEdgeBank, ScopeMarkerPosition, ScopeMaxHold,
+    ScopeMetadata, ScopeState, ScopeWaveformType, SwrSweepSetup, ToneMode, ToneSettings,
+    TunerStatus,
 };
 pub use icom::civ_radio::{
     enumerate_serial_port_descriptors, enumerate_serial_ports, IcomCiVRadio, IcomProbeResult,
-    IcomReceiver, IcomSerialPolicy, IcomTransportMetrics, IcomVfo, ScopeConfiguration,
-    ScopeStreamHealth, SerialPortDescriptor,
+    IcomReceiver, IcomSerialPolicy, IcomTransportMetrics, IcomVfo, ScopeStreamHealth,
+    SerialPortDescriptor,
 };
 pub use iq::{decode_interleaved_iq, IqSampleBlock, IqSampleFormat};
 pub use kenwood::cat_radio::{KenwoodSerialPolicy, KenwoodTransportMetrics};

@@ -5,7 +5,9 @@ use super::profile::{
     ScopeSpec,
 };
 use crate::controls::ControlId;
-use crate::hal_types::MeterId;
+use crate::hal_types::{
+    MeterId, ScopeCenterType, ScopeMarkerPosition, ScopeMaxHold, ScopeWaveformType,
+};
 use crate::models::{find_model, RadioModelProfile};
 
 pub fn profile() -> &'static RadioModelProfile {
@@ -73,12 +75,120 @@ const SCOPE: ScopeSpec = ScopeSpec {
     enable_command: &[0x27, 0x10, 0x01],
     stream_command: &[0x27, 0x11, 0x01],
     disable_stream_command: &[0x27, 0x11, 0x00],
+    menu: Some(super::profile::ScopeMenuSpec {
+        tx_display: 0x0166,
+        max_hold: 0x0167,
+        center_type: 0x0168,
+        marker_position: 0x0169,
+        vbw: 0x016A,
+        averaging: 0x0170,
+        waveform_type: 0x0171,
+        waterfall_display: 0x0175,
+        waterfall_speed: 0x0176,
+        waterfall_size: 0x0177,
+        waterfall_peak_level: 0x0178,
+        marker_auto_hide: 0x0179,
+        waveform_color_current: 0x0172,
+        waveform_color_line: 0x0173,
+        waveform_color_max_hold: 0x0174,
+    }),
 };
 const MAIN_SUB: MainSubSpec = MainSubSpec {
     set_command: 0x07,
     set_subcommand_base: 0xD0,
     get_command: 0x07,
     get_subcommand: 0xD2,
+};
+const SCOPE_OPTIONS: super::profile::ScopeOptions = super::profile::ScopeOptions {
+    span_options_hz: &[
+        2_500, 5_000, 10_000, 25_000, 50_000, 100_000, 250_000, 500_000,
+    ],
+    sweep_speed_values: &[0, 1, 2],
+    fixed_edge_numbers: &[1, 2, 3],
+    center_types: &[
+        ScopeCenterType::FilterCenter,
+        ScopeCenterType::CarrierPoint,
+        ScopeCenterType::CarrierPointAbsolute,
+    ],
+    tx_display: &[false, true],
+    max_hold: &[
+        ScopeMaxHold::Off,
+        ScopeMaxHold::TenSeconds,
+        ScopeMaxHold::Continuous,
+    ],
+    marker_positions: &[
+        ScopeMarkerPosition::FilterCenter,
+        ScopeMarkerPosition::CarrierPoint,
+    ],
+    averaging: &[0, 2, 3, 4],
+    waveform_types: &[ScopeWaveformType::Fill, ScopeWaveformType::FillAndLine],
+    waterfall_display: &[false, true],
+    waterfall_sizes: &[0, 1, 2],
+    waterfall_peak_levels: &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    marker_auto_hide: &[false, true],
+    edge_banks: &[
+        crate::hal_types::ScopeEdgeBank {
+            low_hz: 30_000,
+            high_hz: 1_600_000,
+            edge_numbers: &[1, 2, 3],
+        },
+        crate::hal_types::ScopeEdgeBank {
+            low_hz: 1_600_000,
+            high_hz: 2_000_000,
+            edge_numbers: &[1, 2, 3],
+        },
+        crate::hal_types::ScopeEdgeBank {
+            low_hz: 2_000_000,
+            high_hz: 6_000_000,
+            edge_numbers: &[1, 2, 3],
+        },
+        crate::hal_types::ScopeEdgeBank {
+            low_hz: 6_000_000,
+            high_hz: 8_000_000,
+            edge_numbers: &[1, 2, 3],
+        },
+        crate::hal_types::ScopeEdgeBank {
+            low_hz: 8_000_000,
+            high_hz: 11_000_000,
+            edge_numbers: &[1, 2, 3],
+        },
+        crate::hal_types::ScopeEdgeBank {
+            low_hz: 11_000_000,
+            high_hz: 15_000_000,
+            edge_numbers: &[1, 2, 3],
+        },
+        crate::hal_types::ScopeEdgeBank {
+            low_hz: 15_000_000,
+            high_hz: 20_000_000,
+            edge_numbers: &[1, 2, 3],
+        },
+        crate::hal_types::ScopeEdgeBank {
+            low_hz: 20_000_000,
+            high_hz: 22_000_000,
+            edge_numbers: &[1, 2, 3],
+        },
+        crate::hal_types::ScopeEdgeBank {
+            low_hz: 22_000_000,
+            high_hz: 26_000_000,
+            edge_numbers: &[1, 2, 3],
+        },
+        crate::hal_types::ScopeEdgeBank {
+            low_hz: 26_000_000,
+            high_hz: 30_000_000,
+            edge_numbers: &[1, 2, 3],
+        },
+        crate::hal_types::ScopeEdgeBank {
+            low_hz: 30_000_000,
+            high_hz: 45_000_000,
+            edge_numbers: &[1, 2, 3],
+        },
+        crate::hal_types::ScopeEdgeBank {
+            low_hz: 45_000_000,
+            high_hz: 60_000_000,
+            edge_numbers: &[1, 2, 3],
+        },
+    ],
+    supports_waveform_colors: true,
 };
 const METERS: &[MeterId] = &[
     MeterId::Signal,
@@ -94,10 +204,13 @@ const METERS: &[MeterId] = &[
 pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     model: crate::models::IcomCivModel::Ic7610,
     baud_rates: super::profile::DEFAULT_BAUD_RATES,
+    usb_baud_rates: super::profile::DEFAULT_BAUD_RATES,
+    supports_auto_baud: true,
     preferred_baud_rate: 115_200,
     default_address: 0x98,
     frequency_ranges: FREQUENCY_RANGES,
     controls: CONTROLS,
+    modes: super::profile::DEFAULT_MODES,
     scope_geometry: Some(crate::models::IcomScopeGeometry {
         divisions: 15,
         bins: 689,
@@ -107,6 +220,7 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
         supports_main_sub_scope: true,
     }),
     scope: Some(SCOPE),
+    scope_options: SCOPE_OPTIONS,
     main_sub: Some(MAIN_SUB),
     external_preamp: None,
     attenuator_values: ATTENUATOR_VALUES,
@@ -115,6 +229,7 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     noise_reduction_level_max: 15,
     supports_iq_output: true,
     meters: METERS,
+    meter_poll_specs: super::profile::DEFAULT_METER_POLL_SPECS,
     control_capabilities: ControlCapabilities {
         supports_data_mode: true,
         filter_values: &[1, 2, 3],
@@ -124,6 +239,11 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     memory_layout: MemoryLayout::Hf,
     supports_repeater_settings: true,
     supports_memory_channels: true,
+    filter_bandwidths: &[],
+    swr_sweep_setup: Some(super::profile::SWR_SWEEP_SETUP),
+    meter_presentation: Some(super::profile::swr_meter_presentation),
+    scope_ack_optional: false,
+    usb_detection: &[],
 };
 
 #[cfg(test)]

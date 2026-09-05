@@ -3,7 +3,7 @@
 use crate::{
     events::{RadioEvent, RadioEventRouter},
     hal::{Mode, Radio, RadioCapabilities},
-    hal_types::{ControlId, ControlValue, MeterId},
+    hal_types::{ControlId, ControlValue, MeterId, MeterMetadata, MeterPollSpec, SwrSweepSetup},
     transport::RadioTransport,
 };
 use anyhow::{bail, Context, Result};
@@ -121,11 +121,11 @@ impl ElecraftRadio {
     /// produce unsolicited frames while another command is being queried;
     /// those frames are routed through `Radio::event_router()`.
     pub fn set_auto_info(&self, mode: u8) -> Result<()> {
-        anyhow::ensure!(
-            !matches!(self.model, Some(ElecraftModel::Kh1)),
-            "Elecraft KH1 does not document Auto-Info"
-        );
-        anyhow::ensure!(mode <= 3, "Elecraft Auto-Info mode must be 0..=3");
+        let maximum = self
+            .profile()
+            .and_then(|profile| profile.auto_info_max)
+            .context("Elecraft Auto-Info is not profiled")?;
+        anyhow::ensure!(mode <= maximum, "Elecraft Auto-Info mode is out of range");
         self.set("AI", &mode.to_string())
     }
 
@@ -146,7 +146,12 @@ impl ElecraftRadio {
     /// `OM` probe should be added by callers when they need option-aware
     /// identification; this method deliberately returns the raw CAT reply.
     pub fn identify(&self) -> Result<Vec<u8>> {
-        if self.model == Some(ElecraftModel::Kh1) {
+        if self.profile().is_some_and(|profile| {
+            matches!(
+                profile.identify_strategy,
+                super::profile::ElecraftIdentifyStrategy::Kh1
+            )
+        }) {
             // KH1 responds with `KH1;`, not an `I...` response frame.
             self.query_with_response_prefix("I", "")
         } else {
@@ -159,8 +164,13 @@ impl ElecraftRadio {
     /// and must not be interpreted as a universal accessory inventory.
     pub fn probe_options(&self) -> Result<Vec<u8>> {
         anyhow::ensure!(
-            !matches!(self.model, Some(ElecraftModel::Kh1)),
-            "Elecraft KH1 does not document the OM option probe"
+            self.profile().is_some_and(|profile| {
+                !matches!(
+                    profile.identify_strategy,
+                    super::profile::ElecraftIdentifyStrategy::Kh1
+                )
+            }),
+            "Elecraft option probing is not profiled"
         );
         self.query("OM")
     }
@@ -177,8 +187,13 @@ impl ElecraftRadio {
     /// Enable or disable K4 unsolicited TX meter reports (`TM` frames).
     pub fn set_tx_meter_reporting(&self, enabled: bool) -> Result<()> {
         anyhow::ensure!(
-            matches!(self.model, Some(ElecraftModel::K4)),
-            "Elecraft TX meter reporting is only profiled for K4"
+            self.profile().is_some_and(|profile| {
+                matches!(
+                    profile.tx_meter_strategy,
+                    super::profile::ElecraftTxMeterStrategy::K4
+                )
+            }),
+            "Elecraft TX meter reporting is not profiled"
         );
         self.set("TM", if enabled { "1" } else { "0" })
     }
@@ -187,8 +202,13 @@ impl ElecraftRadio {
     /// (`false`, `TM0`) or ALC (`true`, `TM1`).
     pub fn set_tx_meter_mode(&self, alc: bool) -> Result<()> {
         anyhow::ensure!(
-            matches!(self.model, Some(ElecraftModel::K3 | ElecraftModel::K3s)),
-            "Elecraft TM meter-mode control is only profiled for K3/K3S"
+            self.profile().is_some_and(|profile| {
+                matches!(
+                    profile.tx_meter_strategy,
+                    super::profile::ElecraftTxMeterStrategy::K3Family
+                )
+            }),
+            "Elecraft TX meter-mode control is not profiled"
         );
         self.set("TM", if alc { "1" } else { "0" })
     }
@@ -196,16 +216,18 @@ impl ElecraftRadio {
     /// Query actual K4 RF transmit state, excluding the documented S-meter
     /// holdoff interval. Other Elecraft models use their ordinary `TQ` query.
     pub fn get_actual_tx_state(&self) -> Result<bool> {
-        anyhow::ensure!(
-            self.model != Some(ElecraftModel::Kh1),
-            "Elecraft KH1 does not document TX-state query"
-        );
-        let command = if self.model == Some(ElecraftModel::K4) {
-            "TQX"
-        } else {
-            "TQ"
+        let strategy = self
+            .profile()
+            .map(|profile| profile.tx_state_strategy)
+            .context("Elecraft TX-state query is not profiled")?;
+        let command = match strategy {
+            super::profile::ElecraftTxStateStrategy::Tq => "TQ",
+            super::profile::ElecraftTxStateStrategy::Tqx => "TQX",
+            super::profile::ElecraftTxStateStrategy::Unsupported => {
+                bail!("Elecraft TX-state query is not profiled")
+            }
         };
-        let response = if command == "TQX" {
+        let response = if matches!(strategy, super::profile::ElecraftTxStateStrategy::Tqx) {
             self.query_with_response_prefix(command, "TQ")?
         } else {
             self.query(command)?
@@ -263,10 +285,10 @@ impl ElecraftRadio {
     /// step-table entries. K2/K4 use the radio's current step size and must
     /// receive `None`; K3-family radios accept indices 0..=9.
     pub fn move_vfo(&self, vfo: u8, direction: VfoDirection, step_index: Option<u8>) -> Result<()> {
-        let model = self
-            .model
-            .context("Elecraft VFO movement requires a selected model")?;
-        self.set(&tuning::command(model, vfo, direction, step_index)?, "")
+        let profile = self
+            .profile()
+            .context("Elecraft VFO movement requires a selected profile")?;
+        self.set(&tuning::command(profile, vfo, direction, step_index)?, "")
     }
 
     fn selected_frequency(&self) -> &'static str {
@@ -336,10 +358,6 @@ impl ElecraftRadio {
             .context("Elecraft meter value is outside its documented range")
     }
 
-    fn parse_k4_signal(response: &[u8]) -> Result<u8> {
-        Self::parse_meter_value(response, "SM$", 42)
-    }
-
     fn parse_level_enabled(response: &[u8], prefix: &str, maximum: u8) -> Result<(u8, bool)> {
         let text = std::str::from_utf8(response).context("Elecraft level response is not ASCII")?;
         let payload = text
@@ -371,7 +389,11 @@ impl ElecraftRadio {
         }
         .context("unexpected Elecraft receiver-control response")?
         .trim_end_matches(';');
-        let native_text = if id == ControlId::RfPower && profile.model == ElecraftModel::K4 {
+        let native_text = if id == ControlId::RfPower
+            && matches!(
+                profile.tx_meter_strategy,
+                super::profile::ElecraftTxMeterStrategy::K4
+            ) {
             raw.strip_suffix('L')
                 .or_else(|| raw.strip_suffix('H'))
                 .or_else(|| raw.strip_suffix('X'))
@@ -447,7 +469,10 @@ impl ElecraftRadio {
             .context("Elecraft RF power is not profiled")?;
         let native = crate::denormalize_meter_level(value, maximum)
             .context("Elecraft RF power has an invalid normalized range")?;
-        if profile.model == ElecraftModel::K4 {
+        if matches!(
+            profile.tx_meter_strategy,
+            super::profile::ElecraftTxMeterStrategy::K4
+        ) {
             Ok(format!("{native:03}H"))
         } else {
             Ok(format!("{native:03}"))
@@ -514,7 +539,13 @@ fn publish_event(router: &RadioEventRouter, model: Option<ElecraftModel>, frame:
         router.publish(RadioEvent::Raw {
             payload: frame.to_vec(),
         });
-    } else if model == Some(ElecraftModel::K4) && payload.starts_with("TM") {
+    } else if model.map(profile_for_model).is_some_and(|profile| {
+        matches!(
+            profile.tx_meter_strategy,
+            super::profile::ElecraftTxMeterStrategy::K4
+        )
+    }) && payload.starts_with("TM")
+    {
         let fields = payload.strip_prefix("TM").unwrap_or_default();
         if fields.len() == 12 && fields.bytes().all(|value| value.is_ascii_digit()) {
             let parse = |start| fields[start..start + 3].parse::<u16>().ok();
@@ -541,10 +572,15 @@ fn publish_event(router: &RadioEventRouter, model: Option<ElecraftModel>, frame:
         .strip_prefix("SM")
         .and_then(|value| value.parse::<u16>().ok())
     {
-        let maximum = if model == Some(ElecraftModel::K2) {
-            15
-        } else {
-            30
+        let Some(profile) = model.map(profile_for_model) else {
+            router.publish(RadioEvent::Raw {
+                payload: frame.to_vec(),
+            });
+            return;
+        };
+        let maximum = match profile.signal_meter_strategy {
+            super::profile::ElecraftSignalMeterStrategy::Sm { maximum }
+            | super::profile::ElecraftSignalMeterStrategy::K4 { maximum } => maximum,
         };
         if let Some(value) = crate::normalize_meter_level(value, maximum) {
             router.publish(RadioEvent::MeterChanged {
@@ -565,6 +601,49 @@ fn publish_event(router: &RadioEventRouter, model: Option<ElecraftModel>, frame:
 
 #[async_trait]
 impl Radio for ElecraftRadio {
+    fn filter_bandwidth_hz(&self, mode: Mode, filter: u8) -> Option<u32> {
+        self.profile()
+            .and_then(|profile| profile.filter_bandwidth_hz(mode, filter))
+    }
+
+    fn meter_presentation(&self, id: MeterId, normalized: u8) -> Option<crate::MeterPresentation> {
+        self.profile()
+            .and_then(|profile| profile.meter_presentation(id, normalized))
+    }
+
+    fn meter_poll_spec(&self, id: MeterId) -> Option<MeterPollSpec> {
+        self.profile()
+            .and_then(|profile| profile.meter_poll_spec(id))
+    }
+
+    fn meter_metadata(&self, id: MeterId) -> Option<MeterMetadata> {
+        self.profile()
+            .and_then(|profile| profile.meter_metadata(id))
+    }
+
+    fn control_max(&self, id: ControlId) -> Option<u8> {
+        self.profile().and_then(|profile| profile.control_max(id))
+    }
+
+    fn supported_control_values(&self, id: ControlId) -> Option<&'static [u8]> {
+        self.profile()
+            .and_then(|profile| profile.supported_control_values(id))
+    }
+
+    fn supports_control_read(&self, id: ControlId) -> bool {
+        self.profile()
+            .is_some_and(|profile| profile.supports_control_read(id))
+    }
+
+    fn supports_control_write(&self, id: ControlId) -> bool {
+        self.profile()
+            .is_some_and(|profile| profile.supports_control_write(id))
+    }
+
+    fn swr_sweep_setup(&self) -> Option<SwrSweepSetup> {
+        self.profile().and_then(|profile| profile.swr_sweep_setup())
+    }
+
     fn event_router(&self) -> Option<RadioEventRouter> {
         Some(self.event_router.clone())
     }
@@ -642,16 +721,7 @@ impl Radio for ElecraftRadio {
             self.profile().is_some_and(|profile| profile.can_get_ptt),
             "Elecraft PTT readback is not supported"
         );
-        let response = self.query("TQ")?;
-        let text = std::str::from_utf8(&response).context("Elecraft TQ response is not ASCII")?;
-        match text
-            .strip_prefix("TQ")
-            .and_then(|v| v.strip_suffix(';').or(Some(v)))
-        {
-            Some("0") => Ok(false),
-            Some("1") => Ok(true),
-            _ => bail!("unexpected Elecraft TQ response: {text}"),
-        }
+        self.get_actual_tx_state()
     }
 
     async fn get_control(&self, id: ControlId) -> Result<Option<ControlValue>> {
@@ -673,7 +743,7 @@ impl Radio for ElecraftRadio {
             ControlId::Split => return Ok(Some(ControlValue::Bool(self.is_split()?))),
             ControlId::Rit | ControlId::Xit => "IF",
             ControlId::Preamp => "PA",
-            ControlId::Attenuator if profile.model == ElecraftModel::K4 => "RA$",
+            ControlId::Attenuator if !profile.attenuator_values.is_empty() => "RA$",
             ControlId::Attenuator => "RA",
             ControlId::NoiseBlanker => "NB",
             ControlId::Agc => "GT",
@@ -728,7 +798,7 @@ impl Radio for ElecraftRadio {
             anyhow::ensure!(value <= 5, "Elecraft tuning-step index is out of range");
             return Ok(Some(ControlValue::U8(value as u8)));
         }
-        if id == ControlId::Attenuator && profile.model == ElecraftModel::K4 {
+        if id == ControlId::Attenuator && !profile.attenuator_values.is_empty() {
             let response = self.query("RA$")?;
             let text = std::str::from_utf8(&response)?;
             let payload = text
@@ -904,12 +974,12 @@ impl Radio for ElecraftRadio {
                 .set(
                     if id == ControlId::Preamp {
                         "PA"
-                    } else if profile.model == ElecraftModel::K4 {
+                    } else if !profile.attenuator_values.is_empty() {
                         "RA$"
                     } else {
                         "RA"
                     },
-                    &if id == ControlId::Attenuator && profile.model == ElecraftModel::K4 {
+                    &if id == ControlId::Attenuator && !profile.attenuator_values.is_empty() {
                         let native = crate::denormalize_meter_level(value, 21)
                             .context("K4 attenuator has an invalid normalized range")?;
                         // The HAL value is continuous, while K4 hardware is
@@ -945,9 +1015,13 @@ impl Radio for ElecraftRadio {
     }
 
     async fn set_rit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        let maximum = self
+            .profile()
+            .and_then(|profile| profile.rit_offset_max_hz)
+            .context("Elecraft RIT/XIT offset is not profiled")?;
         anyhow::ensure!(
-            (-9_999..=9_999).contains(&offset_hz),
-            "Elecraft RIT/XIT offset must be -9999..=9999 Hz"
+            (-maximum..=maximum).contains(&offset_hz),
+            "Elecraft RIT/XIT offset exceeds the profiled range"
         );
         let magnitude = offset_hz.unsigned_abs();
         self.set(
@@ -965,19 +1039,14 @@ impl Radio for ElecraftRadio {
     }
 
     async fn select_memory_channel(&self, channel: u16) -> Result<()> {
+        let maximum = self
+            .profile()
+            .and_then(|profile| profile.memory_channel_max)
+            .context("Elecraft memory selection is not profiled")?;
         anyhow::ensure!(
-            matches!(
-                self.model,
-                Some(
-                    ElecraftModel::Kx2
-                        | ElecraftModel::Kx3
-                        | ElecraftModel::K3
-                        | ElecraftModel::K3s
-                )
-            ),
-            "Elecraft memory selection is only profiled for KX2/KX3/K3/K3S"
+            channel <= maximum,
+            "Elecraft memory channel exceeds the profiled range"
         );
-        anyhow::ensure!(channel <= 999, "Elecraft memory channel must be 0..=999");
         self.set("MC", &format!("{channel:03}"))
     }
 
@@ -1060,51 +1129,50 @@ impl Radio for ElecraftRadio {
             .is_some_and(|profile| profile.supports_repeater)
     }
 
+    fn supports_memory_selection(&self) -> bool {
+        self.profile()
+            .is_some_and(|profile| profile.memory_channel_max.is_some())
+    }
+
     async fn get_meter(&self, id: MeterId) -> Result<Option<u8>> {
         let value = match id {
-            MeterId::Signal => {
-                if self.model == Some(ElecraftModel::K4) {
-                    return Ok(Some(Self::parse_k4_signal(&self.query("SM")?)?));
+            MeterId::Signal => match self
+                .profile()
+                .context("Elecraft meter profile is unavailable")?
+                .signal_meter_strategy
+            {
+                super::profile::ElecraftSignalMeterStrategy::Sm { maximum } => {
+                    Self::parse_meter_value(&self.query("SM")?, "SM", maximum)?
                 }
-                let response = self.query("SM")?;
+                super::profile::ElecraftSignalMeterStrategy::K4 { maximum } => {
+                    Self::parse_meter_value(&self.query("SM")?, "SM$", maximum)?
+                }
+            },
+            MeterId::Power | MeterId::Alc | MeterId::Swr => {
+                let profile = self
+                    .profile()
+                    .context("Elecraft meter profile is unavailable")?;
+                let strategy = match id {
+                    MeterId::Power => profile.power_meter_strategy,
+                    MeterId::Alc => profile.alc_meter_strategy,
+                    MeterId::Swr => profile.swr_meter_strategy,
+                    _ => unreachable!(),
+                }
+                .context("Elecraft meter is not profiled")?;
                 Self::parse_meter_value(
-                    &response,
-                    "SM",
-                    if matches!(self.model, Some(ElecraftModel::K2)) {
-                        15
-                    } else {
-                        30
-                    },
+                    &self.query(strategy.command)?,
+                    strategy.prefix,
+                    strategy.maximum,
                 )?
             }
-            MeterId::Power if self.model == Some(ElecraftModel::K4) => {
-                Self::parse_meter_value(&self.query("PO")?, "PO", 1100)?
-            }
-            MeterId::Power => Self::parse_meter_value(&self.query("BG")?, "BG", 12)?,
-            MeterId::Alc => {
-                anyhow::ensure!(
-                    matches!(self.model, Some(ElecraftModel::K3 | ElecraftModel::K3s)),
-                    "Elecraft ALC meter is only profiled for K3/K3S"
-                );
-                Self::parse_meter_value(&self.query("BG")?, "BG", 7)?
-            }
-            MeterId::Swr if self.model == Some(ElecraftModel::K4) => {
-                return Ok(None);
-            }
-            MeterId::Swr => Self::parse_meter_value(&self.query("SW")?, "SW", 999)?,
             _ => return Ok(None),
         };
         Ok(Some(value))
     }
 
     fn supports_meter(&self, id: MeterId) -> bool {
-        match id {
-            MeterId::Signal => self.model.is_some(),
-            MeterId::Power => self.model.is_some(),
-            MeterId::Swr => self.model.is_some_and(|model| model != ElecraftModel::K4),
-            MeterId::Alc => matches!(self.model, Some(ElecraftModel::K3 | ElecraftModel::K3s)),
-            _ => false,
-        }
+        self.profile()
+            .is_some_and(|profile| profile.supports_meter(id))
     }
     fn supports_control(&self, id: ControlId) -> bool {
         self.profile()

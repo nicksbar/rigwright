@@ -1,5 +1,9 @@
 //! KX3 profile from the K3-family Programmer's Reference.
-use super::profile::{ElecraftModeSpec, ElecraftModel, ElecraftProfile, BAUD_RATES, HF_RANGES};
+use super::profile::{
+    ElecraftIdentifyStrategy, ElecraftMeterStrategy, ElecraftModeSpec, ElecraftModel,
+    ElecraftProfile, ElecraftSignalMeterStrategy, ElecraftTxMeterStrategy, ElecraftTxStateStrategy,
+    ElecraftVfoMovementStrategy, BAUD_RATES, EMPTY_VALUES, HF_RANGES,
+};
 use crate::hal::Mode;
 pub(crate) const MODES: &[ElecraftModeSpec] = &[
     ElecraftModeSpec {
@@ -71,6 +75,27 @@ pub const PROFILE: ElecraftProfile = ElecraftProfile {
     rf_gain_max: Some(250),
     squelch_max: 29,
     rf_gain_is_attenuation: false,
+    identify_strategy: ElecraftIdentifyStrategy::Id,
+    auto_info_max: Some(3),
+    tx_state_strategy: ElecraftTxStateStrategy::Tq,
+    tx_meter_strategy: ElecraftTxMeterStrategy::None,
+    vfo_movement_strategy: ElecraftVfoMovementStrategy::StepIndexed { maximum: 9 },
+    signal_meter_strategy: ElecraftSignalMeterStrategy::Sm { maximum: 30 },
+    power_meter_strategy: Some(ElecraftMeterStrategy {
+        command: "BG",
+        prefix: "BG",
+        maximum: 12,
+    }),
+    alc_meter_strategy: None,
+    swr_meter_strategy: Some(ElecraftMeterStrategy {
+        command: "SW",
+        prefix: "SW",
+        maximum: 999,
+    }),
+    memory_channel_max: Some(999),
+    repeater_offset_max_hz: None,
+    rit_offset_max_hz: Some(9_999),
+    attenuator_values: EMPTY_VALUES,
 };
 
 #[cfg(test)]

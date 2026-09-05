@@ -2,8 +2,10 @@
 
 pub use crate::events::RadioEventRouter;
 pub use crate::hal_types::{
-    BaseMode, ControlId, ControlValue, CoreState, DtmfSequence, MemoryChannel, MeterId, Mode,
-    OperatingMode, RepeaterSettings, RepeaterShift, ToneSettings, TunerStatus,
+    BaseMode, ControlId, ControlValue, CoreState, DtmfSequence, FilterBandwidth, MemoryChannel,
+    MeterId, MeterMetadata, MeterPollSpec, MeterPresentation, Mode, OperatingMode,
+    RepeaterSettings, RepeaterShift, ScopeConfiguration, ScopeMetadata, ScopeState, SwrSweepSetup,
+    ToneSettings, TunerStatus,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -122,6 +124,49 @@ pub trait Radio: Send + Sync {
     async fn set_power(&self, _enabled: bool) -> Result<()> {
         anyhow::bail!("setting radio power state is not supported by this radio")
     }
+    fn supports_scope(&self) -> bool {
+        false
+    }
+    /// Whether the selected model documents a native I/Q output surface.
+    /// This reports model capability only; a driver may still require a
+    /// separate USB/audio transport before samples can be opened.
+    fn supports_iq_output(&self) -> bool {
+        false
+    }
+    fn scope_metadata(&self) -> Option<ScopeMetadata> {
+        None
+    }
+    async fn get_scope_state(&self) -> Result<ScopeState> {
+        anyhow::bail!("native scope readback is not supported by this radio")
+    }
+    /// Return documented bandwidth metadata for a normalized filter choice.
+    fn filter_bandwidth_hz(&self, _mode: Mode, _filter: u8) -> Option<u32> {
+        None
+    }
+    /// Return the documented carrier mode and normalized RF power for SWR
+    /// measurements. `None` means this radio has no supported procedure.
+    fn swr_sweep_setup(&self) -> Option<SwrSweepSetup> {
+        None
+    }
+    /// Convert a normalized meter value to a driver-calibrated presentation.
+    fn meter_presentation(&self, _id: MeterId, _normalized: u8) -> Option<MeterPresentation> {
+        None
+    }
+    fn control_max(&self, _id: ControlId) -> Option<u8> {
+        None
+    }
+    fn supported_control_values(&self, _id: ControlId) -> Option<&'static [u8]> {
+        None
+    }
+    fn meter_poll_spec(&self, _id: MeterId) -> Option<MeterPollSpec> {
+        None
+    }
+    fn meter_metadata(&self, _id: MeterId) -> Option<MeterMetadata> {
+        None
+    }
+    async fn set_scope_configuration(&self, _config: ScopeConfiguration) -> Result<()> {
+        anyhow::bail!("native scope configuration is not supported by this radio")
+    }
     async fn protocol_write_read(&self, _request: &[u8]) -> Result<Vec<u8>> {
         Ok(Vec::new())
     }
@@ -166,6 +211,11 @@ pub trait Radio: Send + Sync {
     }
     fn supports_memory_channels(&self) -> bool {
         false
+    }
+    /// Whether the backend can select a memory channel, independent of
+    /// whether it can losslessly read and write a generic memory record.
+    fn supports_memory_selection(&self) -> bool {
+        self.supports_memory_channels()
     }
     fn supports_send_dtmf(&self) -> bool {
         false
@@ -306,6 +356,12 @@ impl Radio for NullRadio {
             .2 = enabled;
         Ok(())
     }
+    fn swr_sweep_setup(&self) -> Option<crate::SwrSweepSetup> {
+        Some(crate::SwrSweepSetup {
+            carrier_mode: Mode::Rtty,
+            rf_power: 77,
+        })
+    }
     async fn get_ptt(&self) -> Result<bool> {
         Ok(self
             .state
@@ -370,6 +426,11 @@ mod tests {
             Mode::Usb
         );
         futures::executor::block_on(radio.ptt(false)).unwrap();
+        let core = futures::executor::block_on(radio.read_core_state()).unwrap();
+        assert_eq!(core.frequency_hz, Some(14_074_000));
+        assert_eq!(core.mode, Some(Mode::Usb));
+        assert_eq!(core.ptt, None);
+        assert!(radio.event_stream_age().is_none());
         assert!(futures::executor::block_on(radio.get_ptt()).is_err());
         assert!(futures::executor::block_on(radio.get_power()).is_err());
         assert!(futures::executor::block_on(radio.set_power(false)).is_err());
@@ -409,7 +470,23 @@ mod tests {
         );
         assert!(!radio.supports_repeater_settings());
         assert!(!radio.supports_memory_channels());
+        assert!(!radio.supports_memory_selection());
         assert!(!radio.supports_send_dtmf());
+        assert!(!radio.supports_scope());
+        assert!(!radio.supports_iq_output());
+        assert!(radio.scope_metadata().is_none());
+        assert!(futures::executor::block_on(radio.get_scope_state()).is_err());
+        assert!(radio.filter_bandwidth_hz(Mode::Usb, 0).is_none());
+        assert!(radio.swr_sweep_setup().is_none());
+        assert!(radio.meter_presentation(MeterId::Signal, 0).is_none());
+        assert!(radio.control_max(ControlId::RfPower).is_none());
+        assert!(radio.supported_control_values(ControlId::RfPower).is_none());
+        assert!(radio.meter_poll_spec(MeterId::Signal).is_none());
+        assert!(radio.meter_metadata(MeterId::Signal).is_none());
+        assert!(futures::executor::block_on(
+            radio.set_scope_configuration(ScopeConfiguration::default())
+        )
+        .is_err());
         assert!(
             futures::executor::block_on(radio.get_meter(MeterId::Signal))
                 .unwrap()

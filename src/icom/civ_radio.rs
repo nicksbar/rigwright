@@ -13,12 +13,16 @@ use std::{
 };
 
 use super::profile::ControlEncoding;
-use super::profile::{meter_command_prefix, profile_for_model, MemoryLayout};
+use super::profile::{
+    meter_command_prefix, model_from_usb_identity, profile_for_model, MemoryLayout, ScopeMenuSpec,
+};
 use crate::events::{RadioEvent, RadioEventRouter, RadioEventSubscription};
 pub use crate::hal_types::{BaseMode, Mode, OperatingMode};
 use crate::hal_types::{
-    ControlId, ControlValue, MemoryChannel, MeterId, RepeaterSettings, RepeaterShift, ToneMode,
-    ToneSettings, TunerStatus,
+    ControlId, ControlValue, MemoryChannel, MeterId, MeterPollSpec, MeterPresentation,
+    RepeaterSettings, RepeaterShift, ScopeCenterType, ScopeColor, ScopeConfiguration,
+    ScopeMarkerPosition, ScopeMaxHold, ScopeMetadata, ScopeState, ScopeWaveformType, SwrSweepSetup,
+    ToneMode, ToneSettings, TunerStatus,
 };
 
 const CI_V_FRAME_START: u8 = 0xFE;
@@ -239,20 +243,6 @@ pub enum IcomReceiver {
     Sub,
 }
 
-/// Common scope controls shared by the currently profiled Icom CI-V scope
-/// transports. `None` leaves a setting unchanged.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ScopeConfiguration {
-    pub span_hz: Option<u64>,
-    pub fixed_edges_hz: Option<(u64, u64)>,
-    pub fixed_edge_number: Option<u8>,
-    pub hold: Option<bool>,
-    pub reference_level_tenths_db: Option<i16>,
-    pub sweep_speed: Option<u8>,
-    pub center_mode: Option<bool>,
-    pub vbw_wide: Option<bool>,
-}
-
 pub fn enumerate_serial_ports() -> Result<Vec<String>> {
     let mut ports = enumerate_serial_port_descriptors()?
         .into_iter()
@@ -339,11 +329,8 @@ fn detect_likely_radio_model(
     let manufacturer_lc = manufacturer.to_ascii_lowercase();
     let product_lc = product.to_ascii_lowercase();
 
-    if product_lc.contains("ic-7300") || (vid == 0x0C26 && product_lc.contains("7300")) {
-        return Some("Icom IC-7300 (CI-V)".to_string());
-    }
-    if product_lc.contains("ic-7200") || product_lc.contains("7200") {
-        return Some("Icom IC-7200 (CI-V)".to_string());
+    if let Some(model) = model_from_usb_identity(vid, manufacturer, product) {
+        return Some(format!("Icom {} (CI-V)", model.model_name()));
     }
 
     if manufacturer_lc.contains("icom") || product_lc.contains("icom") {
@@ -398,6 +385,15 @@ impl IcomCiVRadio {
             self.supports_scope(),
             "native CI-V scope is unavailable for this model"
         );
+        let profile = self.model().map(profile_for_model);
+        let menu = profile.and_then(|profile| profile.scope.and_then(|scope| scope.menu));
+        let set_menu = |index: u16, value: u8| -> Result<()> {
+            let [high, low] = encode_civ_menu_index(index);
+            self.transact_ack(&[0x1A, 0x05, high, low, value])
+        };
+        let require_menu = |menu: Option<ScopeMenuSpec>| -> Result<ScopeMenuSpec> {
+            menu.ok_or_else(|| anyhow!("advanced scope controls are unavailable for this model"))
+        };
         if let Some(value) = config.center_mode {
             self.transact_ack(&[0x27, 0x14, 0x00, u8::from(value)])?;
         }
@@ -408,9 +404,12 @@ impl IcomCiVRadio {
             self.transact_ack(&payload)?;
         }
         if let Some(edge) = config.fixed_edge_number {
+            let metadata = self
+                .scope_metadata()
+                .ok_or_else(|| anyhow!("scope metadata is unavailable"))?;
             anyhow::ensure!(
-                (1..=4).contains(&edge),
-                "scope fixed-edge number must be in 1..=4"
+                metadata.fixed_edge_numbers.contains(&edge),
+                "unsupported scope fixed-edge number {edge}"
             );
             self.transact_ack(&[0x27, 0x16, 0x00, edge])?;
         }
@@ -433,7 +432,13 @@ impl IcomCiVRadio {
             ])?;
         }
         if let Some(speed) = config.sweep_speed {
-            anyhow::ensure!(speed <= 2, "scope sweep speed must be in 0..=2");
+            let metadata = self
+                .scope_metadata()
+                .ok_or_else(|| anyhow!("scope metadata is unavailable"))?;
+            anyhow::ensure!(
+                metadata.sweep_speed_values.contains(&speed),
+                "unsupported scope sweep speed {speed}"
+            );
             self.transact_ack(&[0x27, 0x1A, 0x00, speed])?;
         }
         if let Some(wide) = config.vbw_wide {
@@ -441,12 +446,168 @@ impl IcomCiVRadio {
         }
         if let Some((lower, upper)) = config.fixed_edges_hz {
             anyhow::ensure!(lower < upper, "scope lower edge must be below upper edge");
-            let mut payload = vec![0x27, 0x1E, 0x00, config.fixed_edge_number.unwrap_or(1)];
+            let edge = config.fixed_edge_number.unwrap_or(1);
+            let metadata = self
+                .scope_metadata()
+                .ok_or_else(|| anyhow!("scope metadata is unavailable"))?;
+            anyhow::ensure!(
+                metadata.fixed_edge_numbers.contains(&edge),
+                "unsupported scope fixed-edge number {edge}"
+            );
+            let mut payload = vec![0x27, 0x1E, 0x00, edge];
             payload.extend_from_slice(&encode_civ_frequency_bcd(lower));
             payload.extend_from_slice(&encode_civ_frequency_bcd(upper));
             self.transact_ack(&payload)?;
         }
+        if let Some(value) = config.tx_display {
+            let menu = require_menu(menu)?;
+            set_menu(menu.tx_display, u8::from(value))?;
+        }
+        if let Some(value) = config.max_hold {
+            let menu = require_menu(menu)?;
+            set_menu(menu.max_hold, scope_max_hold_value(value))?;
+        }
+        if let Some(value) = config.center_type {
+            let menu = require_menu(menu)?;
+            set_menu(menu.center_type, scope_center_type_value(value))?;
+        }
+        if let Some(value) = config.marker_position {
+            let menu = require_menu(menu)?;
+            set_menu(menu.marker_position, scope_marker_position_value(value))?;
+        }
+        if let Some(value) = config.averaging {
+            let menu = require_menu(menu)?;
+            let encoded = match value {
+                0 => 0,
+                2..=4 => value - 1,
+                _ => anyhow::bail!("unsupported scope averaging value {value}"),
+            };
+            set_menu(menu.averaging, encoded)?;
+        }
+        if let Some(value) = config.waveform_type {
+            let menu = require_menu(menu)?;
+            set_menu(menu.waveform_type, scope_waveform_type_value(value))?;
+        }
+        if let Some(value) = config.waterfall_display {
+            let menu = require_menu(menu)?;
+            set_menu(menu.waterfall_display, u8::from(value))?;
+        }
+        if let Some(value) = config.waterfall_size {
+            let menu = require_menu(menu)?;
+            anyhow::ensure!(value <= 2, "unsupported waterfall size {value}");
+            set_menu(menu.waterfall_size, value)?;
+        }
+        if let Some(value) = config.waterfall_peak_level {
+            let menu = require_menu(menu)?;
+            let metadata = self
+                .scope_metadata()
+                .ok_or_else(|| anyhow!("scope metadata is unavailable"))?;
+            anyhow::ensure!(
+                metadata.waterfall_peak_level_options.contains(&value),
+                "unsupported waterfall peak level {value}"
+            );
+            set_menu(menu.waterfall_peak_level, value.saturating_sub(1))?;
+        }
+        if let Some(value) = config.marker_auto_hide {
+            let menu = require_menu(menu)?;
+            set_menu(menu.marker_auto_hide, u8::from(value))?;
+        }
+        if let Some(color) = config.waveform_color_current {
+            let menu = require_menu(menu)?;
+            self.set_scope_color(menu.waveform_color_current, color)?;
+        }
+        if let Some(color) = config.waveform_color_line {
+            let menu = require_menu(menu)?;
+            self.set_scope_color(menu.waveform_color_line, color)?;
+        }
+        if let Some(color) = config.waveform_color_max_hold {
+            let menu = require_menu(menu)?;
+            self.set_scope_color(menu.waveform_color_max_hold, color)?;
+        }
         Ok(())
+    }
+
+    pub async fn get_scope_state(&self) -> Result<ScopeState> {
+        anyhow::ensure!(
+            self.supports_scope(),
+            "native CI-V scope is unavailable for this model"
+        );
+        let profile = profile_for_model(self.selected_model()?);
+        let menu = profile
+            .scope
+            .and_then(|scope| scope.menu)
+            .context("scope menu is unavailable")?;
+        let tx_display = self.read_scope_menu(menu.tx_display, 1)?[0] != 0;
+        let waterfall_display = self.read_scope_menu(menu.waterfall_display, 1)?[0] != 0;
+        let marker_auto_hide = self.read_scope_menu(menu.marker_auto_hide, 1)?[0] != 0;
+        let max_hold = match self.read_scope_menu(menu.max_hold, 1)?[0] {
+            0 => ScopeMaxHold::Off,
+            1 => ScopeMaxHold::TenSeconds,
+            2 => ScopeMaxHold::Continuous,
+            value => anyhow::bail!("invalid CI-V max hold value {value}"),
+        };
+        let center_type = match self.read_scope_menu(menu.center_type, 1)?[0] {
+            0 => ScopeCenterType::FilterCenter,
+            1 => ScopeCenterType::CarrierPoint,
+            2 => ScopeCenterType::CarrierPointAbsolute,
+            value => anyhow::bail!("invalid CI-V center type value {value}"),
+        };
+        let marker_position = match self.read_scope_menu(menu.marker_position, 1)?[0] {
+            0 => ScopeMarkerPosition::FilterCenter,
+            1 => ScopeMarkerPosition::CarrierPoint,
+            value => anyhow::bail!("invalid CI-V marker position value {value}"),
+        };
+        let averaging = match self.read_scope_menu(menu.averaging, 1)?[0] {
+            0 => 0,
+            1..=3 => self.read_scope_menu(menu.averaging, 1)?[0] + 1,
+            value => anyhow::bail!("invalid CI-V averaging value {value}"),
+        };
+        let waveform_type = match self.read_scope_menu(menu.waveform_type, 1)?[0] {
+            0 => ScopeWaveformType::Fill,
+            1 => ScopeWaveformType::FillAndLine,
+            value => anyhow::bail!("invalid CI-V waveform type value {value}"),
+        };
+        let waterfall_peak_level = self.read_scope_menu(menu.waterfall_peak_level, 1)?[0] + 1;
+        let state = ScopeConfiguration {
+            tx_display: Some(tx_display),
+            max_hold: Some(max_hold),
+            center_type: Some(center_type),
+            marker_position: Some(marker_position),
+            averaging: Some(averaging),
+            waveform_type: Some(waveform_type),
+            waterfall_display: Some(waterfall_display),
+            waterfall_size: Some(self.read_scope_menu(menu.waterfall_size, 1)?[0]),
+            waterfall_peak_level: Some(waterfall_peak_level),
+            marker_auto_hide: Some(marker_auto_hide),
+            ..ScopeConfiguration::default()
+        };
+        Ok(ScopeState {
+            configuration: state,
+            waveform_color_current: Some(self.read_scope_color(menu.waveform_color_current)?),
+            waveform_color_line: Some(self.read_scope_color(menu.waveform_color_line)?),
+            waveform_color_max_hold: Some(self.read_scope_color(menu.waveform_color_max_hold)?),
+        })
+    }
+
+    fn read_scope_menu(&self, index: u16, length: usize) -> Result<Vec<u8>> {
+        let [high, low] = encode_civ_menu_index(index);
+        let prefix = [0x1A, 0x05, high, low];
+        let response = self.transact(&prefix, true)?;
+        let data = response_data_after_prefix(&response, &prefix)?;
+        anyhow::ensure!(data.len() >= length, "short CI-V scope menu response");
+        Ok(data[..length].to_vec())
+    }
+
+    fn read_scope_color(&self, index: u16) -> Result<ScopeColor> {
+        let data = self.read_scope_menu(index, 6)?;
+        decode_scope_color(&data)
+    }
+
+    fn set_scope_color(&self, index: u16, color: ScopeColor) -> Result<()> {
+        let [high, low] = encode_civ_menu_index(index);
+        let mut payload = vec![0x1A, 0x05, high, low];
+        payload.extend_from_slice(&encode_scope_color(color));
+        self.transact_ack(&payload)
     }
 
     fn set_operating_mode_blocking(
@@ -455,25 +616,20 @@ impl IcomCiVRadio {
         data_mode: bool,
         filter: u8,
     ) -> Result<()> {
-        if let Some(model) = self.model {
-            anyhow::ensure!(
-                super::modes::supports_mode(model, base_mode),
-                "mode {base_mode:?} is not documented for {}",
-                model.model_name()
-            );
-        }
+        let profile = self.active_profile();
+        anyhow::ensure!(
+            profile.supports_mode(base_mode),
+            "mode {base_mode:?} is not documented for {}",
+            profile.model.model_name()
+        );
         let mode_byte = base_mode_to_civ_mode(base_mode)
             .with_context(|| format!("unsupported base mode for CI-V set: {base_mode:?}"))?;
-        if let Some(model) = self.model {
-            let profile = profile_for_model(model);
-            anyhow::ensure!(
-                profile.control_capabilities.filter_values.contains(&filter),
-                "CI-V filter value is not documented for {}",
-                model.model_name()
-            );
-        } else {
-            anyhow::ensure!((1..=3).contains(&filter), "CI-V filter must be in 1..=3");
-        }
+        anyhow::ensure!(
+            profile.control_capabilities.filter_values.contains(&filter)
+                || (self.model.is_none() && (1..=3).contains(&filter)),
+            "CI-V filter value is not documented for {}",
+            profile.model.model_name()
+        );
         let data_byte = if data_mode { 0x01 } else { 0x00 };
         let _ = self.transact(&[0x26, 0x00, mode_byte, data_byte, filter], false)?;
         Ok(())
@@ -661,6 +817,12 @@ impl IcomCiVRadio {
     fn selected_model(&self) -> Result<crate::models::IcomCivModel> {
         self.model
             .context("this CI-V operation requires a selected Icom model profile")
+    }
+
+    fn active_profile(&self) -> &'static super::profile::IcomCivProfile {
+        self.model
+            .map(profile_for_model)
+            .unwrap_or(&super::generic::CIV_PROFILE)
     }
 
     pub(crate) fn require_model(&self, expected: crate::models::IcomCivModel) -> Result<()> {
@@ -1396,11 +1558,12 @@ impl IcomCiVRadio {
     fn transact_scope_setting(&self, payload: &[u8]) -> Result<()> {
         match self.transact_ack(payload) {
             Ok(()) => Ok(()),
-            Err(error) if error.to_string().contains("did not acknowledge") => {
-                // IC-7300 scope setting writes are accepted without an ACK on
-                // some CI-V firmware/configuration combinations. The scope
-                // waveform is the authoritative confirmation; continue to
-                // the output-enable command and validate by waiting for data.
+            Err(error)
+                if self.active_profile().scope_ack_optional
+                    && error.to_string().contains("did not acknowledge") =>
+            {
+                // Some CI-V firmware accepts scope writes without an ACK; the
+                // selected profile owns that exception.
                 Ok(())
             }
             Err(error) => Err(error),
@@ -1412,13 +1575,12 @@ impl IcomCiVRadio {
             hz <= 9_999_999_999,
             "frequency {hz} Hz does not fit the five-byte CI-V BCD format"
         );
-        if let Some(model) = self.model {
-            if !profile_for_model(model).supports_frequency(hz) {
-                anyhow::bail!(
-                    "frequency {hz} Hz is outside the documented CAT range for {}",
-                    model.model_name()
-                );
-            }
+        let profile = self.active_profile();
+        if !profile.supports_frequency(hz) {
+            anyhow::bail!(
+                "frequency {hz} Hz is outside the documented CAT range for {}",
+                profile.model.model_name()
+            );
         }
         let mut payload = Vec::with_capacity(1 + 5);
         payload.push(0x05);
@@ -1514,7 +1676,7 @@ impl IcomCiVRadio {
     }
 
     fn get_meter_blocking_with_timeout(&self, id: MeterId, timeout: Duration) -> Result<u8> {
-        let profile = profile_for_model(self.selected_model()?);
+        let profile = self.active_profile();
         anyhow::ensure!(
             profile.supports_meter(id),
             "meter {id:?} is not supported by this Icom profile"
@@ -2130,6 +2292,23 @@ impl Radio for IcomCiVRadio {
         self.set_power_blocking(enabled)
     }
 
+    fn supports_scope(&self) -> bool {
+        self.supports_scope()
+    }
+
+    fn supports_iq_output(&self) -> bool {
+        self.model
+            .is_some_and(|model| profile_for_model(model).supports_iq_output)
+    }
+
+    async fn set_scope_configuration(&self, config: ScopeConfiguration) -> Result<()> {
+        IcomCiVRadio::set_scope_configuration(self, config).await
+    }
+
+    async fn get_scope_state(&self) -> Result<ScopeState> {
+        IcomCiVRadio::get_scope_state(self).await
+    }
+
     async fn protocol_write_read(&self, request: &[u8]) -> Result<Vec<u8>> {
         if request.first().copied() != Some(CI_V_FRAME_START)
             || request.get(1).copied() != Some(CI_V_FRAME_START)
@@ -2161,17 +2340,45 @@ impl Radio for IcomCiVRadio {
     }
 
     fn supports_meter(&self, id: MeterId) -> bool {
+        self.active_profile().supports_meter(id)
+    }
+
+    fn filter_bandwidth_hz(&self, mode: Mode, filter: u8) -> Option<u32> {
+        self.active_profile().filter_bandwidth_hz(mode, filter)
+    }
+
+    fn swr_sweep_setup(&self) -> Option<SwrSweepSetup> {
+        self.active_profile().swr_sweep_setup
+    }
+
+    fn meter_presentation(&self, id: MeterId, normalized: u8) -> Option<MeterPresentation> {
+        self.active_profile().meter_presentation(id, normalized)
+    }
+
+    fn meter_poll_spec(&self, id: MeterId) -> Option<MeterPollSpec> {
+        self.active_profile()
+            .meter_poll_specs
+            .iter()
+            .find(|spec| spec.meter == id)
+            .copied()
+    }
+
+    fn scope_metadata(&self) -> Option<ScopeMetadata> {
         self.model()
             .map(profile_for_model)
-            .is_some_and(|profile| profile.supports_meter(id))
+            .and_then(|profile| profile.scope_metadata())
+    }
+
+    fn control_max(&self, id: ControlId) -> Option<u8> {
+        self.active_profile().control_max(id)
+    }
+
+    fn supported_control_values(&self, id: ControlId) -> Option<&'static [u8]> {
+        self.active_profile().supported_control_values(id)
     }
 
     fn supports_control(&self, id: ControlId) -> bool {
-        let Some(model) = self.model() else {
-            return false;
-        };
-        let profile = profile_for_model(model);
-        profile.supports_control(id)
+        self.active_profile().supports_control(id)
     }
 
     fn supports_control_read(&self, id: ControlId) -> bool {
@@ -2225,15 +2432,11 @@ impl Radio for IcomCiVRadio {
     }
 
     fn supports_repeater_settings(&self) -> bool {
-        self.model()
-            .map(profile_for_model)
-            .is_some_and(|profile| profile.supports_repeater_settings)
+        self.active_profile().supports_repeater_settings
     }
 
     fn supports_memory_channels(&self) -> bool {
-        self.model()
-            .map(profile_for_model)
-            .is_some_and(|profile| profile.supports_memory_channels)
+        self.active_profile().supports_memory_channels
     }
 
     fn capabilities(&self) -> RadioCapabilities {
@@ -2398,6 +2601,65 @@ fn decode_event_mode(value: Option<u8>) -> Option<Mode> {
         0x08 => Mode::Data,
         0x09 => Mode::Wfm,
         _ => return None,
+    })
+}
+
+fn encode_civ_menu_index(index: u16) -> [u8; 2] {
+    [
+        decimal_to_bcd((index / 100) as u8),
+        decimal_to_bcd((index % 100) as u8),
+    ]
+}
+
+fn scope_center_type_value(value: crate::hal_types::ScopeCenterType) -> u8 {
+    match value {
+        crate::hal_types::ScopeCenterType::FilterCenter => 0,
+        crate::hal_types::ScopeCenterType::CarrierPoint => 1,
+        crate::hal_types::ScopeCenterType::CarrierPointAbsolute => 2,
+    }
+}
+
+fn scope_max_hold_value(value: crate::hal_types::ScopeMaxHold) -> u8 {
+    match value {
+        crate::hal_types::ScopeMaxHold::Off => 0,
+        crate::hal_types::ScopeMaxHold::TenSeconds => 1,
+        crate::hal_types::ScopeMaxHold::Continuous => 2,
+    }
+}
+
+fn scope_marker_position_value(value: crate::hal_types::ScopeMarkerPosition) -> u8 {
+    match value {
+        crate::hal_types::ScopeMarkerPosition::FilterCenter => 0,
+        crate::hal_types::ScopeMarkerPosition::CarrierPoint => 1,
+    }
+}
+
+fn scope_waveform_type_value(value: crate::hal_types::ScopeWaveformType) -> u8 {
+    match value {
+        crate::hal_types::ScopeWaveformType::Fill => 0,
+        crate::hal_types::ScopeWaveformType::FillAndLine => 1,
+    }
+}
+
+fn encode_scope_color(color: ScopeColor) -> [u8; 6] {
+    let component = |value: u8| [decimal_to_bcd(value / 100), decimal_to_bcd(value % 100)];
+    let red = component(color.red);
+    let green = component(color.green);
+    let blue = component(color.blue);
+    [red[0], red[1], green[0], green[1], blue[0], blue[1]]
+}
+
+fn decode_scope_color(data: &[u8]) -> Result<ScopeColor> {
+    anyhow::ensure!(data.len() >= 6, "short CI-V RGB color payload");
+    let decode = |high: u8, low: u8| -> Result<u8> {
+        let value = u16::from(high & 0x0F) * 100 + u16::from(low >> 4) * 10 + u16::from(low & 0x0F);
+        anyhow::ensure!(value <= 255, "invalid CI-V RGB component {value}");
+        Ok(value as u8)
+    };
+    Ok(ScopeColor {
+        red: decode(data[0], data[1])?,
+        green: decode(data[2], data[3])?,
+        blue: decode(data[4], data[5])?,
     })
 }
 
@@ -2858,6 +3120,28 @@ mod tests {
     use std::io::{Read, Write};
     use std::sync::{Arc, Mutex};
 
+    #[test]
+    fn scope_colors_use_four_digit_bcd_components() {
+        let color = ScopeColor {
+            red: 0,
+            green: 127,
+            blue: 255,
+        };
+        assert_eq!(
+            encode_scope_color(color),
+            [0x00, 0x00, 0x01, 0x27, 0x02, 0x55]
+        );
+        assert_eq!(
+            decode_scope_color(&encode_scope_color(color)).unwrap(),
+            color
+        );
+    }
+
+    #[test]
+    fn scope_color_decoder_rejects_values_above_255() {
+        assert!(decode_scope_color(&[0x03, 0x00, 0x00, 0x00, 0x00, 0x00]).is_err());
+    }
+
     struct TestTransport {
         reads: VecDeque<Vec<u8>>,
         writes: Arc<Mutex<Vec<Vec<u8>>>>,
@@ -3056,7 +3340,7 @@ mod tests {
     fn generic_and_profiled_controls_have_distinct_capability_surfaces() {
         let generic = IcomCiVRadio::new_generic("", 115_200, 0xE0, 0x94);
         assert!(!generic.supports_control(ControlId::RfPower));
-        assert!(!generic.supports_meter(MeterId::Signal));
+        assert!(generic.supports_meter(MeterId::Signal));
 
         for model in [
             crate::models::IcomCivModel::Ic705,
@@ -3089,6 +3373,102 @@ mod tests {
             0xA2,
         )
         .supports_control(ControlId::ExternalPreamp));
+    }
+
+    #[test]
+    fn radio_trait_capability_delegates_use_the_selected_profile() {
+        let radio = IcomCiVRadio::new_for_model(
+            crate::models::IcomCivModel::Ic7300,
+            "",
+            115_200,
+            0xE0,
+            0x94,
+        );
+        assert_eq!(radio.model(), Some(crate::models::IcomCivModel::Ic7300));
+        assert_eq!(radio.controller_address(), 0xE0);
+        assert_eq!(radio.radio_address(), 0x94);
+        assert!(radio.event_router().is_some());
+        assert!(!radio.supports_scope() || radio.scope_metadata().is_some());
+        assert!(!radio.supports_iq_output());
+        assert!(radio.filter_bandwidth_hz(Mode::Usb, 0).is_none());
+        assert!(radio.swr_sweep_setup().is_some());
+        assert!(radio.meter_presentation(MeterId::Swr, 128).is_some());
+        assert!(radio.meter_poll_spec(MeterId::Signal).is_some());
+        assert!(radio.meter_metadata(MeterId::Signal).is_none());
+        assert!(radio.control_max(ControlId::Agc).is_some());
+        assert!(radio.supported_control_values(ControlId::Filter).is_some());
+        assert!(radio.supports_control(ControlId::RfPower));
+        assert!(radio.supports_control_read(ControlId::RfPower));
+        assert!(radio.supports_control_write(ControlId::RfPower));
+        assert!(radio.supports_memory_channels());
+        assert!(radio.supports_repeater_settings());
+        assert!(radio.capabilities().can_get_frequency);
+        assert_eq!(radio.link_health().commands_started, Some(0));
+        assert!(radio.event_stream_age().is_none());
+        assert_eq!(radio.scope_stream_counters(), (0, 0, 0));
+        assert!(!radio
+            .scope_stream_health()
+            .is_stalled(Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn scope_assembler_rejects_bad_geometry_and_incomplete_sweeps() {
+        let geometry = crate::models::IcomScopeGeometry {
+            divisions: 2,
+            full_chunk_bins: 2,
+            last_chunk_bins: 1,
+            bins: 3,
+            bin_max: 255,
+            supports_main_sub_scope: false,
+        };
+        let make_frame = |division: u8, bins: &[u8]| {
+            let mut frame = TestTransport::response(0x94, 0xE0, &[0x27, 0x00, 0, division, 2]);
+            frame.extend_from_slice(bins);
+            frame.push(CI_V_FRAME_END);
+            frame
+        };
+        let mut assembler = ScopeSweepAssembler::default();
+        assert!(assembler
+            .push(&make_frame(1, &[1, 2]), Some(geometry))
+            .is_none());
+        assert!(assembler
+            .push(&make_frame(1, &[1, 2]), Some(geometry))
+            .is_none());
+        assert_eq!(assembler.dropped_sweeps, 1);
+        assert!(assembler
+            .push(&make_frame(3, &[1]), Some(geometry))
+            .is_none());
+        assert!(assembler
+            .push(&make_frame(2, &[1, 2]), Some(geometry))
+            .is_none());
+        assert!(assembler.push(&make_frame(2, &[1]), None).is_none());
+    }
+
+    #[test]
+    fn serial_port_labels_cover_usb_identity_variants() {
+        let known = SerialPortType::UsbPort(serialport::UsbPortInfo {
+            vid: 0x0C26,
+            pid: 0x0001,
+            serial_number: None,
+            manufacturer: Some("Vendor".to_string()),
+            product: Some("7300 USB Serial".to_string()),
+        });
+        let (label, model) = describe_port_type(&known);
+        assert!(label.contains("Vendor 7300 USB Serial"));
+        assert_eq!(model.as_deref(), Some("Icom IC-7300 (CI-V)"));
+
+        let manufacturer_only = SerialPortType::UsbPort(serialport::UsbPortInfo {
+            vid: 1,
+            pid: 2,
+            serial_number: None,
+            manufacturer: Some("Vendor".to_string()),
+            product: None,
+        });
+        assert!(describe_port_type(&manufacturer_only).0.contains("Vendor"));
+        assert_eq!(
+            describe_port_type(&SerialPortType::PciPort).0,
+            "serial device"
+        );
     }
 
     #[test]
@@ -3270,6 +3650,7 @@ mod tests {
                     crate::models::IcomCivModel::Ic7300 => 0x94,
                     crate::models::IcomCivModel::Ic7610 => 0x98,
                     crate::models::IcomCivModel::Ic9700 => 0xA2,
+                    crate::models::IcomCivModel::Generic => unreachable!(),
                 },
                 transport,
             );
@@ -3299,6 +3680,7 @@ mod tests {
                     crate::models::IcomCivModel::Ic7300 => 0x94,
                     crate::models::IcomCivModel::Ic7610 => 0x98,
                     crate::models::IcomCivModel::Ic9700 => 0xA2,
+                    crate::models::IcomCivModel::Generic => unreachable!(),
                 },
                 0xE0,
             )]);
@@ -3312,6 +3694,7 @@ mod tests {
                     crate::models::IcomCivModel::Ic7300 => 0x94,
                     crate::models::IcomCivModel::Ic7610 => 0x98,
                     crate::models::IcomCivModel::Ic9700 => 0xA2,
+                    crate::models::IcomCivModel::Generic => unreachable!(),
                 },
                 transport,
             );
@@ -4065,7 +4448,7 @@ mod tests {
     #[test]
     fn exercises_scope_configuration_and_selection_validation() {
         let ack = || TestTransport::ack(0x94, 0xE0);
-        let (transport, writes) = TestTransport::with_reads((0..9).map(|_| ack()).collect());
+        let (transport, writes) = TestTransport::with_reads((0..32).map(|_| ack()).collect());
         let radio = IcomCiVRadio::with_transport(
             Some(crate::models::IcomCivModel::Ic7300),
             0xE0,
@@ -4081,10 +4464,35 @@ mod tests {
             sweep_speed: Some(2),
             vbw_wide: Some(true),
             fixed_edges_hz: Some((14_000_000, 14_200_000)),
+            center_type: Some(ScopeCenterType::CarrierPoint),
+            tx_display: Some(true),
+            max_hold: Some(ScopeMaxHold::Continuous),
+            marker_position: Some(ScopeMarkerPosition::CarrierPoint),
+            averaging: Some(2),
+            waveform_type: Some(ScopeWaveformType::FillAndLine),
+            waterfall_display: Some(true),
+            waterfall_size: Some(2),
+            waterfall_peak_level: Some(4),
+            marker_auto_hide: Some(false),
+            waveform_color_current: Some(ScopeColor {
+                red: 1,
+                green: 2,
+                blue: 3,
+            }),
+            waveform_color_line: Some(ScopeColor {
+                red: 4,
+                green: 5,
+                blue: 6,
+            }),
+            waveform_color_max_hold: Some(ScopeColor {
+                red: 7,
+                green: 8,
+                blue: 9,
+            }),
         }))
         .unwrap();
         futures::executor::block_on(radio.select_vfo(IcomVfo::A)).unwrap();
-        assert!(writes.lock().unwrap().len() == 9);
+        assert!(writes.lock().unwrap().len() == 22);
 
         let unsupported = IcomCiVRadio::new_for_model(
             crate::models::IcomCivModel::Ic9700,

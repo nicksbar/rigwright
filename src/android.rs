@@ -224,6 +224,10 @@ impl Radio for RadioAndroid {
     fn supports_memory_channels(&self) -> bool {
         self.radio().supports_memory_channels()
     }
+
+    fn supports_memory_selection(&self) -> bool {
+        self.radio().supports_memory_selection()
+    }
     fn supports_send_dtmf(&self) -> bool {
         self.radio().supports_send_dtmf()
     }
@@ -258,6 +262,54 @@ impl Radio for RadioAndroid {
 
     fn capabilities(&self) -> RadioCapabilities {
         self.radio().capabilities()
+    }
+
+    fn supports_scope(&self) -> bool {
+        self.radio().supports_scope()
+    }
+
+    fn supports_iq_output(&self) -> bool {
+        self.radio().supports_iq_output()
+    }
+
+    fn scope_metadata(&self) -> Option<crate::ScopeMetadata> {
+        self.radio().scope_metadata()
+    }
+
+    fn filter_bandwidth_hz(&self, mode: Mode, filter: u8) -> Option<u32> {
+        self.radio().filter_bandwidth_hz(mode, filter)
+    }
+
+    fn swr_sweep_setup(&self) -> Option<crate::SwrSweepSetup> {
+        self.radio().swr_sweep_setup()
+    }
+
+    fn meter_presentation(&self, id: MeterId, normalized: u8) -> Option<crate::MeterPresentation> {
+        self.radio().meter_presentation(id, normalized)
+    }
+
+    fn control_max(&self, id: ControlId) -> Option<u8> {
+        self.radio().control_max(id)
+    }
+
+    fn supported_control_values(&self, id: ControlId) -> Option<&'static [u8]> {
+        self.radio().supported_control_values(id)
+    }
+
+    fn meter_poll_spec(&self, id: MeterId) -> Option<crate::MeterPollSpec> {
+        self.radio().meter_poll_spec(id)
+    }
+
+    fn meter_metadata(&self, id: MeterId) -> Option<crate::MeterMetadata> {
+        self.radio().meter_metadata(id)
+    }
+
+    async fn set_scope_configuration(&self, config: crate::ScopeConfiguration) -> Result<()> {
+        self.radio().set_scope_configuration(config).await
+    }
+
+    async fn get_scope_state(&self) -> Result<crate::ScopeState> {
+        self.radio().get_scope_state().await
     }
 }
 
@@ -412,7 +464,17 @@ mod tests {
         assert!(radio.supports_control(ControlId::RfPower));
         assert!(radio.supports_control_read(ControlId::RfPower));
         assert!(radio.supports_control_write(ControlId::RfPower));
+        assert!(radio.supports_scope());
+        assert!(!radio.supports_iq_output());
+        assert!(radio.scope_metadata().is_some());
+        assert_eq!(radio.filter_bandwidth_hz(Mode::Usb, 1), Some(3_000));
+        assert!(radio.swr_sweep_setup().is_some());
+        assert!(radio.control_max(ControlId::Agc).is_some());
+        assert!(radio.supported_control_values(ControlId::Filter).is_some());
         assert!(radio.supports_meter(MeterId::Signal));
+        assert!(radio.meter_poll_spec(MeterId::Signal).is_some());
+        assert!(radio.meter_presentation(MeterId::Signal, 128).is_none());
+        assert!(radio.meter_metadata(MeterId::Signal).is_none());
         assert!(radio.supports_repeater_settings());
         assert!(radio.supports_memory_channels());
         assert!(!radio.supports_send_dtmf());
@@ -429,6 +491,8 @@ mod tests {
         assert!(futures::executor::block_on(radio.set_xit_offset_hz(-125)).is_err());
         futures::executor::block_on(radio.select_memory_channel(3)).unwrap();
         futures::executor::block_on(radio.start_tuner()).unwrap();
+        let _ = futures::executor::block_on(radio.get_tuner_status());
+        let _ = futures::executor::block_on(radio.get_scope_state());
         assert!(futures::executor::block_on(radio.get_power()).is_err());
         assert_eq!(
             futures::executor::block_on(radio.get_control(ControlId::RawCiV)).unwrap(),

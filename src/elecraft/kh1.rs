@@ -1,6 +1,10 @@
 //! KH1 limited profile from the KH1 Programmer's Reference.
 
-use super::profile::{ElecraftModeSpec, ElecraftModel, ElecraftProfile};
+use super::profile::{
+    ElecraftIdentifyStrategy, ElecraftModeSpec, ElecraftModel, ElecraftProfile,
+    ElecraftSignalMeterStrategy, ElecraftTxMeterStrategy, ElecraftTxStateStrategy,
+    ElecraftVfoMovementStrategy, EMPTY_VALUES,
+};
 use crate::hal::Mode;
 
 const BAUD_RATES: &[u32] = &[9_600];
@@ -60,6 +64,19 @@ pub const PROFILE: ElecraftProfile = ElecraftProfile {
     rf_gain_max: None,
     squelch_max: 0,
     rf_gain_is_attenuation: false,
+    identify_strategy: ElecraftIdentifyStrategy::Kh1,
+    auto_info_max: None,
+    tx_state_strategy: ElecraftTxStateStrategy::Unsupported,
+    tx_meter_strategy: ElecraftTxMeterStrategy::None,
+    vfo_movement_strategy: ElecraftVfoMovementStrategy::Unsupported,
+    signal_meter_strategy: ElecraftSignalMeterStrategy::Sm { maximum: 30 },
+    power_meter_strategy: None,
+    alc_meter_strategy: None,
+    swr_meter_strategy: None,
+    memory_channel_max: None,
+    repeater_offset_max_hz: None,
+    rit_offset_max_hz: None,
+    attenuator_values: EMPTY_VALUES,
 };
 
 #[cfg(test)]

@@ -5,7 +5,8 @@
 //! no physical IC-7200 has been tested by Rigwright yet.
 
 use super::profile::{
-    ControlCapabilities, ControlEncoding, ControlSpec, IcomCivProfile, MemoryLayout,
+    swr_meter_presentation, ControlCapabilities, ControlEncoding, ControlSpec, IcomCivProfile,
+    MemoryLayout, SWR_SWEEP_SETUP,
 };
 use crate::controls::ControlId;
 use crate::hal_types::MeterId;
@@ -71,12 +72,16 @@ const METERS: &[MeterId] = &[MeterId::Signal, MeterId::Power, MeterId::Swr, Mete
 pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     model: crate::models::IcomCivModel::Ic7200,
     baud_rates: BAUD_RATES,
+    usb_baud_rates: BAUD_RATES,
+    supports_auto_baud: true,
     preferred_baud_rate: 19_200,
     default_address: 0x76,
     frequency_ranges: FREQUENCY_RANGES,
     controls: CONTROLS,
+    modes: super::profile::DEFAULT_MODES,
     scope_geometry: None,
     scope: None,
+    scope_options: super::profile::EMPTY_SCOPE_OPTIONS,
     main_sub: None,
     external_preamp: None,
     attenuator_values: &[0, 20],
@@ -85,6 +90,7 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     noise_reduction_level_max: 15,
     supports_iq_output: false,
     meters: METERS,
+    meter_poll_specs: super::profile::DEFAULT_METER_POLL_SPECS,
     control_capabilities: ControlCapabilities {
         supports_data_mode: true,
         filter_values: &[1, 2, 3],
@@ -94,6 +100,14 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     memory_layout: MemoryLayout::Hf,
     supports_repeater_settings: false,
     supports_memory_channels: true,
+    filter_bandwidths: &[],
+    swr_sweep_setup: Some(SWR_SWEEP_SETUP),
+    meter_presentation: Some(swr_meter_presentation),
+    scope_ack_optional: false,
+    usb_detection: &[super::profile::UsbDetectionSpec {
+        product_tokens: &["7200"],
+        vendor_id: None,
+    }],
 };
 
 #[cfg(test)]

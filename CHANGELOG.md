@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.22 — model-aware startup probing
+
+### Added
+- Complete profile-owned capability and meter metadata for Yaesu, Kenwood,
+  and Elecraft radios, keeping shared protocol engines model-agnostic.
+- Add profile-driven Elecraft support for K2, KX2, KX3, K3, K3S, K4, and KH1,
+  including model-specific tuning, options, notch, memory, and control rules.
+- Add manual-backed Kenwood memory codecs, model-specific memory selection,
+  and conservative generic-profile behavior for unsupported features.
+- Add release coverage tests for Icom scope configuration and USB discovery,
+  Elecraft profile boundaries, and the generic HAL contract.
+
+### Fixed
+- Keep configured-radio startup probing inside the driver boundary, using
+  model verification for modern Yaesu CAT radios whose optional VFO-selector
+  query may be rejected even when CAT is healthy.
+- Move vendor and model quirks out of generic drivers and into explicit radio
+  profiles, preventing unsupported capabilities from being advertised.
+
 ## 0.1.21 — resilient IC-7300 scope streaming
 
 ### Fixed

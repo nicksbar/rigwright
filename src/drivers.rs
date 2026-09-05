@@ -260,6 +260,24 @@ pub enum ConfiguredRadio {
 }
 
 impl ConfiguredRadio {
+    /// Perform the least-invasive model-aware connectivity check for the
+    /// configured driver. Vendor-specific probe details stay behind this
+    /// boundary so applications do not need to know which CAT command is
+    /// safe to issue first for a particular radio family.
+    pub async fn probe(&self) -> Result<()> {
+        match self {
+            Self::Yaesu(radio) => radio.verify_model(),
+            Self::Kenwood(radio) => radio.verify_model(),
+            Self::Icom(radio) => radio.get_frequency_hz().await.map(|_| ()),
+            Self::Ascii(radio) => radio.get_frequency_hz().await.map(|_| ()),
+            Self::DxLab(radio) => radio.get_frequency_hz().await.map(|_| ()),
+            Self::LegacyYaesu(radio) => radio.get_frequency_hz().await.map(|_| ()),
+            Self::Rigctld(radio) => radio.get_frequency_hz().await.map(|_| ()),
+            Self::Null(_) => bail!("CAT probing is not supported for virtual radios"),
+            Self::Elecraft(radio) => radio.get_frequency_hz().await.map(|_| ()),
+        }
+    }
+
     pub fn as_icom(&self) -> Option<&IcomCiVRadio> {
         match self {
             Self::Icom(radio) => Some(radio),
@@ -422,12 +440,76 @@ impl Radio for ConfiguredRadio {
             Self::Elecraft(r) => r.set_power(enabled).await,
         }
     }
+    fn supports_scope(&self) -> bool {
+        match self {
+            Self::Icom(r) => r.supports_scope(),
+            _ => false,
+        }
+    }
+    fn supports_iq_output(&self) -> bool {
+        match self {
+            Self::Icom(r) => r.supports_iq_output(),
+            _ => false,
+        }
+    }
+    fn scope_metadata(&self) -> Option<crate::ScopeMetadata> {
+        match self {
+            Self::Icom(r) => r.scope_metadata(),
+            _ => None,
+        }
+    }
+    fn control_max(&self, id: crate::ControlId) -> Option<u8> {
+        match self {
+            Self::Icom(r) => r.control_max(id),
+            Self::Yaesu(r) => r.control_max(id),
+            Self::Kenwood(r) => r.control_max(id),
+            Self::Elecraft(r) => r.control_max(id),
+            _ => None,
+        }
+    }
+    fn supported_control_values(&self, id: crate::ControlId) -> Option<&'static [u8]> {
+        match self {
+            Self::Icom(r) => r.supported_control_values(id),
+            Self::Yaesu(r) => r.supported_control_values(id),
+            Self::Kenwood(r) => r.supported_control_values(id),
+            Self::Elecraft(r) => r.supported_control_values(id),
+            _ => None,
+        }
+    }
+    fn meter_poll_spec(&self, id: crate::MeterId) -> Option<crate::MeterPollSpec> {
+        match self {
+            Self::Icom(r) => r.meter_poll_spec(id),
+            Self::Yaesu(r) => r.meter_poll_spec(id),
+            Self::LegacyYaesu(r) => r.meter_poll_spec(id),
+            Self::Kenwood(r) => r.meter_poll_spec(id),
+            Self::Elecraft(r) => r.meter_poll_spec(id),
+            _ => None,
+        }
+    }
+
+    fn meter_metadata(&self, id: crate::MeterId) -> Option<crate::MeterMetadata> {
+        match self {
+            Self::Icom(r) => r.meter_metadata(id),
+            Self::Yaesu(r) => r.meter_metadata(id),
+            Self::LegacyYaesu(r) => r.meter_metadata(id),
+            Self::Kenwood(r) => r.meter_metadata(id),
+            Self::Elecraft(r) => r.meter_metadata(id),
+            _ => None,
+        }
+    }
+    async fn set_scope_configuration(&self, config: crate::ScopeConfiguration) -> Result<()> {
+        match self {
+            Self::Icom(r) => r.set_scope_configuration(config).await,
+            _ => bail!("native scope configuration is not available for this driver"),
+        }
+    }
     async fn protocol_write_read(&self, request: &[u8]) -> Result<Vec<u8>> {
         match self {
             Self::Icom(r) => r.protocol_write_read(request).await,
             Self::Yaesu(r) => r.protocol_write_read(request).await,
             Self::Kenwood(r) => r.protocol_write_read(request).await,
             Self::LegacyYaesu(r) => r.protocol_write_read(request).await,
+            Self::Elecraft(r) => r.protocol_write_read(request).await,
             _ => bail!("raw protocol access is not available for this driver"),
         }
     }
@@ -456,6 +538,7 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.get_repeater_settings(),
             Self::Yaesu(r) => r.get_repeater_settings(),
             Self::Kenwood(r) => r.get_repeater_settings(),
+            Self::Elecraft(r) => r.get_repeater_settings().await,
             Self::LegacyYaesu(r) => r.get_repeater_settings().await,
             _ => bail!("repeater settings are not available for this driver"),
         }
@@ -465,6 +548,7 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.set_repeater_settings(settings),
             Self::Yaesu(r) => r.set_repeater_settings(settings),
             Self::Kenwood(r) => r.set_repeater_settings(settings),
+            Self::Elecraft(r) => r.set_repeater_settings(settings).await,
             Self::LegacyYaesu(r) => r.set_repeater_settings(settings).await,
             _ => bail!("repeater settings are not available for this driver"),
         }
@@ -504,6 +588,7 @@ impl Radio for ConfiguredRadio {
             Self::Icom(r) => r.select_memory_channel(channel),
             Self::Yaesu(r) => r.select_memory_channel(channel),
             Self::Kenwood(r) => r.select_memory_channel(channel),
+            Self::Elecraft(r) => r.select_memory_channel(channel).await,
             Self::LegacyYaesu(r) => r.select_memory_channel(channel).await,
             _ => bail!("memory channels are not available for this driver"),
         }
@@ -539,6 +624,7 @@ impl Radio for ConfiguredRadio {
         match self {
             Self::Icom(r) => r.get_meter(id).await,
             Self::Yaesu(r) => r.get_meter(id).await,
+            Self::LegacyYaesu(r) => r.get_meter(id).await,
             Self::Kenwood(r) => Radio::get_meter(r, id).await,
             Self::Elecraft(r) => r.get_meter(id).await,
             _ => Ok(None),
@@ -548,9 +634,38 @@ impl Radio for ConfiguredRadio {
         match self {
             Self::Icom(r) => r.supports_meter(id),
             Self::Yaesu(r) => r.supports_meter(id),
+            Self::LegacyYaesu(r) => r.supports_meter(id),
             Self::Kenwood(r) => r.supports_meter(id),
             Self::Elecraft(r) => r.supports_meter(id),
             _ => false,
+        }
+    }
+    fn filter_bandwidth_hz(&self, mode: crate::Mode, filter: u8) -> Option<u32> {
+        match self {
+            Self::Icom(r) => r.filter_bandwidth_hz(mode, filter),
+            Self::Yaesu(r) => r.filter_bandwidth_hz(mode, filter),
+            Self::Elecraft(r) => r.filter_bandwidth_hz(mode, filter),
+            _ => None,
+        }
+    }
+    fn swr_sweep_setup(&self) -> Option<crate::SwrSweepSetup> {
+        match self {
+            Self::Icom(r) => r.swr_sweep_setup(),
+            Self::Yaesu(r) => r.swr_sweep_setup(),
+            Self::Kenwood(r) => r.swr_sweep_setup(),
+            Self::Elecraft(r) => r.swr_sweep_setup(),
+            _ => None,
+        }
+    }
+    fn meter_presentation(
+        &self,
+        id: crate::MeterId,
+        normalized: u8,
+    ) -> Option<crate::MeterPresentation> {
+        match self {
+            Self::Icom(r) => r.meter_presentation(id, normalized),
+            Self::Elecraft(r) => r.meter_presentation(id, normalized),
+            _ => None,
         }
     }
     fn supports_repeater_settings(&self) -> bool {
@@ -559,6 +674,7 @@ impl Radio for ConfiguredRadio {
             Self::Yaesu(r) => r.supports_repeater_settings(),
             Self::Kenwood(r) => r.supports_repeater_settings(),
             Self::LegacyYaesu(r) => r.supports_repeater_settings(),
+            Self::Elecraft(r) => r.supports_repeater_settings(),
             _ => false,
         }
     }
@@ -568,6 +684,16 @@ impl Radio for ConfiguredRadio {
             Self::Yaesu(r) => r.supports_memory_channels(),
             Self::Kenwood(r) => r.supports_memory_channels(),
             Self::LegacyYaesu(r) => r.supports_memory_channels(),
+            _ => false,
+        }
+    }
+    fn supports_memory_selection(&self) -> bool {
+        match self {
+            Self::Icom(r) => r.supports_memory_selection(),
+            Self::Yaesu(r) => r.supports_memory_selection(),
+            Self::Kenwood(r) => r.supports_memory_selection(),
+            Self::LegacyYaesu(r) => r.supports_memory_selection(),
+            Self::Elecraft(r) => r.supports_memory_selection(),
             _ => false,
         }
     }
@@ -760,11 +886,17 @@ mod tests {
 
         let yaesu = open_model(GENERIC_YAESU_MODEL, "/dev/null", 38_400, 0xE0).unwrap();
         assert!(yaesu.as_yaesu().is_some());
-        assert!(yaesu.as_yaesu().unwrap().model().is_none());
+        assert_eq!(
+            yaesu.as_yaesu().unwrap().model(),
+            Some(YaesuCatModel::Generic)
+        );
 
         let classic = open_model(GENERIC_YAESU_CLASSIC_MODEL, "/dev/null", 4_800, 0xE0).unwrap();
         assert!(classic.as_legacy_yaesu().is_some());
-        assert!(classic.as_legacy_yaesu().unwrap().model().is_none());
+        assert_eq!(
+            classic.as_legacy_yaesu().unwrap().model(),
+            Some(YaesuLegacyModel::Generic)
+        );
 
         let kenwood = open_model(GENERIC_KENWOOD_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
         assert!(kenwood.as_kenwood().is_some());
@@ -818,6 +950,7 @@ mod tests {
         assert!(icom.supports_meter(crate::MeterId::Voltage));
         assert!(icom.supports_meter(crate::MeterId::Current));
         assert!(!icom.supports_meter(crate::MeterId::Temperature));
+        assert!(!icom.supports_iq_output());
         assert!(icom.event_router().is_some());
 
         let ic9700 = open_model("IC-9700", "/dev/null", 115_200, 0xE0).unwrap();
@@ -852,17 +985,43 @@ mod tests {
         assert!(kenwood.supports_repeater_settings());
         assert!(kenwood.supports_memory_channels());
 
+        let ic7610 = open_model("IC-7610", "/dev/null", 115_200, 0xE0).unwrap();
+        assert!(ic7610.supports_iq_output());
+
+        let elecraft = open_model("K4", "/dev/null", 38_400, 0xE0).unwrap();
+        assert!(elecraft.supports_repeater_settings());
+        assert!(!elecraft.supports_memory_channels());
+        assert!(!elecraft.supports_memory_selection());
+        assert!(elecraft.capabilities().can_raw_protocol);
+        assert!(elecraft
+            .supported_control_values(crate::ControlId::Attenuator)
+            .is_some());
+        assert!(elecraft.meter_metadata(crate::MeterId::Signal).is_some());
+
+        let elecraft_k3 = open_model("K3", "/dev/null", 38_400, 0xE0).unwrap();
+        assert!(elecraft_k3.supports_memory_selection());
+        assert!(!elecraft_k3.supports_memory_channels());
+
         let generic = open_model(GENERIC_KENWOOD_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
         assert!(!generic.supports_control(crate::ControlId::RfPower));
-        assert!(!generic.supports_meter(crate::MeterId::Signal));
+        assert!(generic.supports_meter(crate::MeterId::Signal));
+        assert!(generic.supports_meter(crate::MeterId::Power));
+        assert!(!generic.supports_meter(crate::MeterId::Swr));
+        assert!(!generic.supports_control(crate::ControlId::AfGain));
+        assert!(!generic.supports_repeater_settings());
+        assert!(!generic.supports_memory_channels());
 
         let generic_icom = open_model(GENERIC_ICOM_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
         assert!(!generic_icom.supports_control(crate::ControlId::IpPlus));
         assert!(!generic_icom.supports_meter(crate::MeterId::Swr));
 
         let generic_yaesu = open_model(GENERIC_YAESU_MODEL, "/dev/null", 9_600, 0xE0).unwrap();
+        assert!(!generic_yaesu.supports_control(crate::ControlId::RfPower));
         assert!(!generic_yaesu.supports_control(crate::ControlId::Agc));
         assert!(!generic_yaesu.supports_meter(crate::MeterId::Swr));
+        assert!(generic_yaesu.supports_meter(crate::MeterId::Signal));
+        assert!(!generic_yaesu.supports_repeater_settings());
+        assert!(!generic_yaesu.supports_memory_channels());
 
         let legacy = open_model("FT-857D", "/dev/null", 9_600, 0xE0).unwrap();
         assert!(legacy.supports_control(crate::ControlId::Split));
@@ -871,6 +1030,7 @@ mod tests {
         let generic_legacy =
             open_model(GENERIC_YAESU_CLASSIC_MODEL, "/dev/null", 4_800, 0xE0).unwrap();
         assert!(generic_legacy.supports_control(crate::ControlId::Split));
+        assert!(!generic_legacy.supports_repeater_settings());
     }
     #[test]
     fn decodes_common_ascii_modes() {
@@ -914,6 +1074,7 @@ mod tests {
             open_model("FTDX10", "/dev/null", 38_400, 0xE0).unwrap(),
             open_model("TS-590SG", "/dev/null", 115_200, 0xE0).unwrap(),
             open_model("FT-857D", "/dev/null", 9_600, 0xE0).unwrap(),
+            open_model("K4", "/dev/null", 38_400, 0xE0).unwrap(),
             ConfiguredRadio::Ascii(AsciiCatRadio::new("", 9_600, AsciiCatFlavor::Yaesu)),
             open_dxlab_localhost(),
             open_rigctld("127.0.0.1:4532"),
@@ -935,6 +1096,68 @@ mod tests {
             let _ = radio.as_kenwood();
             let _ = radio.as_rigctld();
             let _ = radio.as_dxlab();
+            let _ = radio.as_elecraft();
+        }
+    }
+
+    #[test]
+    fn configured_radio_dispatches_core_operations_for_each_local_family() {
+        let radios = vec![
+            open_model("IC-7300", "/dev/null", 115_200, 0xE0).unwrap(),
+            open_model("FTDX10", "/dev/null", 38_400, 0xE0).unwrap(),
+            open_model("TS-590SG", "/dev/null", 115_200, 0xE0).unwrap(),
+            open_model("FT-857D", "/dev/null", 9_600, 0xE0).unwrap(),
+            open_model("K4", "/dev/null", 38_400, 0xE0).unwrap(),
+            ConfiguredRadio::Ascii(AsciiCatRadio::new("", 9_600, AsciiCatFlavor::Yaesu)),
+        ];
+        for radio in &radios {
+            let _ = futures::executor::block_on(radio.probe());
+            let _ = futures::executor::block_on(radio.get_frequency_hz());
+            let _ = futures::executor::block_on(radio.set_frequency_hz(14_074_000));
+            let _ = futures::executor::block_on(radio.get_mode());
+            let _ = futures::executor::block_on(radio.set_mode(Mode::Usb));
+            let _ = futures::executor::block_on(radio.set_ptt(false));
+            let _ = futures::executor::block_on(radio.get_ptt());
+            let _ = futures::executor::block_on(radio.get_power());
+            let _ = futures::executor::block_on(radio.set_power(false));
+            let _ = futures::executor::block_on(radio.protocol_write_read(&[]));
+            let _ = futures::executor::block_on(radio.get_control(ControlId::RfPower));
+            let _ = futures::executor::block_on(
+                radio.set_control(ControlId::RfPower, ControlValue::U8(1)),
+            );
+            let _ = futures::executor::block_on(radio.get_meter(MeterId::Signal));
+            let _ = futures::executor::block_on(radio.start_tuner());
+            let _ = futures::executor::block_on(radio.get_tuner_status());
+            let _ = radio.supports_scope();
+            let _ = radio.supports_iq_output();
+            let _ = radio.scope_metadata();
+            let _ = radio.control_max(ControlId::RfPower);
+            let _ = radio.supported_control_values(ControlId::RfPower);
+            let _ = radio.meter_poll_spec(MeterId::Signal);
+            let _ = radio.meter_metadata(MeterId::Signal);
+            let _ = radio.filter_bandwidth_hz(Mode::Usb, 1);
+            let _ = radio.swr_sweep_setup();
+            let _ = radio.meter_presentation(MeterId::Signal, 128);
+            let _ = radio.supports_memory_selection();
+            let _ = futures::executor::block_on(radio.get_repeater_settings());
+            let _ = futures::executor::block_on(
+                radio.set_repeater_settings(RepeaterSettings::default()),
+            );
+            let _ = futures::executor::block_on(radio.get_rit_offset_hz());
+            let _ = futures::executor::block_on(radio.set_rit_offset_hz(0));
+            let _ = futures::executor::block_on(radio.get_xit_offset_hz());
+            let _ = futures::executor::block_on(radio.set_xit_offset_hz(0));
+            let _ = futures::executor::block_on(radio.select_memory_channel(1));
+            let _ = futures::executor::block_on(radio.read_memory_channel(1));
+            let _ = futures::executor::block_on(radio.write_memory_channel(MemoryChannel {
+                channel: 1,
+                name: None,
+                frequency_hz: 14_074_000,
+                transmit_frequency_hz: None,
+                mode: Mode::Usb,
+                repeater: RepeaterSettings::default(),
+            }));
+            let _ = futures::executor::block_on(radio.send_dtmf(DtmfSequence::new("1").unwrap()));
         }
     }
 

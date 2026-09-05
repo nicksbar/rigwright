@@ -208,7 +208,7 @@ impl RadioModelProfile {
                 .unwrap_or(115_200),
             Protocol::YaesuCat => YaesuCatModel::from_model_name(self.model)
                 .map(crate::yaesu::profile::profile_for_model)
-                .and_then(|profile| profile.baud_rates.last().copied())
+                .map(|profile| profile.preferred_baud_rate)
                 .unwrap_or(38_400),
             Protocol::YaesuLegacyCat => YaesuLegacyModel::from_model_name(self.model)
                 .map(crate::yaesu::legacy_profile::profile_for_model)
@@ -375,6 +375,7 @@ impl RadioModelProfile {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IcomCivModel {
+    Generic,
     Ic705,
     Ic718,
     Ic7200,
@@ -389,6 +390,7 @@ pub enum IcomCivModel {
 /// framing and command semantics are handled by `YaesuLegacyCat`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum YaesuCatModel {
+    Generic,
     Ft710,
     Ft991A,
     Ftdx10,
@@ -399,6 +401,7 @@ pub enum YaesuCatModel {
 /// Classic Yaesu radios using fixed five-byte binary CAT commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum YaesuLegacyModel {
+    Generic,
     Ft817Nd,
     Ft818,
     Ft857D,
@@ -408,6 +411,7 @@ pub enum YaesuLegacyModel {
 /// Semicolon-terminated Kenwood PC-control radios.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KenwoodCatModel {
+    Generic,
     Ts590Sg,
     Ts890S,
     Ts2000,
@@ -426,6 +430,7 @@ pub struct IcomScopeGeometry {
 impl IcomCivModel {
     pub fn model_name(self) -> &'static str {
         match self {
+            Self::Generic => GENERIC_ICOM_MODEL,
             Self::Ic705 => "IC-705",
             Self::Ic718 => "IC-718",
             Self::Ic7200 => "IC-7200",
@@ -437,6 +442,7 @@ impl IcomCivModel {
 
     pub fn from_model_name(model: &str) -> Option<Self> {
         match model.to_ascii_uppercase().as_str() {
+            "CI-V (GENERIC)" | "ICOM CI-V" => Some(Self::Generic),
             "IC-705" => Some(Self::Ic705),
             "IC-718" => Some(Self::Ic718),
             "IC-7200" => Some(Self::Ic7200),
@@ -451,6 +457,7 @@ impl IcomCivModel {
 impl YaesuCatModel {
     pub fn model_name(self) -> &'static str {
         match self {
+            Self::Generic => GENERIC_YAESU_MODEL,
             Self::Ft710 => "FT-710",
             Self::Ft991A => "FT-991A",
             Self::Ftdx10 => "FTDX10",
@@ -461,6 +468,7 @@ impl YaesuCatModel {
 
     pub fn from_model_name(model: &str) -> Option<Self> {
         match model.to_ascii_uppercase().as_str() {
+            "CAT (GENERIC)" | "YAESU (GENERIC)" => Some(Self::Generic),
             "FT-710" | "FT710" => Some(Self::Ft710),
             "FT-991A" | "FT991A" => Some(Self::Ft991A),
             "FTDX10" | "FT-DX10" => Some(Self::Ftdx10),
@@ -474,6 +482,7 @@ impl YaesuCatModel {
 impl YaesuLegacyModel {
     pub fn model_name(self) -> &'static str {
         match self {
+            Self::Generic => GENERIC_YAESU_CLASSIC_MODEL,
             Self::Ft817Nd => "FT-817ND",
             Self::Ft818 => "FT-818",
             Self::Ft857D => "FT-857D",
@@ -483,6 +492,7 @@ impl YaesuLegacyModel {
 
     pub fn from_model_name(model: &str) -> Option<Self> {
         match model.to_ascii_uppercase().as_str() {
+            "CLASSIC CAT (GENERIC)" | "YAESU CLASSIC (GENERIC)" => Some(Self::Generic),
             "FT-817ND" | "FT817ND" => Some(Self::Ft817Nd),
             "FT-818" | "FT818" | "FT-818ND" | "FT818ND" => Some(Self::Ft818),
             "FT-857D" | "FT857D" => Some(Self::Ft857D),
@@ -495,6 +505,7 @@ impl YaesuLegacyModel {
 impl KenwoodCatModel {
     pub fn model_name(self) -> &'static str {
         match self {
+            Self::Generic => GENERIC_KENWOOD_MODEL,
             Self::Ts590Sg => "TS-590SG",
             Self::Ts890S => "TS-890S",
             Self::Ts2000 => "TS-2000",
@@ -503,6 +514,7 @@ impl KenwoodCatModel {
 
     pub fn from_model_name(model: &str) -> Option<Self> {
         match model.to_ascii_uppercase().as_str() {
+            "PC CONTROL (GENERIC)" | "KENWOOD (GENERIC)" => Some(Self::Generic),
             "TS-590SG" | "TS590SG" => Some(Self::Ts590Sg),
             "TS-890S" | "TS890S" => Some(Self::Ts890S),
             "TS-2000" | "TS2000" | "TS-2000X" | "TS2000X" | "TS-B2000" | "TSB2000" => {

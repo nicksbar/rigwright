@@ -46,6 +46,22 @@ operating state and remove unnecessary private details before sharing.
 are not yet safe to expose generically because command selectors, payloads,
 units, or model behavior differ.
 
+### Profile completeness standard
+
+Every selectable model profile must declare the same dimensions, including
+explicit unsupported values: documented baud rates and preferred rate;
+frequency ranges and modes; control commands, read/write direction, maxima and
+discrete legal values; meter selectors, raw ranges, widths, polling and
+presentation; and native scope/waterfall metadata when implemented. If a
+manual documents a surface that is not implemented, the profile and its
+documentation must say so and identify any accessory-owned boundary.
+
+Drivers must delegate discovery and validation to these profile facts. Clients
+must use `supports_control_read()`, `supports_control_write()`,
+`supported_control_values()`, `control_max()`, `meter_metadata()`, and
+`meter_poll_spec()` rather than recreating vendor rules. Parser tests are
+software evidence; they do not constitute hardware validation.
+
 ## Issue #20 session execution
 
 | Area | Rigwright status | Client contract |
@@ -75,13 +91,14 @@ integration. No qsonaut-modems or qsonaut-third-party change is required.
 | Radio power read | `get_power` | —; CI-V power is write-only | H/P | — | H/P | Q/pending-state handling |
 | Raw protocol | `protocol_write_read` | H/P | H/P | H/P | H/P | Not a normal UI control |
 | Tuner start/status | `start_tuner`, `get_tuner_status` | H/P/V for profiled Icoms | H/P | H/P | H/P | Q: tuner and SWR sweep workflow |
-| Spectrum waveform | backend-specific scope API | H/P; model geometry differs | — | — | — | Q where native scope is enabled |
-| I/Q stream | model/backend-specific | Shared I/Q sample block decoder only; IC-7610 documents USB I/Q output, but Rigwright does not yet own/open that transport | — | — | — | Not currently consumed |
+| Spectrum waveform | backend-specific scope API | H/P; model geometry differs | — | — | — | — for transceivers; P3/PX3 are separate components |
+| I/Q stream | `supports_iq_output` plus model/backend-specific transport | Shared I/Q sample block decoder; IC-7610 reports documented I/Q capability, but Rigwright does not yet own/open that USB transport | — | — | — | Not currently consumed |
 
 ### Universal HAL caveat
 
 The method names are universal; the hardware support is not. Applications must
-check `Radio::capabilities()`, `supports_control()`, and `supports_meter()` as
+check `Radio::capabilities()`, `supports_control()`, `supports_meter()`, and
+`supports_iq_output()` as
 appropriate. A generic vendor driver deliberately reports no optional typed
 controls or meters until a concrete model profile is selected.
 
@@ -152,7 +169,7 @@ physical hardware.
 | Tuning step / VFO movement | `ControlId::TuningStep`, `move_vfo` | H/P for K4 via `VT$`; K2/K4 current-step `UP`/`DN` and K3-family indexed `UP`/`DN` movement implemented |
 | Internal tuner mode/start | `ControlId::Tuner`, `start_tuner` | H/P for K4 via `AT`/`TU3`; other models remain profile-gated |
 | Repeater shift/offset | `RepeaterSettings` | H/P for K4 via `RP`; tone fields remain unsupported |
-| Memory/channel selection | `select_memory_channel` | H/P for KX2/KX3/K3/K3S via `MC`; full record read/write remains open |
+| Memory/channel selection | `select_memory_channel`, `supports_memory_selection` | H/P for KX2/KX3/K3/K3S via `MC`; generic record read/write remains unsupported and is not advertised by `supports_memory_channels` |
 | Raw protocol | `protocol_write_read` | H/P |
 | TX meters | `MeterId::{Power,Alc,Swr,Compression}` | K4 signal/power queries use documented `SM$`/`PO`; K3/K3S queried `BG` plus `TM0`/`TM1`; K4 ALC/compression/SWR are typed unsolicited `TM` events, not polled `SW` |
 

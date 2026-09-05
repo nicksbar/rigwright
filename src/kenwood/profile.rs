@@ -4,7 +4,7 @@ use anyhow::{bail, Result};
 
 use crate::{
     hal::Mode,
-    hal_types::{ControlId, MeterId},
+    hal_types::{ControlId, MeterId, MeterMetadata, MeterPollSpec, SwrSweepSetup},
     models::KenwoodCatModel,
 };
 
@@ -25,16 +25,50 @@ pub struct KenwoodMeterSpec {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KenwoodMeterSelection {
+    pub command: &'static str,
+    pub parameter_suffix: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KenwoodRitXitLayout {
     IfStatus,
     RfAndFunctionState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KenwoodMemorySurface {
-    None,
-    Ts590,
-    Ts890,
+pub struct KenwoodRepeaterSpec {
+    pub tone_command: &'static str,
+    pub tone_mode_command: &'static str,
+    pub tone_index_max: u8,
+    pub off_value: &'static str,
+    pub encode_value: &'static str,
+    pub encode_decode_value: &'static str,
+}
+
+#[derive(Clone, Copy)]
+pub struct KenwoodMemorySpec {
+    pub channel_max: u16,
+    pub select_vfo: u8,
+    pub select_command: &'static str,
+    pub read_command: &'static str,
+    pub write_command: &'static str,
+    pub read_parameters: fn(u16) -> String,
+    pub decode: fn(&str, &KenwoodCatProfile) -> Result<crate::MemoryChannel>,
+    pub encode: fn(crate::MemoryChannel, &KenwoodCatProfile) -> Result<String>,
+}
+
+impl std::fmt::Debug for KenwoodMemorySpec {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("KenwoodMemorySpec")
+            .field("channel_max", &self.channel_max)
+            .field("select_vfo", &self.select_vfo)
+            .field("select_command", &self.select_command)
+            .field("read_command", &self.read_command)
+            .field("write_command", &self.write_command)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,7 +95,7 @@ pub enum KenwoodSplitCommand {
     Tb,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct KenwoodCatProfile {
     pub model: KenwoodCatModel,
     /// Three-digit payload returned by `ID;`.
@@ -84,16 +118,62 @@ pub struct KenwoodCatProfile {
     /// RM selector returned when the radio is displaying SWR.
     pub swr_rm_selector: char,
     pub controls: &'static [KenwoodControlSpec],
+    pub preamp_values: &'static [u8],
+    /// Minimum legal value for the profiled IF filter control.
+    pub filter_minimum: u8,
     pub extra_meters: &'static [KenwoodMeterSpec],
+    pub supports_signal_meter: bool,
+    pub supports_power_meter: bool,
+    pub supports_swr_meter: bool,
     pub rit_xit_layout: KenwoodRitXitLayout,
-    pub memory_surface: KenwoodMemorySurface,
+    pub memory: Option<KenwoodMemorySpec>,
     pub ai_on_value: &'static str,
     pub sm_payload_len: usize,
     pub sm_value_start: usize,
-    pub swr_meter_requires_selection: bool,
+    pub swr_meter_selection: Option<KenwoodMeterSelection>,
+    pub extra_meter_selection: Option<KenwoodMeterSelection>,
+    pub repeater: Option<KenwoodRepeaterSpec>,
 }
 
 impl KenwoodCatProfile {
+    pub const fn preferred_baud_rate(self) -> u32 {
+        self.baud_rates[self.baud_rates.len() - 1]
+    }
+
+    pub fn supports_control_read(self, id: ControlId) -> bool {
+        self.supports_control(id)
+    }
+
+    pub fn supports_control_write(self, id: ControlId) -> bool {
+        self.supports_control(id)
+    }
+
+    pub fn supported_control_values(self, id: ControlId) -> Option<&'static [u8]> {
+        const BINARY: &[u8] = &[0, 1];
+        const AGC: &[u8] = &[0, 1, 2, 3];
+        if !self.supports_control(id) {
+            return None;
+        }
+        match id {
+            ControlId::Preamp => Some(self.preamp_values),
+            ControlId::NoiseBlanker
+            | ControlId::NoiseReduction
+            | ControlId::Notch
+            | ControlId::Rit
+            | ControlId::Xit => Some(BINARY),
+            ControlId::Agc => Some(AGC),
+            _ => None,
+        }
+    }
+
+    pub fn swr_sweep_setup(self) -> Option<SwrSweepSetup> {
+        self.power_range_watts.map(|(_, maximum)| SwrSweepSetup {
+            carrier_mode: Mode::Rtty,
+            rf_power: crate::normalize_meter_level(maximum.min(30), maximum)
+                .expect("profile power range must be nonzero"),
+        })
+    }
+
     pub fn supports_frequency(self, hz: u64) -> bool {
         self.frequency_ranges
             .iter()
@@ -152,65 +232,100 @@ impl KenwoodCatProfile {
         self.extra_meters.iter().copied().find(|spec| spec.id == id)
     }
 
+    pub fn supports_meter(self, id: MeterId) -> bool {
+        match id {
+            MeterId::Signal => self.supports_signal_meter,
+            MeterId::Power => self.supports_power_meter,
+            MeterId::Swr => self.supports_swr_meter,
+            _ => self.meter(id).is_some(),
+        }
+    }
+
+    pub fn meter_poll_spec(self, id: MeterId) -> Option<MeterPollSpec> {
+        self.supports_meter(id).then_some(MeterPollSpec {
+            meter: id,
+            interval_ms: if matches!(id, MeterId::Signal) {
+                400
+            } else {
+                300
+            },
+            tx_priority: !matches!(id, MeterId::Signal),
+        })
+    }
+
+    pub fn meter_metadata(self, id: MeterId) -> Option<MeterMetadata> {
+        if !self.supports_meter(id) {
+            return None;
+        }
+        let maximum = match id {
+            MeterId::Signal | MeterId::Power => self.meter_max,
+            MeterId::Swr => self.swr_meter_max,
+            _ => self.meter(id)?.maximum,
+        };
+        let raw_width = match id {
+            MeterId::Signal | MeterId::Power => (self.sm_payload_len - self.sm_value_start) as u8,
+            _ => 2,
+        };
+        Some(MeterMetadata {
+            meter: id,
+            raw_min: 0,
+            raw_max: maximum,
+            raw_width,
+        })
+    }
+
     pub fn supports_control(self, id: ControlId) -> bool {
         self.control(id).is_some()
             || (id == ControlId::RfPower && self.power_range_watts.is_some())
             || (id == ControlId::Vfo && self.supports_vfo)
             || (id == ControlId::Split && self.supports_split)
     }
-}
 
-const fn mode(code: char, mode: Mode, preferred: bool) -> KenwoodModeSpec {
-    KenwoodModeSpec {
-        code,
-        mode,
-        preferred,
+    pub fn control_max(self, id: ControlId) -> Option<u8> {
+        self.control(id)
+            .and_then(|spec| spec.max_value)
+            .or_else(|| {
+                (id == ControlId::RfPower && self.power_range_watts.is_some()).then_some(u8::MAX)
+            })
+    }
+
+    pub fn supports_repeater_settings(self) -> bool {
+        self.repeater.is_some()
     }
 }
 
-const STANDARD_MODES: &[KenwoodModeSpec] = &[
-    mode('1', Mode::Lsb, true),
-    mode('2', Mode::Usb, true),
-    // On models without an explicit data flag, generic digital operation uses
-    // USB. Decoding remains USB because the radio cannot report the intent.
-    mode('2', Mode::Data, false),
-    mode('3', Mode::Cw, true),
-    mode('4', Mode::Fm, true),
-    mode('5', Mode::Am, true),
-    mode('6', Mode::Rtty, true),
-    mode('7', Mode::CwReverse, true),
-    mode('9', Mode::RttyReverse, true),
-];
+pub const STANDARD_REPEATER: KenwoodRepeaterSpec = KenwoodRepeaterSpec {
+    tone_command: "CN",
+    tone_mode_command: "CT",
+    tone_index_max: 41,
+    off_value: "0",
+    encode_value: "1",
+    encode_decode_value: "2",
+};
 
-const TS890_MODES: &[KenwoodModeSpec] = &[
-    mode('1', Mode::Lsb, true),
-    mode('2', Mode::Usb, true),
-    mode('3', Mode::Cw, true),
-    mode('4', Mode::Fm, true),
-    mode('5', Mode::Am, true),
-    mode('6', Mode::Rtty, true),
-    mode('7', Mode::CwReverse, true),
-    mode('9', Mode::RttyReverse, true),
-    mode('A', Mode::Data, false), // PSK
-    mode('B', Mode::Data, false), // PSK-R
-    mode('C', Mode::Data, false), // LSB-D
-    mode('D', Mode::Data, true),  // USB-D
-    mode('E', Mode::Data, false), // FM-D
-    mode('F', Mode::Data, false), // AM-D
-];
+pub(crate) fn parse_memory_field<T>(value: &str, label: &str) -> Result<T>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    value
+        .trim()
+        .parse()
+        .map_err(|error| anyhow::anyhow!("invalid {label}: {error}"))
+}
 
-const MODERN_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
-const TS2000_BAUD_RATES: &[u32] = &[4_800, 9_600, 19_200, 38_400, 57_600];
-const HF_RANGE: &[(u64, u64)] = &[(30_000, 60_000_000)];
-const TS2000_RANGES: &[(u64, u64)] = &[
-    (30_000, 60_000_000),
-    (118_000_000, 174_000_000),
-    (220_000_000, 512_000_000),
-    (1_240_000_000, 1_300_000_000),
-];
+pub(crate) fn memory_char(payload: &str, context: &str) -> Result<char> {
+    let mut chars = payload.chars();
+    let value = chars
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("missing {context}"))?;
+    if chars.next().is_some() {
+        bail!("unexpected {context}: {payload}");
+    }
+    Ok(value)
+}
 
-/* model command tables moved to ts590sg.rs, ts890s.rs, and ts2000.rs */
-/*
+/* Legacy model command tables retained in git history; model modules own them now.
 const TS590_CONTROLS: &[KenwoodControlSpec] = &[
     KenwoodControlSpec {
         id: ControlId::AfGain,
@@ -448,97 +563,22 @@ const TS890_METERS: &[KenwoodMeterSpec] = &[
 ];
 const NO_EXTRA_METERS: &[KenwoodMeterSpec] = &[];
 */
-
-pub const TS590SG_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
-    model: KenwoodCatModel::Ts590Sg,
-    id_code: "023",
-    frequency_ranges: HF_RANGE,
-    baud_rates: MODERN_BAUD_RATES,
-    modes: STANDARD_MODES,
-    mode_command: KenwoodModeCommand::Md {
-        supports_data_flag: true,
-    },
-    split_command: KenwoodSplitCommand::ReceiverTransmitterVfo,
-    supports_vfo: true,
-    supports_split: true,
-    supports_if_status: true,
-    power_range_watts: Some((5, 100)),
-    meter_max: 30,
-    swr_meter_max: 30,
-    swr_rm_selector: '1',
-    controls: crate::kenwood::ts590sg::CONTROLS,
-    extra_meters: crate::kenwood::ts590sg::METERS,
-    rit_xit_layout: KenwoodRitXitLayout::IfStatus,
-    memory_surface: KenwoodMemorySurface::Ts590,
-    ai_on_value: "2",
-    sm_payload_len: 5,
-    sm_value_start: 1,
-    swr_meter_requires_selection: false,
-};
-
-pub const TS890S_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
-    model: KenwoodCatModel::Ts890S,
-    id_code: "024",
-    frequency_ranges: HF_RANGE,
-    baud_rates: MODERN_BAUD_RATES,
-    modes: TS890_MODES,
-    mode_command: KenwoodModeCommand::Om,
-    split_command: KenwoodSplitCommand::Tb,
-    supports_vfo: true,
-    supports_split: true,
-    supports_if_status: false,
-    power_range_watts: Some((5, 100)),
-    meter_max: 70,
-    swr_meter_max: 70,
-    swr_rm_selector: '2',
-    controls: crate::kenwood::ts890s::CONTROLS,
-    extra_meters: crate::kenwood::ts890s::METERS,
-    rit_xit_layout: KenwoodRitXitLayout::RfAndFunctionState,
-    memory_surface: KenwoodMemorySurface::Ts890,
-    ai_on_value: "2",
-    sm_payload_len: 4,
-    sm_value_start: 0,
-    swr_meter_requires_selection: true,
-};
-
-pub const TS2000_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
-    model: KenwoodCatModel::Ts2000,
-    id_code: "019",
-    frequency_ranges: TS2000_RANGES,
-    baud_rates: TS2000_BAUD_RATES,
-    modes: STANDARD_MODES,
-    mode_command: KenwoodModeCommand::Md {
-        supports_data_flag: false,
-    },
-    split_command: KenwoodSplitCommand::ReceiverTransmitterVfo,
-    supports_vfo: true,
-    supports_split: true,
-    supports_if_status: true,
-    power_range_watts: Some((5, 100)),
-    meter_max: 30,
-    swr_meter_max: 30,
-    swr_rm_selector: '1',
-    controls: crate::kenwood::ts2000::CONTROLS,
-    extra_meters: &[],
-    rit_xit_layout: KenwoodRitXitLayout::IfStatus,
-    memory_surface: KenwoodMemorySurface::None,
-    ai_on_value: "1",
-    sm_payload_len: 5,
-    sm_value_start: 1,
-    swr_meter_requires_selection: false,
-};
-
 pub fn profile_for_model(model: KenwoodCatModel) -> &'static KenwoodCatProfile {
     match model {
-        KenwoodCatModel::Ts590Sg => &TS590SG_PROFILE,
-        KenwoodCatModel::Ts890S => &TS890S_PROFILE,
-        KenwoodCatModel::Ts2000 => &TS2000_PROFILE,
+        KenwoodCatModel::Generic => &crate::kenwood::generic::CAT_PROFILE,
+        KenwoodCatModel::Ts590Sg => &crate::kenwood::ts590sg::CAT_PROFILE,
+        KenwoodCatModel::Ts890S => &crate::kenwood::ts890s::CAT_PROFILE,
+        KenwoodCatModel::Ts2000 => &crate::kenwood::ts2000::CAT_PROFILE,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kenwood::{
+        ts2000::CAT_PROFILE as TS2000_PROFILE, ts590sg::CAT_PROFILE as TS590SG_PROFILE,
+        ts890s::CAT_PROFILE as TS890S_PROFILE,
+    };
 
     #[test]
     fn identification_and_command_families_are_model_specific() {
@@ -563,6 +603,20 @@ mod tests {
         assert_eq!(TS890S_PROFILE.swr_meter_max, 70);
         assert_eq!(TS2000_PROFILE.swr_meter_max, 30);
         assert_eq!(TS890S_PROFILE.swr_rm_selector, '2');
+        assert_eq!(
+            TS890S_PROFILE
+                .meter_metadata(MeterId::Temperature)
+                .unwrap()
+                .raw_max,
+            70
+        );
+        assert_eq!(
+            TS890S_PROFILE
+                .meter_poll_spec(MeterId::Signal)
+                .unwrap()
+                .interval_ms,
+            400
+        );
     }
 
     #[test]
@@ -622,5 +676,31 @@ mod tests {
         assert!(TS890S_PROFILE.encode_mode(Mode::Data).is_ok());
         assert!(TS590SG_PROFILE.encode_mode(Mode::Wfm).is_err());
         assert!(TS590SG_PROFILE.validate_power(1).is_err());
+    }
+
+    #[test]
+    fn control_direction_values_and_preferred_baud_are_profile_owned() {
+        assert_eq!(TS890S_PROFILE.preferred_baud_rate(), 115_200);
+        assert_eq!(TS2000_PROFILE.preferred_baud_rate(), 57_600);
+        assert_eq!(
+            TS890S_PROFILE.supported_control_values(ControlId::Preamp),
+            Some(&[0, 1, 2][..])
+        );
+        assert!(TS590SG_PROFILE.supports_control_read(ControlId::Filter));
+        assert!(TS590SG_PROFILE.supports_control_write(ControlId::Filter));
+    }
+
+    #[test]
+    fn memory_command_surfaces_are_profile_owned() {
+        let ts590 = TS590SG_PROFILE.memory.unwrap();
+        assert!(format!("{ts590:?}").contains("KenwoodMemorySpec"));
+        assert_eq!(ts590.channel_max, 119);
+        assert_eq!(ts590.select_command, "MC");
+        assert_eq!((ts590.read_parameters)(7), "0007");
+
+        let ts890 = TS890S_PROFILE.memory.unwrap();
+        assert_eq!(ts890.select_command, "MN");
+        assert_eq!((ts890.read_parameters)(7), "007");
+        assert!(TS2000_PROFILE.memory.is_none());
     }
 }
