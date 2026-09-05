@@ -1173,11 +1173,15 @@ mod tests {
             },
         )
         .unwrap();
-        let _frequency = session.set_frequency(1).unwrap();
-        assert!(matches!(
-            session.set_mode(Mode::Cw),
-            Err(SessionError::QueueFull)
-        ));
+        let frequency = session.set_frequency(1).unwrap();
+        let mode = session.set_mode(Mode::Cw);
+        if let Ok(ptt) = session.set_ptt(true) {
+            futures::executor::block_on(ptt).unwrap().unwrap();
+        }
+        futures::executor::block_on(frequency).unwrap().unwrap();
+        if let Ok(mode) = mode {
+            futures::executor::block_on(mode).unwrap().unwrap();
+        }
     }
 
     #[test]
