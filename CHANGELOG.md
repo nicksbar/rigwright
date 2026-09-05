@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.23 — connection baud metadata
+
+### Fixed
+- Expose Icom USB/native connection baud choices to clients. Models such as
+  the IC-7300 now offer 38,400, 57,600, and 115,200 baud without changing the
+  narrower physical REMOTE/CI-V port metadata.
+- Preserve write-only power switching in the model capability metadata so
+  QSONaut can send the documented CI-V power command for Icom radios.
+
 ## 0.1.22 — model-aware startup probing
 
 ### Added

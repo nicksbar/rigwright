@@ -112,7 +112,9 @@ impl RadioModelProfile {
         match self.protocol {
             Protocol::IcomCiV { .. } => IcomCivModel::from_model_name(self.model)
                 .map(crate::icom::profile::profile_for_model)
-                .map(|profile| profile.baud_rates)
+                // The client opens the USB/native connection; its baud menu
+                // can differ from the optional physical CI-V port menu.
+                .map(|profile| profile.usb_baud_rates)
                 .unwrap_or(CIV_BAUD_RATES),
             Protocol::YaesuCat => YaesuCatModel::from_model_name(self.model)
                 .map(crate::yaesu::profile::profile_for_model)
@@ -922,7 +924,23 @@ mod tests {
     }
 
     #[test]
+    fn icom_models_advertise_write_only_power_switching() {
+        for model in [
+            "IC-705", "IC-718", "IC-7200", "IC-7300", "IC-7610", "IC-9700",
+        ] {
+            let profile = find_model(model).expect("Icom catalog profile");
+            let capabilities = profile.driver_capabilities();
+            assert!(!capabilities.can_get_power, "{model} power is write-only");
+            assert!(
+                capabilities.can_set_power,
+                "{model} must support power switching"
+            );
+        }
+    }
+
+    #[test]
     fn catalog_exposes_profile_baud_choices_and_fastest_option() {
+        let ic7300 = *find_model("IC-7300").unwrap();
         let ic7200 = *find_model("IC-7200").unwrap();
         let k3 = *find_model("K3").unwrap();
         let k4 = *find_model("K4").unwrap();
@@ -930,6 +948,11 @@ mod tests {
         assert_eq!(k3.fastest_supported_baud_rate(), Some(38_400));
         assert_eq!(k4.fastest_supported_baud_rate(), Some(115_200));
         assert!(k4.supported_baud_rates().starts_with(&[4_800, 9_600]));
+        assert_eq!(
+            ic7300.supported_baud_rates(),
+            &[4_800, 9_600, 19_200, 38_400, 57_600, 115_200]
+        );
+        assert_eq!(ic7300.fastest_supported_baud_rate(), Some(115_200));
         assert_eq!(
             ic7200.supported_baud_rates(),
             &[300, 1_200, 4_800, 9_600, 19_200]
