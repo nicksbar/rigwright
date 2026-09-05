@@ -939,6 +939,31 @@ mod tests {
     }
 
     #[test]
+    fn catalog_profiles_have_coherent_connection_metadata() {
+        for profile in POPULAR_RADIOS {
+            let baud_rates = profile.supported_baud_rates();
+            assert!(
+                !baud_rates.is_empty(),
+                "{} has no baud choices",
+                profile.model
+            );
+            assert!(
+                baud_rates.contains(&profile.preferred_baud_rate()),
+                "{} preferred baud {} is not advertised in {:?}",
+                profile.model,
+                profile.preferred_baud_rate(),
+                baud_rates
+            );
+            assert_eq!(
+                profile.fastest_supported_baud_rate(),
+                baud_rates.iter().copied().max(),
+                "{} fastest baud must come from its advertised choices",
+                profile.model
+            );
+        }
+    }
+
+    #[test]
     fn catalog_exposes_profile_baud_choices_and_fastest_option() {
         let ic7300 = *find_model("IC-7300").unwrap();
         let ic7200 = *find_model("IC-7200").unwrap();
