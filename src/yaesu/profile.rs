@@ -87,6 +87,10 @@ pub struct YaesuCatProfile {
     /// `033`). The FT-710 has no CAT RTS menu at all (its standard-port RTS
     /// is a PTT source via `RPTT SELECT`), so it leaves this `None`.
     pub cat_rts_menu: Option<&'static str>,
+    /// Whether the model supports the `VS;` query used to select the active
+    /// VFO before frequency and mode reads. The FT-991A rejects this optional
+    /// query, so its driver uses VFO-A (`0`) directly.
+    pub supports_vfo_selector_query: bool,
 }
 
 impl YaesuCatProfile {
@@ -552,6 +556,7 @@ pub const FT710_PROFILE: YaesuCatProfile = YaesuCatProfile {
     // The FT-710 manual documents no CAT RTS menu; RTS on its standard COM
     // port is a PTT source configured by `RPTT SELECT`, not CAT flow control.
     cat_rts_menu: None,
+    supports_vfo_selector_query: true,
 };
 
 pub const FTDX10_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -585,6 +590,7 @@ pub const FTDX10_PROFILE: YaesuCatProfile = YaesuCatProfile {
     noise_blanker_level_max: 10,
     // FTDX10 CAT RTS is menu 03-03-10, read as hierarchical `EX030310;`.
     cat_rts_menu: Some("030310"),
+    supports_vfo_selector_query: true,
 };
 
 pub const FTDX101D_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -618,6 +624,7 @@ pub const FTDX101D_PROFILE: YaesuCatProfile = YaesuCatProfile {
     noise_blanker_level_max: 10,
     // FTDX101D CAT RTS is menu 03-03-13, read as hierarchical `EX030313;`.
     cat_rts_menu: Some("030313"),
+    supports_vfo_selector_query: true,
 };
 
 pub const FTDX101MP_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -651,6 +658,7 @@ pub const FTDX101MP_PROFILE: YaesuCatProfile = YaesuCatProfile {
     noise_blanker_level_max: 10,
     // FTDX101MP CAT RTS is menu 03-03-13, read as hierarchical `EX030313;`.
     cat_rts_menu: Some("030313"),
+    supports_vfo_selector_query: true,
 };
 
 pub const FT991A_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -686,6 +694,9 @@ pub const FT991A_PROFILE: YaesuCatProfile = YaesuCatProfile {
     // FT-991A CAT RTS is the flat menu 033, read as `EX033;` (not the
     // hierarchical selectors used by the FTDX10/FTDX101 family).
     cat_rts_menu: Some("033"),
+    // The FT-991A rejects the optional `VS;` active-VFO query. Its normal
+    // CAT frequency/mode surface is VFO-A, so use selector 0 directly.
+    supports_vfo_selector_query: false,
 };
 
 pub const GENERIC_PROFILE: YaesuCatProfile = YaesuCatProfile {
@@ -718,6 +729,7 @@ pub const GENERIC_PROFILE: YaesuCatProfile = YaesuCatProfile {
     vox_delay_max: 0,
     noise_blanker_level_max: 0,
     cat_rts_menu: None,
+    supports_vfo_selector_query: true,
 };
 
 pub fn profile_for_model(model: YaesuCatModel) -> &'static YaesuCatProfile {

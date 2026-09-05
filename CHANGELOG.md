@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.24 — FT-991A VFO compatibility
+
+### Fixed
+- Avoid the optional `VS;` active-VFO query on the FT-991A, whose CAT
+  firmware rejects that command. Frequency and mode reads and writes now use
+  the documented VFO-A selector directly.
+- Replace FT-991A regression fixtures that incorrectly treated `VS;` as a
+  supported command with tests that prove it is never sent.
+
 ## 0.1.23 — connection baud metadata
 
 ### Added

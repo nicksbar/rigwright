@@ -1362,6 +1362,11 @@ impl Radio for YaesuCatRadio {
 
 impl YaesuCatRadio {
     fn active_vfo_selector(&self) -> Result<u8> {
+        if let Some(profile) = self.profile() {
+            if !profile.supports_vfo_selector_query {
+                return Ok(0);
+            }
+        }
         let response = self.query("VS", None, 1)?;
         let payload = parse_payload(&response, "VS")?;
         let value = payload
@@ -1937,7 +1942,7 @@ mod tests {
             38_400,
             FlowControlTransport {
                 scripted: ScriptedTransport {
-                    input: b"EX0331;VS0;FA014250000;".to_vec(),
+                    input: b"EX0331;FA014250000;".to_vec(),
                     output: Arc::clone(&output),
                 },
                 flow_control: Arc::clone(&flow_control),
@@ -1949,8 +1954,9 @@ mod tests {
             14_250_000
         );
         // The probe issues the model-specific `EX033;`, then enables RTS/CTS
-        // because the radio reports CAT RTS enabled.
-        assert_eq!(&*output.lock().unwrap(), b"EX033;VS;FA;");
+        // because the radio reports CAT RTS enabled. The FT-991A must not
+        // issue the optional `VS;` query, which the radio rejects.
+        assert_eq!(&*output.lock().unwrap(), b"EX033;FA;");
         assert_eq!(&*flow_control.lock().unwrap(), &[true]);
     }
 
@@ -1963,7 +1969,7 @@ mod tests {
             38_400,
             FlowControlTransport {
                 scripted: ScriptedTransport {
-                    input: b"EX0330;VS0;FA014250000;".to_vec(),
+                    input: b"EX0330;FA014250000;".to_vec(),
                     output: Arc::clone(&output),
                 },
                 flow_control: Arc::clone(&flow_control),
@@ -1974,8 +1980,27 @@ mod tests {
             futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
             14_250_000
         );
-        assert_eq!(&*output.lock().unwrap(), b"EX033;VS;FA;");
+        assert_eq!(&*output.lock().unwrap(), b"EX033;FA;");
         assert!(flow_control.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn ft991a_reads_mode_without_querying_rejected_vfo_selector() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ft991A),
+            38_400,
+            ScriptedTransport {
+                input: b"EX0330;MD0C;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_mode()).unwrap(),
+            Mode::Data
+        );
+        assert_eq!(&*output.lock().unwrap(), b"EX033;MD0;");
     }
 
     #[test]
