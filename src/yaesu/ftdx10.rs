@@ -6,12 +6,48 @@
 
 use anyhow::{bail, Result};
 
+use super::profile::{
+    YaesuCatProfile, CLASSIC_BAUD_RATES, COMMON_CONTROLS, COMMON_METERS, CONTROL_MAXES,
+    CONTROL_VALUES, METER_METADATA, METER_POLL_SPECS, METER_SELECTORS, MODERN_HF_MODES,
+};
 use crate::{
-    models::{find_model, RadioModelProfile},
+    models::{find_model, RadioModelProfile, YaesuCatModel},
     protocol::ascii_cat,
 };
 
-pub use super::profile::FTDX10_PROFILE as CAT_PROFILE;
+pub const CAT_PROFILE: YaesuCatProfile = YaesuCatProfile {
+    model: YaesuCatModel::Ftdx10,
+    id_code: Some("0761"),
+    frequency_ranges: super::profile::HF_RANGE,
+    baud_rates: CLASSIC_BAUD_RATES,
+    usb_baud_rates: CLASSIC_BAUD_RATES,
+    supports_auto_baud: false,
+    preferred_baud_rate: 38_400,
+    modes: MODERN_HF_MODES,
+    controls: COMMON_CONTROLS,
+    control_maxes: CONTROL_MAXES,
+    control_values: CONTROL_VALUES,
+    meters: COMMON_METERS,
+    meter_poll_specs: METER_POLL_SPECS,
+    meter_metadata: METER_METADATA,
+    meter_selectors: METER_SELECTORS,
+    power_range_watts: Some((5, 100)),
+    supports_split: true,
+    supports_repeater_settings: true,
+    supports_memory_channels: true,
+    memory_channel_max: 99,
+    memory_frequency_max_hz: 999_999_999,
+    memory_offset_max_hz: 9_990,
+    memory_name_max_len: 12,
+    repeater_tone_index_max: 49,
+    if_shift_max_hz: 1_200,
+    rit_offset_max_hz: 9_999,
+    vox_delay_max: 33,
+    noise_blanker_level_max: 10,
+    cat_rts_menu: Some("030310"),
+    supports_vfo_selector_query: true,
+    uses_if_for_mode_read: false,
+};
 
 pub fn set_vfo_b_frequency(hz: u64) -> Result<Vec<u8>> {
     if !CAT_PROFILE.supports_frequency(hz) {

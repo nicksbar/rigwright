@@ -11,6 +11,7 @@ pub mod ft857d;
 pub mod ft897d;
 pub mod ft991a;
 pub mod ftdx10;
+pub mod ftdx101;
 pub mod ftdx101d;
 pub mod ftdx101mp;
 pub mod legacy_profile;

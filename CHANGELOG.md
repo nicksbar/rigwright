@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.25 — FT-991A IF mode reads
+
+### Fixed
+- Prefer the documented FT-991A `IF;` status response for mode reads, avoiding
+  repeated `MD0;` rejections on CAT links where frequency reads still work.
+- Do not retry `MD0;` when the FT-991A returns no usable `IF;` response;
+  return the read failure instead of recreating the rejection loop.
+- Move modern and legacy model profile constants into their owning radio
+  modules while retaining shared protocol tables in the common profile code.
+
 ## 0.1.24 — FT-991A VFO compatibility
 
 ### Fixed
