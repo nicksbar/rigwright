@@ -307,10 +307,15 @@ impl YaesuCatRadio {
             }
             Ok(None) | Err(_) => {
                 // `IF;` is unavailable or returned an unexpected shape; fall
-                // back to the per-value reads so a partial answer never
-                // leaves the caller with nothing.
+                // back to the per-value reads when the profile permits it so
+                // a partial answer never leaves the caller with nothing.
                 state.frequency_hz = self.frequency_hz_via_fa().ok();
-                state.mode = self.mode_via_md().ok();
+                if !self
+                    .profile()
+                    .is_some_and(|profile| profile.uses_if_for_mode_read)
+                {
+                    state.mode = self.mode_via_md().ok();
+                }
             }
         }
         state.ptt = self.ptt_via_tx().ok();
@@ -912,6 +917,21 @@ impl Radio for YaesuCatRadio {
     }
 
     async fn get_mode(&self) -> Result<Mode> {
+        // The FT-991A documents `IF;` as a combined operating-state read and
+        // some firmware/USB-CAT combinations reject the otherwise documented
+        // `MD0;` query even though frequency reads continue to work. Prefer
+        // the combined status frame for that model. Do not fall back to MD
+        // here: the FT-991A can reject MD0 even while IF remains available,
+        // and retrying MD0 would recreate the failure loop this path avoids.
+        if self
+            .profile()
+            .is_some_and(|profile| profile.uses_if_for_mode_read)
+        {
+            if let Some((_, mode)) = self.read_if_status()? {
+                return Ok(mode);
+            }
+            bail!("profile requires a usable IF status response for mode read")
+        }
         // Modern Yaesu uses the selected VFO selector in MD reads and writes:
         // MD0; / MD1; select the mode for VFO-A / VFO-B respectively.
         self.mode_via_md()
@@ -1642,8 +1662,10 @@ fn decode_common_mode(code: char) -> Result<Mode> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::yaesu::profile::{
-        FT710_PROFILE, FT991A_PROFILE, FTDX101D_PROFILE, FTDX101MP_PROFILE, FTDX10_PROFILE,
+    use crate::yaesu::{
+        ft710::CAT_PROFILE as FT710_PROFILE, ft991a::CAT_PROFILE as FT991A_PROFILE,
+        ftdx10::CAT_PROFILE as FTDX10_PROFILE, ftdx101d::CAT_PROFILE as FTDX101D_PROFILE,
+        ftdx101mp::CAT_PROFILE as FTDX101MP_PROFILE,
     };
     use std::io::{Read, Write};
     use std::sync::{Arc, Mutex};
@@ -1985,13 +2007,29 @@ mod tests {
     }
 
     #[test]
-    fn ft991a_reads_mode_without_querying_rejected_vfo_selector() {
+    fn ft991a_does_not_fall_back_to_md0_when_if_is_unavailable() {
         let output = Arc::new(Mutex::new(Vec::new()));
         let radio = YaesuCatRadio::with_external_transport(
             Some(YaesuCatModel::Ft991A),
             38_400,
             ScriptedTransport {
-                input: b"EX0330;MD0C;".to_vec(),
+                input: b"EX0330;?;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        );
+
+        assert!(futures::executor::block_on(radio.get_mode()).is_err());
+        assert_eq!(&*output.lock().unwrap(), b"EX033;IF;");
+    }
+
+    #[test]
+    fn ft991a_reads_mode_from_if_before_trying_md0() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ft991A),
+            38_400,
+            ScriptedTransport {
+                input: b"EX0330;IF000014250000+000000C00000;".to_vec(),
                 output: Arc::clone(&output),
             },
         );
@@ -2000,7 +2038,7 @@ mod tests {
             futures::executor::block_on(radio.get_mode()).unwrap(),
             Mode::Data
         );
-        assert_eq!(&*output.lock().unwrap(), b"EX033;MD0;");
+        assert_eq!(&*output.lock().unwrap(), b"EX033;IF;");
     }
 
     #[test]

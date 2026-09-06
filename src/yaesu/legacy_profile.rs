@@ -77,8 +77,8 @@ impl YaesuLegacyProfile {
     }
 }
 
-const BAUD_RATES: &[u32] = &[4_800, 9_600, 38_400];
-const BASE_MODES: &[LegacyMode] = &[
+pub(super) const BAUD_RATES: &[u32] = &[4_800, 9_600, 38_400];
+pub(super) const BASE_MODES: &[LegacyMode] = &[
     LegacyMode::Lsb,
     LegacyMode::Usb,
     LegacyMode::Cw,
@@ -88,7 +88,7 @@ const BASE_MODES: &[LegacyMode] = &[
     LegacyMode::Digital,
     LegacyMode::Packet,
 ];
-const MOBILE_MODES: &[LegacyMode] = &[
+pub(super) const MOBILE_MODES: &[LegacyMode] = &[
     LegacyMode::Lsb,
     LegacyMode::Usb,
     LegacyMode::Cw,
@@ -99,11 +99,11 @@ const MOBILE_MODES: &[LegacyMode] = &[
     LegacyMode::Digital,
     LegacyMode::Packet,
 ];
-const CONTROLS: &[ControlId] = &[ControlId::Split, ControlId::Rit];
-const READABLE_CONTROLS: &[ControlId] = &[ControlId::Split];
-const WRITABLE_CONTROLS: &[ControlId] = &[ControlId::Split, ControlId::Rit];
-const METERS: &[MeterId] = &[MeterId::Signal, MeterId::Power];
-const METER_POLL_SPECS: &[MeterPollSpec] = &[
+pub(super) const CONTROLS: &[ControlId] = &[ControlId::Split, ControlId::Rit];
+pub(super) const READABLE_CONTROLS: &[ControlId] = &[ControlId::Split];
+pub(super) const WRITABLE_CONTROLS: &[ControlId] = &[ControlId::Split, ControlId::Rit];
+pub(super) const METERS: &[MeterId] = &[MeterId::Signal, MeterId::Power];
+pub(super) const METER_POLL_SPECS: &[MeterPollSpec] = &[
     MeterPollSpec {
         meter: MeterId::Signal,
         interval_ms: 400,
@@ -115,7 +115,7 @@ const METER_POLL_SPECS: &[MeterPollSpec] = &[
         tx_priority: true,
     },
 ];
-const METER_METADATA: &[MeterMetadata] = &[
+pub(super) const METER_METADATA: &[MeterMetadata] = &[
     MeterMetadata {
         meter: MeterId::Signal,
         raw_min: 0,
@@ -128,24 +128,6 @@ const METER_METADATA: &[MeterMetadata] = &[
         raw_max: 15,
         raw_width: 1,
     },
-];
-
-const FT817_RANGES: &[(u64, u64)] = &[
-    (100_000, 30_000_000),
-    (50_000_000, 54_000_000),
-    (76_000_000, 154_000_000),
-    (420_000_000, 470_000_000),
-];
-const FT818_RANGES: &[(u64, u64)] = &[
-    (100_000, 56_000_000),
-    (76_000_000, 154_000_000),
-    (420_000_000, 470_000_000),
-];
-const MOBILE_RANGES: &[(u64, u64)] = &[
-    (100_000, 56_000_000),
-    (76_000_000, 108_000_000),
-    (118_000_000, 164_000_000),
-    (420_000_000, 470_000_000),
 ];
 
 const GENERIC_RANGES: &[(u64, u64)] = &[(100_000, 470_000_000)];
@@ -165,79 +147,23 @@ pub const GENERIC_PROFILE: YaesuLegacyProfile = YaesuLegacyProfile {
     documents_power_commands: false,
 };
 
-pub const FT817ND_PROFILE: YaesuLegacyProfile = YaesuLegacyProfile {
-    model: YaesuLegacyModel::Ft817Nd,
-    frequency_ranges: FT817_RANGES,
-    baud_rates: BAUD_RATES,
-    writable_modes: BASE_MODES,
-    controls: CONTROLS,
-    readable_controls: READABLE_CONTROLS,
-    writable_controls: WRITABLE_CONTROLS,
-    meters: METERS,
-    meter_poll_specs: METER_POLL_SPECS,
-    meter_metadata: METER_METADATA,
-    supports_repeater_settings: true,
-    documents_power_commands: true,
-};
-
-pub const FT818_PROFILE: YaesuLegacyProfile = YaesuLegacyProfile {
-    model: YaesuLegacyModel::Ft818,
-    frequency_ranges: FT818_RANGES,
-    baud_rates: BAUD_RATES,
-    writable_modes: BASE_MODES,
-    controls: CONTROLS,
-    readable_controls: READABLE_CONTROLS,
-    writable_controls: WRITABLE_CONTROLS,
-    meters: METERS,
-    meter_poll_specs: METER_POLL_SPECS,
-    meter_metadata: METER_METADATA,
-    supports_repeater_settings: true,
-    documents_power_commands: true,
-};
-
-pub const FT857D_PROFILE: YaesuLegacyProfile = YaesuLegacyProfile {
-    model: YaesuLegacyModel::Ft857D,
-    frequency_ranges: MOBILE_RANGES,
-    baud_rates: BAUD_RATES,
-    writable_modes: MOBILE_MODES,
-    controls: CONTROLS,
-    readable_controls: READABLE_CONTROLS,
-    writable_controls: WRITABLE_CONTROLS,
-    meters: METERS,
-    meter_poll_specs: METER_POLL_SPECS,
-    meter_metadata: METER_METADATA,
-    supports_repeater_settings: true,
-    documents_power_commands: false,
-};
-
-pub const FT897D_PROFILE: YaesuLegacyProfile = YaesuLegacyProfile {
-    model: YaesuLegacyModel::Ft897D,
-    frequency_ranges: MOBILE_RANGES,
-    baud_rates: BAUD_RATES,
-    writable_modes: MOBILE_MODES,
-    controls: CONTROLS,
-    readable_controls: READABLE_CONTROLS,
-    writable_controls: WRITABLE_CONTROLS,
-    meters: METERS,
-    meter_poll_specs: METER_POLL_SPECS,
-    meter_metadata: METER_METADATA,
-    supports_repeater_settings: true,
-    documents_power_commands: false,
-};
-
 pub fn profile_for_model(model: YaesuLegacyModel) -> &'static YaesuLegacyProfile {
     match model {
         YaesuLegacyModel::Generic => &GENERIC_PROFILE,
-        YaesuLegacyModel::Ft817Nd => &FT817ND_PROFILE,
-        YaesuLegacyModel::Ft818 => &FT818_PROFILE,
-        YaesuLegacyModel::Ft857D => &FT857D_PROFILE,
-        YaesuLegacyModel::Ft897D => &FT897D_PROFILE,
+        YaesuLegacyModel::Ft817Nd => &super::ft817nd::CAT_PROFILE,
+        YaesuLegacyModel::Ft818 => &super::ft818::CAT_PROFILE,
+        YaesuLegacyModel::Ft857D => &super::ft857d::CAT_PROFILE,
+        YaesuLegacyModel::Ft897D => &super::ft897d::CAT_PROFILE,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::yaesu::{
+        ft817nd::CAT_PROFILE as FT817ND_PROFILE, ft818::CAT_PROFILE as FT818_PROFILE,
+        ft857d::CAT_PROFILE as FT857D_PROFILE, ft897d::CAT_PROFILE as FT897D_PROFILE,
+    };
 
     #[test]
     fn model_ranges_remain_individual() {
