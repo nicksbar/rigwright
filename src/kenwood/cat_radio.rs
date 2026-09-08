@@ -27,7 +27,7 @@ use crate::{
 
 use super::profile::{
     profile_for_model, KenwoodCatProfile, KenwoodMeterSelection, KenwoodModeCommand,
-    KenwoodRitXitLayout, KenwoodSplitCommand,
+    KenwoodProfileIo, KenwoodRitXitLayout, KenwoodSplitCommand,
 };
 
 const RESPONSE_TIMEOUT: Duration = Duration::from_millis(1_200);
@@ -227,7 +227,7 @@ impl KenwoodCatRadio {
     /// Query `ID;` and reject a radio that does not match the selected model.
     pub fn verify_model(&self) -> Result<()> {
         let profile = self.selected_profile()?;
-        let response = self.query("ID", None, Some(3))?;
+        let response = self.query("ID", None, None)?;
         let id = parse_payload(&response, "ID")?;
         if self.model.is_none() || self.model == Some(KenwoodCatModel::Generic) {
             anyhow::ensure!(
@@ -927,6 +927,16 @@ impl KenwoodCatRadio {
     }
 }
 
+impl KenwoodProfileIo for KenwoodCatRadio {
+    fn profile_query(&self, command: &str, parameters: Option<&str>) -> Result<Vec<u8>> {
+        self.query(command, parameters, None)
+    }
+
+    fn profile_send_set(&self, command: &str, parameters: &str) -> Result<()> {
+        self.send_set(command, parameters)
+    }
+}
+
 #[async_trait]
 impl Radio for KenwoodCatRadio {
     fn meter_poll_spec(&self, id: MeterId) -> Option<MeterPollSpec> {
@@ -967,6 +977,10 @@ impl Radio for KenwoodCatRadio {
     }
 
     async fn get_frequency_hz(&self) -> Result<u64> {
+        let profile = self.selected_profile()?;
+        if let Some(ops) = profile.core_ops {
+            return (ops.get_frequency)(self, profile);
+        }
         let command = self.frequency_command()?;
         parse_payload(&self.query(command, None, Some(11))?, command)?
             .parse()
@@ -974,6 +988,10 @@ impl Radio for KenwoodCatRadio {
     }
 
     async fn set_frequency_hz(&self, hz: u64) -> Result<()> {
+        let profile = self.selected_profile()?;
+        if let Some(ops) = profile.core_ops {
+            return (ops.set_frequency)(self, profile, hz);
+        }
         if hz > 99_999_999_999 {
             bail!("frequency {hz} Hz does not fit Kenwood's eleven-digit field");
         }
@@ -991,6 +1009,9 @@ impl Radio for KenwoodCatRadio {
 
     async fn get_mode(&self) -> Result<Mode> {
         let profile = self.selected_profile()?;
+        if let Some(ops) = profile.core_ops {
+            return (ops.get_mode)(self, profile);
+        }
         match profile.mode_command {
             KenwoodModeCommand::Md { supports_data_flag } => {
                 let response = self.query("MD", None, Some(1))?;
@@ -1020,6 +1041,9 @@ impl Radio for KenwoodCatRadio {
 
     async fn set_mode(&self, mode: Mode) -> Result<()> {
         let profile = self.selected_profile()?;
+        if let Some(ops) = profile.core_ops {
+            return (ops.set_mode)(self, profile, mode);
+        }
         match profile.mode_command {
             KenwoodModeCommand::Md { supports_data_flag } => {
                 if mode == Mode::Data && supports_data_flag {
@@ -1042,6 +1066,10 @@ impl Radio for KenwoodCatRadio {
     }
 
     async fn set_ptt(&self, enabled: bool) -> Result<()> {
+        let profile = self.selected_profile()?;
+        if let Some(ops) = profile.core_ops {
+            return (ops.set_ptt)(self, profile, enabled);
+        }
         if enabled {
             self.send_set("TX", "0")?;
         } else {
@@ -1264,6 +1292,9 @@ impl Radio for KenwoodCatRadio {
     }
 
     fn capabilities(&self) -> RadioCapabilities {
+        let power_control = self
+            .profile()
+            .is_some_and(|profile| profile.power_range_watts.is_some());
         RadioCapabilities {
             can_get_frequency: true,
             can_set_frequency: true,
@@ -1273,8 +1304,8 @@ impl Radio for KenwoodCatRadio {
                 .profile()
                 .is_some_and(|profile| profile.supports_if_status),
             can_set_ptt: true,
-            can_get_power: true,
-            can_set_power: true,
+            can_get_power: power_control,
+            can_set_power: power_control,
             can_raw_protocol: true,
         }
     }
@@ -1319,6 +1350,7 @@ fn parse_payload<'a>(frame: &'a [u8], command: &str) -> Result<&'a str> {
     let text = std::str::from_utf8(frame).context("Kenwood CAT response is not ASCII")?;
     text.strip_prefix(command)
         .and_then(|value| value.strip_suffix(';'))
+        .map(str::trim_start)
         .context("unexpected Kenwood CAT response")
 }
 
@@ -1544,6 +1576,35 @@ mod tests {
             transport,
         );
         assert!(ts590.verify_model().is_err());
+    }
+
+    #[test]
+    fn tm_v71_uses_the_reverse_engineered_fo_record_for_core_operations() {
+        let fo = b"FO 0,0145000000,0,0,0,0,0,0,0,00,00,00000000,0";
+        let (transport, writes) = ScriptedTransport::with_reads(vec![
+            ScriptedTransport::response(fo),
+            ScriptedTransport::response(fo),
+            ScriptedTransport::response(fo),
+        ]);
+        let radio = KenwoodCatRadio::with_external_transport(
+            Some(KenwoodCatModel::TmV71A),
+            57_600,
+            transport,
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            145_000_000
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_mode()).unwrap(),
+            Mode::Fm
+        );
+        futures::executor::block_on(radio.set_frequency_hz(146_520_000)).unwrap();
+        assert!(writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.starts_with(b"FO 0,0146520000,")));
     }
 
     #[test]

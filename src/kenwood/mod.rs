@@ -10,6 +10,7 @@ use crate::protocol::ascii_cat;
 pub mod cat_radio;
 pub mod generic;
 pub mod profile;
+pub mod tm_v71a;
 pub mod ts2000;
 pub mod ts590sg;
 pub mod ts890s;

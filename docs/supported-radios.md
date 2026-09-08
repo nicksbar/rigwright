@@ -149,6 +149,8 @@ newer radios.
 | TS-590SG | `B5A-0180-20.pdf`; `ts590_g_pc_command_en_rev3.pdf`, Jan. 2019 | ID `023`; `FA`/`FB` 11-digit frequency; `FR`/`FT`; `MD` plus `DA`; `IF` RX/TX/RIT/XIT fields; `PC` 5-100 W broad range (AM max 25 W); `SM0` 0-30; `RM` SWR/COMP/ALC; `MC`/`MR`/`MW` memory records; 4800-115200 baud |
 | TS-890S | `B5A-4695-00.pdf`; `ts890_pc_command_en_rev1.pdf`, Jan. 2019 | ID `024`; `FA`/`FB`; `OM` with PSK and data variants; direct `TB` split; `PC`; `SM` 0-70; `RM` SWR/ALC/COMP/ID/VD/TEMP; `RF`/`RT`/`XT` RIT/XIT; no pollable PTT query; COM/USB baud differences |
 | TS-2000 | `B62-1221-70.pdf`, PC Control Command Tables | ID `019`; `FA`/`FB`; `FR`/`FT`; `MD`; `IF` RX/TX field; HF/VHF/UHF/1.2 GHz receive segments; 4800 baud requires two stop bits |
+| TM-V71A | `tm-v71a.pdf`; [LA3QMA TM-V71/TM-D710 command reference](https://github.com/LA3QMA/TM-V71_TM-D710-Kenwood) Rev. 11, 2 Apr. 2009 | Main-unit `ID`, `BC`, `FO`, `PC`, `TX`, and `RX` family; PC terminal 9600/19200/38400/57600 baud; `FO` frequency/mode records; reverse-engineered, framework-only pending physical validation |
+| TM-D710 | [LA3QMA TM-V71/TM-D710 command reference](https://github.com/LA3QMA/TM-V71_TM-D710-Kenwood) Rev. 11, 2 Apr. 2009 | Main-unit `ID`, `BC`, `FO`, `PC`, `TX`, and `RX` family; PC terminal 9600/19200/38400/57600 baud; `FO` frequency/mode records; reverse-engineered, framework-only pending physical validation |
 
 The shared driver verifies `ID`, follows the selected receiver VFO for
 frequency reads/writes, exposes exact watts and normalized HAL power, handles
