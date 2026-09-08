@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.27 — TM-V71A and TM-D710 Kenwood profiles
+
+### Added
+- Add the framework-level Kenwood TM-V71A profile and model catalog entry.
+- Add the companion TM-D710 profile using the shared documented main-unit
+  command family.
+- Add the TM-V71A `FO` frequency/mode record handling and `TX`/`RX` control
+  path, with the documented PC-port baud choices.
+- Credit and link the reverse-engineered TM-V71/TM-D710 command reference by
+  LA3QMA and contributors; physical-radio validation remains pending.
+
+### Deliberate limitations
+- RF power, meters, readable PTT, repeater, memory, split, and native scope
+  remain unavailable until their model-specific command semantics are tested.
+
 ## 0.1.26 — coverage and driver validation
 
 ### Release readiness

@@ -193,9 +193,21 @@ impl RadioModelProfile {
             can_set_mode,
             can_get_ptt,
             can_set_ptt,
-            can_get_power: matches!(self.protocol, Protocol::YaesuCat | Protocol::KenwoodCat),
+            can_get_power: matches!(self.protocol, Protocol::YaesuCat)
+                || (matches!(self.protocol, Protocol::KenwoodCat)
+                    && KenwoodCatModel::from_model_name(self.model).is_some_and(|model| {
+                        crate::kenwood::profile::profile_for_model(model)
+                            .power_range_watts
+                            .is_some()
+                    })),
             can_set_power: !matches!(self.protocol, Protocol::YaesuLegacyCat)
-                && !matches!(self.protocol, Protocol::ElecraftCat),
+                && !matches!(self.protocol, Protocol::ElecraftCat)
+                && (!matches!(self.protocol, Protocol::KenwoodCat)
+                    || KenwoodCatModel::from_model_name(self.model).is_some_and(|model| {
+                        crate::kenwood::profile::profile_for_model(model)
+                            .power_range_watts
+                            .is_some()
+                    })),
             can_raw_protocol: true,
         }
     }
@@ -417,6 +429,8 @@ pub enum KenwoodCatModel {
     Ts590Sg,
     Ts890S,
     Ts2000,
+    TmV71A,
+    TmD710,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -511,6 +525,8 @@ impl KenwoodCatModel {
             Self::Ts590Sg => "TS-590SG",
             Self::Ts890S => "TS-890S",
             Self::Ts2000 => "TS-2000",
+            Self::TmV71A => "TM-V71A",
+            Self::TmD710 => "TM-D710",
         }
     }
 
@@ -522,6 +538,8 @@ impl KenwoodCatModel {
             "TS-2000" | "TS2000" | "TS-2000X" | "TS2000X" | "TS-B2000" | "TSB2000" => {
                 Some(Self::Ts2000)
             }
+            "TM-V71A" | "TMV71A" | "TM-V71" | "TMV71" => Some(Self::TmV71A),
+            "TM-D710" | "TMD710" | "TM-D710G" | "TMD710G" => Some(Self::TmD710),
             _ => None,
         }
     }
@@ -724,6 +742,36 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         protocol: Protocol::KenwoodCat,
         support: SupportLevel::Framework,
         capabilities: ALL_MODE_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Kenwood,
+        model: "TM-V71A",
+        protocol: Protocol::KenwoodCat,
+        support: SupportLevel::Framework,
+        capabilities: ModelCapabilities {
+            hf: false,
+            vhf_uhf: true,
+            frequency: true,
+            mode: true,
+            ptt: true,
+            levels: false,
+            spectrum: false,
+        },
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Kenwood,
+        model: "TM-D710",
+        protocol: Protocol::KenwoodCat,
+        support: SupportLevel::Framework,
+        capabilities: ModelCapabilities {
+            hf: false,
+            vhf_uhf: true,
+            frequency: true,
+            mode: true,
+            ptt: true,
+            levels: false,
+            spectrum: false,
+        },
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Elecraft,

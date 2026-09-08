@@ -4,19 +4,19 @@
 [![Release workflow](https://github.com/nicksbar/rigwright/actions/workflows/release.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/nicksbar/rigwright?display_name=tag&sort=semver)](https://github.com/nicksbar/rigwright/releases)
 [![Coverage gate](https://github.com/nicksbar/rigwright/actions/workflows/coverage.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/coverage.yml)
-[![Icom 90.12%](https://img.shields.io/badge/Icom-90.12%25-brightgreen)](docs/radio-capability-matrix.md)
-[![HAL 96.28%](https://img.shields.io/badge/HAL-96.28%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Icom 91.93%](https://img.shields.io/badge/Icom-91.93%25-brightgreen)](docs/radio-capability-matrix.md)
+[![HAL 94.60%](https://img.shields.io/badge/HAL-94.60%25-brightgreen)](docs/radio-capability-matrix.md)
 [![Android 87.71%](https://img.shields.io/badge/Android-87.71%25-brightgreen)](docs/radio-capability-matrix.md)
-[![Transport 92.58%](https://img.shields.io/badge/Transport-92.58%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Transport 91.59%](https://img.shields.io/badge/Transport-91.59%25-brightgreen)](docs/radio-capability-matrix.md)
 [![Drivers 96.45%](https://img.shields.io/badge/Drivers-96.45%25-brightgreen)](docs/radio-capability-matrix.md)
 [![IQ 100%](https://img.shields.io/badge/IQ-100%25-brightgreen)](docs/radio-capability-matrix.md)
 [![rigctld 94.76%](https://img.shields.io/badge/rigctld-94.76%25-brightgreen)](docs/radio-capability-matrix.md)
-[![DX Lab 95.28%](https://img.shields.io/badge/DX%20Lab-95.28%25-brightgreen)](docs/radio-capability-matrix.md)
-[![Kenwood CAT 90.50%](https://img.shields.io/badge/Kenwood%20CAT-90.50%25-brightgreen)](docs/radio-capability-matrix.md)
-[![Kenwood profile 96.33%](https://img.shields.io/badge/Kenwood%20profile-96.33%25-brightgreen)](docs/radio-capability-matrix.md)
+[![DX Lab 95.27%](https://img.shields.io/badge/DX%20Lab-95.27%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Kenwood CAT 93.44%](https://img.shields.io/badge/Kenwood%20CAT-93.44%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Kenwood profile 96.18%](https://img.shields.io/badge/Kenwood%20profile-96.18%25-brightgreen)](docs/radio-capability-matrix.md)
 [![Yaesu profile 92.13%](https://img.shields.io/badge/Yaesu%20profile-92.13%25-brightgreen)](docs/radio-capability-matrix.md)
 [![Classic Yaesu profile 100%](https://img.shields.io/badge/Classic%20Yaesu%20profile-100%25-brightgreen)](docs/radio-capability-matrix.md)
-[![Elecraft 88.38%](https://img.shields.io/badge/Elecraft-88.38%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Elecraft 94.17%](https://img.shields.io/badge/Elecraft-94.17%25-brightgreen)](docs/radio-capability-matrix.md)
 [![CodeQL](https://github.com/nicksbar/rigwright/actions/workflows/codeql.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/codeql.yml)
 
 Rigwright is a reusable Rust radio-control HAL with native radio drivers. It was
@@ -257,15 +257,15 @@ workflow; it prints the test and coverage summary in the pull request's check
 details and uploads the complete HTML report as a workflow artifact.
 
 The README coverage labels are the latest measured line-coverage snapshot from
-355 tests. The workflow badge is the authoritative pass/fail result. CI
+357 tests. The workflow badge is the authoritative pass/fail result. CI
 enforces a 90% aggregate executable-line coverage floor. Icom CI-V, Kenwood
 CAT, and the covered profile areas also have 90% gates; the remaining
 sub-90% production modules are tracked by the coverage report and remain the
 next test targets.
 The aggregate gate is implemented by `scripts/check-total-coverage.sh` and the
 area gates by `scripts/check-icom-coverage.sh` and
-scripts/check-elecraft-coverage.sh. The latest local run reached 91.54%
-overall executable-line coverage (26,838 total lines, 2,271 missed), including
+scripts/check-elecraft-coverage.sh. The latest local run reached 92.25%
+overall executable-line coverage (16,902 executable lines, 1,310 missed), including
 97.19% Elecraft profile, 97.84% TS-590SG, 97.53% TS-890S, 89.60% Elecraft
 transport, 93.63% generic transport, and 96.67% HAL coverage. The remaining
 sub-90% modules are tracked by the coverage report and are the next test

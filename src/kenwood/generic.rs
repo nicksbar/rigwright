@@ -94,4 +94,5 @@ pub const CAT_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     swr_meter_selection: None,
     extra_meter_selection: None,
     repeater: None,
+    core_ops: None,
 };

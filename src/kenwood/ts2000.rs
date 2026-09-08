@@ -152,6 +152,7 @@ pub const CAT_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
     swr_meter_selection: None,
     extra_meter_selection: None,
     repeater: Some(super::profile::STANDARD_REPEATER),
+    core_ops: None,
 };
 
 pub use CAT_PROFILE as TS2000_PROFILE;

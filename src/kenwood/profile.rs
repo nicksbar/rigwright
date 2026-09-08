@@ -87,6 +87,23 @@ pub enum KenwoodModeCommand {
     Om,
 }
 
+/// Shared transport access exposed to profile-owned command implementations.
+/// Profiles can therefore own model-specific command layouts without making
+/// the persistent CAT transport aware of model names.
+pub(crate) trait KenwoodProfileIo {
+    fn profile_query(&self, command: &str, parameters: Option<&str>) -> Result<Vec<u8>>;
+    fn profile_send_set(&self, command: &str, parameters: &str) -> Result<()>;
+}
+
+#[derive(Debug)]
+pub(crate) struct KenwoodCoreOps {
+    pub get_frequency: fn(&dyn KenwoodProfileIo, &KenwoodCatProfile) -> Result<u64>,
+    pub set_frequency: fn(&dyn KenwoodProfileIo, &KenwoodCatProfile, u64) -> Result<()>,
+    pub get_mode: fn(&dyn KenwoodProfileIo, &KenwoodCatProfile) -> Result<Mode>,
+    pub set_mode: fn(&dyn KenwoodProfileIo, &KenwoodCatProfile, Mode) -> Result<()>,
+    pub set_ptt: fn(&dyn KenwoodProfileIo, &KenwoodCatProfile, bool) -> Result<()>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KenwoodSplitCommand {
     /// Split is represented by different `FR` and `FT` VFO selections.
@@ -133,6 +150,7 @@ pub struct KenwoodCatProfile {
     pub swr_meter_selection: Option<KenwoodMeterSelection>,
     pub extra_meter_selection: Option<KenwoodMeterSelection>,
     pub repeater: Option<KenwoodRepeaterSpec>,
+    pub(crate) core_ops: Option<&'static KenwoodCoreOps>,
 }
 
 impl KenwoodCatProfile {
@@ -569,6 +587,8 @@ pub fn profile_for_model(model: KenwoodCatModel) -> &'static KenwoodCatProfile {
         KenwoodCatModel::Ts590Sg => &crate::kenwood::ts590sg::CAT_PROFILE,
         KenwoodCatModel::Ts890S => &crate::kenwood::ts890s::CAT_PROFILE,
         KenwoodCatModel::Ts2000 => &crate::kenwood::ts2000::CAT_PROFILE,
+        KenwoodCatModel::TmV71A => &crate::kenwood::tm_v71a::CAT_PROFILE,
+        KenwoodCatModel::TmD710 => &crate::kenwood::tm_v71a::TM_D710_PROFILE,
     }
 }
 
@@ -576,7 +596,9 @@ pub fn profile_for_model(model: KenwoodCatModel) -> &'static KenwoodCatProfile {
 mod tests {
     use super::*;
     use crate::kenwood::{
-        ts2000::CAT_PROFILE as TS2000_PROFILE, ts590sg::CAT_PROFILE as TS590SG_PROFILE,
+        tm_v71a::{CAT_PROFILE as TM_V71A_PROFILE, TM_D710_PROFILE},
+        ts2000::CAT_PROFILE as TS2000_PROFILE,
+        ts590sg::CAT_PROFILE as TS590SG_PROFILE,
         ts890s::CAT_PROFILE as TS890S_PROFILE,
     };
 
@@ -585,6 +607,8 @@ mod tests {
         assert_eq!(TS590SG_PROFILE.id_code, "023");
         assert_eq!(TS890S_PROFILE.id_code, "024");
         assert_eq!(TS2000_PROFILE.id_code, "019");
+        assert_eq!(TM_V71A_PROFILE.id_code, "TM-V71");
+        assert_eq!(TM_D710_PROFILE.id_code, "TM-D710");
         assert_eq!(TS890S_PROFILE.mode_command, KenwoodModeCommand::Om);
         assert_eq!(
             TS590SG_PROFILE.mode_command,
@@ -592,6 +616,7 @@ mod tests {
                 supports_data_flag: true
             }
         );
+        assert!(TM_V71A_PROFILE.core_ops.is_some());
     }
 
     #[test]

@@ -308,6 +308,7 @@ pub const CAT_PROFILE: KenwoodCatProfile = KenwoodCatProfile {
         parameter_suffix: "1",
     }),
     repeater: Some(super::profile::STANDARD_REPEATER),
+    core_ops: None,
 };
 
 pub use CAT_PROFILE as TS890S_PROFILE;
