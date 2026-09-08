@@ -537,6 +537,59 @@ fn legacy_to_hal_mode(mode: LegacyMode) -> Mode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{RepeaterShift, ToneSettings};
+    use std::collections::VecDeque;
+    use std::io::{Read, Write};
+
+    struct ScriptedTransport {
+        input: VecDeque<u8>,
+    }
+
+    impl ScriptedTransport {
+        fn new() -> Self {
+            Self {
+                input: VecDeque::new(),
+            }
+        }
+    }
+
+    impl Read for ScriptedTransport {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.input.is_empty() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "scripted legacy transport has no response",
+                ));
+            }
+            let count = buffer.len().min(self.input.len());
+            for slot in &mut buffer[..count] {
+                *slot = self.input.pop_front().expect("response byte");
+            }
+            Ok(count)
+        }
+    }
+
+    impl Write for ScriptedTransport {
+        fn write(&mut self, frame: &[u8]) -> std::io::Result<usize> {
+            match frame.last().copied() {
+                Some(0x03) => self.input.extend([0x01, 0x40, 0x74, 0x00, 0x01]),
+                Some(0xE7) => self.input.push_back(0x8F),
+                Some(0xF7) => self.input.push_back(0xA0),
+                _ => {}
+            }
+            Ok(frame.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl crate::transport::RadioTransport for ScriptedTransport {
+        fn set_timeout(&mut self, _timeout: Duration) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn constructors_validate_model_baud_rates() {
@@ -559,5 +612,139 @@ mod tests {
         assert_eq!(legacy_to_hal_mode(LegacyMode::Wfm), Mode::Wfm);
         assert_eq!(legacy_to_hal_mode(LegacyMode::FmNarrow), Mode::Fm);
         assert!(hal_to_legacy_mode(Mode::Wfm).is_err());
+    }
+
+    #[test]
+    fn scripted_transport_covers_classic_radio_operation_surface() {
+        let radio = LegacyYaesuRadio::with_transport(
+            Some(YaesuLegacyModel::Ft857D),
+            9_600,
+            ScriptedTransport::new(),
+        );
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            14_074_000
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_mode()).unwrap(),
+            Mode::Usb
+        );
+        futures::executor::block_on(radio.set_frequency_hz(14_074_000)).unwrap();
+        futures::executor::block_on(radio.set_mode(Mode::CwReverse)).unwrap();
+        assert!(!futures::executor::block_on(radio.get_ptt()).unwrap());
+        futures::executor::block_on(radio.set_ptt(false)).unwrap();
+        assert!(!radio.get_split().unwrap());
+        radio.set_split(false).unwrap();
+        radio.toggle_vfo().unwrap();
+        radio.set_cat_lock(true).unwrap();
+        futures::executor::block_on(radio.set_rit_offset_hz(-120)).unwrap();
+
+        assert_eq!(
+            futures::executor::block_on(radio.get_meter(MeterId::Signal)).unwrap(),
+            Some(255)
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_meter(MeterId::Power)).unwrap(),
+            Some(0)
+        );
+        assert!(radio.supports_control(ControlId::Split));
+        assert!(radio.supports_control_write(ControlId::Rit));
+        assert!(radio.meter_poll_spec(MeterId::Signal).is_some());
+        assert!(radio.meter_metadata(MeterId::Power).is_some());
+        assert!(radio.capabilities().can_raw_protocol);
+
+        futures::executor::block_on(radio.set_repeater_settings(RepeaterSettings {
+            shift: crate::RepeaterShift::Plus,
+            offset_hz: Some(600_000),
+            tone: crate::ToneSettings {
+                mode: ToneMode::Encode,
+                frequency_tenths_hz: Some(885),
+                ..crate::ToneSettings::default()
+            },
+        }))
+        .unwrap();
+        let raw =
+            futures::executor::block_on(radio.protocol_write_read(&[0x01, 0x40, 0x74, 0x00, 0x03]))
+                .unwrap();
+        assert_eq!(raw.len(), 5);
+        radio.close();
+    }
+
+    #[test]
+    fn rejects_unsupported_legacy_requests_before_transport() {
+        let radio = LegacyYaesuRadio::with_transport(
+            Some(YaesuLegacyModel::Ft817Nd),
+            4_800,
+            ScriptedTransport::new(),
+        );
+        assert!(futures::executor::block_on(radio.set_frequency_hz(40_000_000)).is_err());
+        assert!(radio.set_legacy_mode(LegacyMode::FmNarrow).is_err());
+        assert!(futures::executor::block_on(radio.set_mode(Mode::Wfm)).is_err());
+        assert!(futures::executor::block_on(radio.protocol_write_read(&[0x01, 0x02])).is_err());
+        assert!(radio.transact_raw([0; 5], 257).is_err());
+        assert!(futures::executor::block_on(
+            radio.set_control(ControlId::Split, ControlValue::U8(1),)
+        )
+        .is_err());
+        assert!(
+            futures::executor::block_on(radio.get_control(ControlId::Rit))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn repeater_tone_modes_cover_optional_and_invalid_parameters() {
+        let radio = LegacyYaesuRadio::with_transport(
+            Some(YaesuLegacyModel::Ft857D),
+            9_600,
+            ScriptedTransport::new(),
+        );
+        futures::executor::block_on(radio.set_repeater_settings(RepeaterSettings {
+            shift: RepeaterShift::Minus,
+            offset_hz: None,
+            tone: ToneSettings {
+                mode: ToneMode::Off,
+                ..ToneSettings::default()
+            },
+        }))
+        .unwrap();
+        futures::executor::block_on(radio.set_repeater_settings(RepeaterSettings {
+            shift: RepeaterShift::Simplex,
+            offset_hz: Some(600_000),
+            tone: ToneSettings {
+                mode: ToneMode::EncodeDecode,
+                frequency_tenths_hz: Some(1000),
+                ..ToneSettings::default()
+            },
+        }))
+        .unwrap();
+        assert!(
+            futures::executor::block_on(radio.set_repeater_settings(RepeaterSettings {
+                tone: ToneSettings {
+                    mode: ToneMode::Dtcs,
+                    ..ToneSettings::default()
+                },
+                ..RepeaterSettings::default()
+            }))
+            .is_err()
+        );
+        futures::executor::block_on(radio.set_repeater_settings(RepeaterSettings {
+            tone: ToneSettings {
+                mode: ToneMode::Dtcs,
+                dtcs_code: Some(23),
+                ..ToneSettings::default()
+            },
+            ..RepeaterSettings::default()
+        }))
+        .unwrap();
+        futures::executor::block_on(radio.set_control(ControlId::Rit, ControlValue::Bool(true)))
+            .unwrap();
+        assert!(
+            futures::executor::block_on(radio.get_meter(MeterId::Voltage))
+                .unwrap()
+                .is_none()
+        );
     }
 }

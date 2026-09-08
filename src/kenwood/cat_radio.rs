@@ -1506,6 +1506,131 @@ mod tests {
     }
 
     #[test]
+    fn kenwood_parsers_reject_invalid_payloads_and_flags() {
+        assert!(parse_bool_payload(b"PS2;", "PS").is_err());
+        assert!(parse_payload(b"\xFF;", "PS").is_err());
+        assert!(parse_payload(b"PS1", "PS").is_err());
+        assert!(one_char("", "mode").is_err());
+        assert!(one_char("12", "mode").is_err());
+        assert!(decode_if_status(b"IF00000000000000000000000000X;").is_err());
+        assert!(take_complete_frames(&mut vec![b'A'; MAX_FRAME_LEN + 1]).is_empty());
+    }
+
+    #[test]
+    fn kenwood_model_verification_accepts_generic_numeric_ids_and_rejects_mismatches() {
+        let (transport, _) =
+            ScriptedTransport::with_reads(vec![ScriptedTransport::response(b"ID123")]);
+        let generic = KenwoodCatRadio::with_external_transport(
+            Some(KenwoodCatModel::Generic),
+            9_600,
+            transport,
+        );
+        generic.verify_model().unwrap();
+
+        let (transport, _) =
+            ScriptedTransport::with_reads(vec![ScriptedTransport::response(b"IDABC")]);
+        let generic = KenwoodCatRadio::with_external_transport(
+            Some(KenwoodCatModel::Generic),
+            9_600,
+            transport,
+        );
+        assert!(generic.verify_model().is_err());
+
+        let (transport, _) =
+            ScriptedTransport::with_reads(vec![ScriptedTransport::response(b"ID599")]);
+        let ts590 = KenwoodCatRadio::with_external_transport(
+            Some(KenwoodCatModel::Ts590Sg),
+            9_600,
+            transport,
+        );
+        assert!(ts590.verify_model().is_err());
+    }
+
+    #[test]
+    fn kenwood_raw_api_and_error_paths_cover_meter_power_filter_and_vfo_validation() {
+        let (transport, writes) = ScriptedTransport::with_reads(vec![]);
+        let radio = KenwoodCatRadio::with_external_transport(
+            Some(KenwoodCatModel::Ts590Sg),
+            115_200,
+            transport,
+        );
+        radio.send_raw(b"ID;").unwrap();
+        radio.send_set("FA", "14074000").unwrap();
+        assert_eq!(radio.baud_rate(), 115_200);
+        radio.close();
+        assert_eq!(writes.lock().unwrap().len(), 2);
+
+        let (radio, _) = test_radio(
+            KenwoodCatModel::Ts590Sg,
+            vec![ScriptedTransport::response(b"PS2")],
+        );
+        assert!(radio.get_power_state().is_err());
+
+        let (radio, _) = test_radio(
+            KenwoodCatModel::Ts590Sg,
+            vec![ScriptedTransport::response(b"SM99999")],
+        );
+        assert!(radio.get_meter().is_err());
+
+        let (radio, _) = test_radio(
+            KenwoodCatModel::Ts590Sg,
+            vec![ScriptedTransport::response(b"RM99999")],
+        );
+        assert!(radio.get_rm_meter('1', 30).is_err());
+
+        let (radio, _) = test_radio(KenwoodCatModel::Ts590Sg, vec![]);
+        assert!(radio.set_filter(99).is_err());
+        assert!(
+            futures::executor::block_on(radio.get_control(ControlId::Agc))
+                .unwrap()
+                .is_none()
+        );
+        assert!(radio.read_vfo("FR").is_err());
+    }
+
+    #[test]
+    fn kenwood_ts890_and_repeater_error_paths_reject_invalid_direction_mode_and_vfo() {
+        let (radio, _) = test_radio(KenwoodCatModel::Ts890S, vec![]);
+        assert!(radio.get_agc().is_err());
+
+        let (radio, _) = test_radio(
+            KenwoodCatModel::Ts890S,
+            vec![ScriptedTransport::response(b"RF21250")],
+        );
+        assert!(radio.get_rit_offset_hz().is_err());
+
+        let (radio, _) = test_radio(
+            KenwoodCatModel::Ts590Sg,
+            vec![
+                ScriptedTransport::response(b"CN08"),
+                ScriptedTransport::response(b"CT9"),
+            ],
+        );
+        assert!(radio.get_repeater_settings().is_err());
+        assert!(radio
+            .set_repeater_settings(RepeaterSettings {
+                tone: ToneSettings {
+                    mode: ToneMode::Dtcs,
+                    ..ToneSettings::default()
+                },
+                ..RepeaterSettings::default()
+            })
+            .is_err());
+
+        let (radio, _) = test_radio(
+            KenwoodCatModel::Ts590Sg,
+            vec![ScriptedTransport::response(b"FR2")],
+        );
+        assert!(radio.get_split().is_err());
+
+        let (radio, _) = test_radio(
+            KenwoodCatModel::Ts590Sg,
+            vec![ScriptedTransport::response(b"FA00014074000")],
+        );
+        assert_eq!(radio.query_raw("FA", None).unwrap(), b"FA00014074000;");
+    }
+
+    #[test]
     fn model_specific_ai_values_are_emitted_without_waiting_for_an_ack() {
         let (transport, writes) = ScriptedTransport::with_reads(Vec::new());
         let ts590 = KenwoodCatRadio::with_external_transport(
@@ -1796,6 +1921,56 @@ mod tests {
         futures::executor::block_on(radio.set_frequency_hz(14_074_000)).unwrap();
         assert!(writes.lock().unwrap().iter().any(|frame| frame == b"OM02;"));
         assert!(writes.lock().unwrap().iter().any(|frame| frame == b"TB0;"));
+    }
+
+    #[test]
+    fn ts890_rit_xit_and_repeater_operations_cover_profiled_edges() {
+        let response = |payload: &[u8]| ScriptedTransport::response(payload);
+        let (radio, writes) = test_radio(
+            KenwoodCatModel::Ts890S,
+            vec![
+                response(b"RF01250"),
+                response(b"RT1"),
+                response(b"XT0"),
+                response(b"RF01250"),
+                response(b"RT1"),
+                response(b"XT0"),
+                response(b"CN08"),
+                response(b"CT0"),
+            ],
+        );
+        assert_eq!(radio.get_rit_offset_hz().unwrap(), 1250);
+        assert_eq!(radio.get_xit_offset_hz().unwrap(), 1250);
+        let repeater = radio.get_repeater_settings().unwrap();
+        assert_eq!(repeater.tone.index, 8);
+        assert_eq!(repeater.tone.mode, ToneMode::Off);
+
+        radio.set_rit_offset_hz(1250).unwrap();
+        radio.set_xit_offset_hz(-34).unwrap();
+        radio
+            .set_repeater_settings(RepeaterSettings {
+                tone: ToneSettings {
+                    mode: ToneMode::EncodeDecode,
+                    index: 8,
+                    ..ToneSettings::default()
+                },
+                ..RepeaterSettings::default()
+            })
+            .unwrap();
+        assert!(radio.set_rit_offset_hz(10_000).is_err());
+        assert!(radio
+            .set_repeater_settings(RepeaterSettings {
+                shift: RepeaterShift::Plus,
+                ..RepeaterSettings::default()
+            })
+            .is_err());
+        let writes = writes.lock().unwrap();
+        assert!(writes.iter().any(|frame| frame == b"RT1;"));
+        assert!(writes.iter().any(|frame| frame == b"RU01250;"));
+        assert!(writes.iter().any(|frame| frame == b"XT1;"));
+        assert!(writes.iter().any(|frame| frame == b"RD00034;"));
+        assert!(writes.iter().any(|frame| frame == b"CN08;"));
+        assert!(writes.iter().any(|frame| frame == b"CT2;"));
     }
 
     #[test]

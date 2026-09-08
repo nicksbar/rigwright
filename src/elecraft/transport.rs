@@ -279,3 +279,177 @@ impl ElecraftTransport {
         self.transact(&frame, None).map(|_| ())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+
+    struct MemoryTransport {
+        input: Vec<u8>,
+        output: Vec<u8>,
+    }
+
+    impl Read for MemoryTransport {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let count = buffer.len().min(self.input.len());
+            buffer[..count].copy_from_slice(&self.input[..count]);
+            self.input.drain(..count);
+            Ok(count)
+        }
+    }
+
+    impl Write for MemoryTransport {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.output.extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl RadioTransport for MemoryTransport {
+        fn set_timeout(&mut self, _timeout: Duration) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct FailingReadTransport;
+
+    impl Read for FailingReadTransport {
+        fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "radio stream disconnected",
+            ))
+        }
+    }
+
+    impl Write for FailingReadTransport {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl RadioTransport for FailingReadTransport {
+        fn set_timeout(&mut self, _timeout: Duration) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn retains_unmatched_frames_and_reuses_them_for_later_queries() {
+        let transport = ElecraftTransport::external(MemoryTransport {
+            input: b"MD2;FA00014060000;".to_vec(),
+            output: Vec::new(),
+        });
+        let mut unmatched = Vec::new();
+        assert_eq!(
+            transport
+                .query_with_handler("FA", |frame| unmatched.push(frame.to_vec()))
+                .unwrap(),
+            b"FA00014060000;"
+        );
+        assert_eq!(unmatched, vec![b"MD2;".to_vec()]);
+        assert_eq!(
+            transport.query_with_response_prefix("MD", "MD").unwrap(),
+            b"MD2;"
+        );
+        let metrics = transport.metrics();
+        assert_eq!(metrics.commands_started, 2);
+        assert_eq!(metrics.responses_matched, 2);
+        assert_eq!(metrics.frames_received, 2);
+        assert_eq!(metrics.frames_retained, 1);
+        assert!(metrics.bytes_read > 0);
+    }
+
+    #[test]
+    fn write_only_commands_and_missing_external_ports_are_reported() {
+        let transport = ElecraftTransport::external(MemoryTransport {
+            input: Vec::new(),
+            output: Vec::new(),
+        });
+        transport.set("PC", "050").unwrap();
+        let serial = ElecraftTransport::serial("", 9_600);
+        assert!(serial.set("PC", "050").is_err());
+        assert_eq!(
+            transport
+                .with_serial_policy(ElecraftSerialPolicy::default())
+                .metrics()
+                .commands_started,
+            1
+        );
+    }
+
+    #[test]
+    fn drops_oldest_retained_frames_at_the_capacity_limit() {
+        let mut input = Vec::new();
+        for index in 0..=MAX_RETAINED_FRAMES {
+            input.extend_from_slice(format!("ZZ{index:03};").as_bytes());
+        }
+        input.extend_from_slice(b"FA00014060000;");
+        let transport = ElecraftTransport::external(MemoryTransport {
+            input,
+            output: Vec::new(),
+        });
+        assert_eq!(
+            transport.query_with_response_prefix("FA", "FA").unwrap(),
+            b"FA00014060000;"
+        );
+        let metrics = transport.metrics();
+        assert_eq!(metrics.frames_retained, MAX_RETAINED_FRAMES as u64 + 1);
+        assert_eq!(metrics.frames_dropped, 1);
+    }
+
+    #[test]
+    fn reports_read_failures_and_safety_limit_violations() {
+        let failing = ElecraftTransport::external(FailingReadTransport);
+        let error = failing.query_with_response_prefix("FA", "FA").unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("failed to read Elecraft response"));
+
+        let mut state = State {
+            port: Some(Box::new(MemoryTransport {
+                input: Vec::new(),
+                output: Vec::new(),
+            })),
+            pending: vec![b'X'; MAX_FRAME_LEN + 1],
+            ..State::default()
+        };
+        let safety_error = ElecraftTransport::transact_locked(
+            &mut state,
+            b"FA;",
+            Some(b"FA"),
+            Duration::from_secs(1),
+            &mut |_| {},
+        )
+        .unwrap_err();
+        assert!(safety_error
+            .to_string()
+            .contains("receive frame exceeded safety limit"));
+
+        let mut timeout_state = State {
+            port: Some(Box::new(MemoryTransport {
+                input: Vec::new(),
+                output: Vec::new(),
+            })),
+            ..State::default()
+        };
+        let timeout_error = ElecraftTransport::transact_locked(
+            &mut timeout_state,
+            b"FA;",
+            Some(b"FA"),
+            Duration::ZERO,
+            &mut |_| {},
+        )
+        .unwrap_err();
+        assert!(timeout_error.to_string().contains("timed out waiting"));
+    }
+}

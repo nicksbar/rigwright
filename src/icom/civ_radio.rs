@@ -2825,7 +2825,7 @@ fn encode_repeater_shift(shift: RepeaterShift) -> u8 {
 fn encode_memory_channel(channel: u16) -> [u8; 2] {
     [
         ((channel % 100 / 10) as u8) << 4 | (channel % 10) as u8,
-        ((channel / 100) as u8) << 4,
+        (channel / 100) as u8,
     ]
 }
 
@@ -3264,6 +3264,40 @@ mod tests {
     }
 
     #[test]
+    fn operating_mode_details_validate_profile_and_generic_filters() {
+        let (transport, writes) = TestTransport::with_reads(vec![
+            TestTransport::ack(0x95, 0xE0),
+            TestTransport::ack(0x94, 0xE0),
+        ]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+        futures::executor::block_on(radio.set_operating_mode_details(BaseMode::Usb, true, 2))
+            .unwrap();
+        assert!(
+            futures::executor::block_on(radio.set_operating_mode_details(
+                BaseMode::Unknown(0x7F),
+                false,
+                1
+            ))
+            .is_err()
+        );
+        assert!(
+            futures::executor::block_on(radio.set_operating_mode_details(BaseMode::Usb, false, 9))
+                .is_err()
+        );
+        assert_eq!(writes.lock().unwrap().len(), 1);
+
+        let (transport, _) = TestTransport::with_reads(vec![TestTransport::ack(0x94, 0xE0)]);
+        let generic = IcomCiVRadio::with_transport(None, 0xE0, 0x94, transport);
+        futures::executor::block_on(generic.set_operating_mode_details(BaseMode::Usb, false, 3))
+            .unwrap();
+    }
+
+    #[test]
     fn parses_ptt_and_command_only_control_responses() {
         let ptt = [0xFE, 0xFE, 0xE0, 0x94, 0x1C, 0x00, 0x01, 0xFD];
         assert_eq!(
@@ -3438,7 +3472,7 @@ mod tests {
             divisions: 2,
             full_chunk_bins: 2,
             last_chunk_bins: 1,
-            bins: 3,
+            bins: 1,
             bin_max: 255,
             supports_main_sub_scope: false,
         };
@@ -3692,7 +3726,6 @@ mod tests {
                 writes.lock().unwrap().is_empty(),
                 "{model:?} sent invalid CAT"
             );
-
             let (transport, writes) = TestTransport::with_reads(vec![TestTransport::ack(
                 match model {
                     crate::models::IcomCivModel::Ic705 => 0xA4,
@@ -3806,6 +3839,143 @@ mod tests {
             encode_civ_bcd_fixed(9_999, 4).unwrap(),
             vec![0x99, 0x99, 0, 0]
         );
+    }
+
+    #[test]
+    fn rejects_invalid_rit_sign_and_tracks_event_stream_freshness() {
+        let invalid_rit = TestTransport::response(0x94, 0xE0, &[0x21, 0x00, 0x50, 0x12, 0, 0, 2]);
+        let (transport, _) = TestTransport::with_reads(vec![invalid_rit]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+        assert!(radio.event_stream_age().is_none());
+        assert!(!radio.event_stream_is_live(Duration::from_secs(1)));
+        assert!(radio.get_rit_offset_hz().is_err());
+        radio.note_event_received();
+        assert!(radio.event_stream_age().is_some());
+        assert!(radio.event_stream_is_live(Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn writes_vhf_memory_variants_and_rejects_bad_repeater_flags() {
+        let channel = |tone_mode, shift, dtcs| MemoryChannel {
+            channel: 12,
+            name: Some("LOCAL".to_string()),
+            frequency_hz: 146_520_000,
+            transmit_frequency_hz: Some(146_520_000),
+            mode: Mode::Fm,
+            repeater: RepeaterSettings {
+                shift,
+                offset_hz: Some(600_000),
+                tone: ToneSettings {
+                    mode: tone_mode,
+                    index: 0,
+                    frequency_tenths_hz: Some(885),
+                    dtcs_code: dtcs,
+                    dtcs_reverse: Some(false),
+                },
+            },
+        };
+        let (transport, writes) = TestTransport::with_reads(vec![
+            TestTransport::ack(0xA4, 0xE0),
+            TestTransport::ack(0xA4, 0xE0),
+            TestTransport::ack(0xA4, 0xE0),
+        ]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic705),
+            0xE0,
+            0xA4,
+            transport,
+        );
+        radio
+            .write_memory_channel(channel(ToneMode::Off, RepeaterShift::Simplex, None))
+            .unwrap();
+        radio
+            .write_memory_channel(channel(ToneMode::Encode, RepeaterShift::Minus, Some(23)))
+            .unwrap();
+        radio
+            .write_memory_channel(channel(
+                ToneMode::EncodeDecode,
+                RepeaterShift::Plus,
+                Some(600),
+            ))
+            .unwrap();
+        assert_eq!(writes.lock().unwrap().len(), 3);
+
+        for value in [None, Some(2)] {
+            let response = value.map_or_else(
+                || TestTransport::response(0x94, 0xE0, &[0x16, 0x42]),
+                |value| TestTransport::response(0x94, 0xE0, &[0x16, 0x42, value]),
+            );
+            let (transport, _) = TestTransport::with_reads(vec![response]);
+            let radio = IcomCiVRadio::with_transport(
+                Some(crate::models::IcomCivModel::Ic7300),
+                0xE0,
+                0x94,
+                transport,
+            );
+            assert!(radio.read_flag_command(&[0x16, 0x42]).is_err());
+        }
+    }
+
+    #[test]
+    fn covers_remaining_scope_values_vfo_b_receiver_main_and_builders() {
+        let menu = profile_for_model(crate::models::IcomCivModel::Ic7300)
+            .scope
+            .and_then(|scope| scope.menu)
+            .unwrap();
+        let response = |index: u16, data: &[u8]| {
+            let [high, low] = encode_civ_menu_index(index);
+            let mut payload = vec![0x1A, 0x05, high, low];
+            payload.extend_from_slice(data);
+            TestTransport::response(0x94, 0xE0, &payload)
+        };
+        let reads = vec![
+            response(menu.tx_display, &[0]),
+            response(menu.waterfall_display, &[0]),
+            response(menu.marker_auto_hide, &[0]),
+            response(menu.max_hold, &[1]),
+            response(menu.center_type, &[2]),
+            response(menu.marker_position, &[0]),
+            response(menu.averaging, &[0]),
+            response(menu.waveform_type, &[0]),
+            response(menu.waterfall_peak_level, &[1]),
+            response(menu.waterfall_size, &[0]),
+            response(menu.waveform_color_current, &[0, 0, 0, 0, 0, 0]),
+            response(menu.waveform_color_line, &[0, 0, 0, 0, 0, 0]),
+            response(menu.waveform_color_max_hold, &[0, 0, 0, 0, 0, 0]),
+        ];
+        let (transport, _) = TestTransport::with_reads(reads);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+        let state = futures::executor::block_on(radio.get_scope_state()).unwrap();
+        assert_eq!(state.configuration.max_hold, Some(ScopeMaxHold::TenSeconds));
+        assert_eq!(
+            state.configuration.center_type,
+            Some(ScopeCenterType::CarrierPointAbsolute)
+        );
+
+        let (transport, _) = TestTransport::with_reads(vec![
+            TestTransport::ack(0x95, 0xE0),
+            TestTransport::ack(0x95, 0xE0),
+        ]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        )
+        .with_radio_address(0x95)
+        .with_serial_policy(IcomSerialPolicy::default());
+        futures::executor::block_on(radio.select_vfo(IcomVfo::B)).unwrap();
+        futures::executor::block_on(radio.select_receiver(IcomReceiver::Main)).unwrap_err();
     }
 
     #[test]
@@ -4219,6 +4389,91 @@ mod tests {
     }
 
     #[test]
+    fn scope_waveform_parser_rejects_malformed_frames_and_decodes_bcd_divisions() {
+        let geometry = Some(crate::models::IcomScopeGeometry {
+            divisions: 11,
+            bins: 475,
+            full_chunk_bins: 50,
+            last_chunk_bins: 25,
+            bin_max: 160,
+            supports_main_sub_scope: false,
+        });
+        assert!(parse_scope_waveform_segment(&[], geometry).is_none());
+        assert!(parse_scope_waveform_segment(&[0xFE; 12], geometry).is_none());
+        let mut wrong_command = vec![0xFE, 0xFE, 0xE0, 0x94, 0x26, 0x00, 0x00, 0x01, 0x01, 0xFD];
+        assert!(parse_scope_waveform_segment(&wrong_command, geometry).is_none());
+        wrong_command[4] = 0x27;
+        wrong_command[5] = 0x00;
+        wrong_command[7] = 0x1A;
+        assert!(parse_scope_waveform_segment(&wrong_command, geometry).is_none());
+        wrong_command[7] = 0x12;
+        wrong_command[8] = 0x12;
+        assert!(parse_scope_waveform_segment(&wrong_command, geometry).is_none());
+
+        assert_eq!(decode_scope_division_number(3, 11), Some(3));
+        assert_eq!(decode_scope_division_number(0x11, 11), Some(11));
+        assert_eq!(decode_scope_division_number(0x1A, 11), None);
+        assert_eq!(decode_scope_division_number(0x12, 11), None);
+        assert_eq!(decode_scope_division_number(0x99, 11), None);
+    }
+
+    #[test]
+    fn scope_sweep_assembler_rejects_invalid_geometry_order_and_bins() {
+        fn frame(division: u8, bins: Vec<u8>) -> Vec<u8> {
+            let mut frame = vec![
+                0xFE,
+                0xFE,
+                0xE0,
+                0x94,
+                0x27,
+                0x00,
+                0x00,
+                decimal_to_bcd(division),
+                0x02,
+            ];
+            frame.extend(bins);
+            frame.push(0xFD);
+            frame
+        }
+        let geometry = crate::models::IcomScopeGeometry {
+            divisions: 2,
+            bins: 1,
+            full_chunk_bins: 2,
+            last_chunk_bins: 1,
+            bin_max: 10,
+            supports_main_sub_scope: false,
+        };
+        let mut assembler = ScopeSweepAssembler::default();
+        assert!(assembler.push(&frame(1, vec![0; 12]), None).is_none());
+        assert!(assembler
+            .push(&frame(0, vec![0, 0]), Some(geometry))
+            .is_none());
+        assert!(assembler
+            .push(&frame(3, vec![0, 0]), Some(geometry))
+            .is_none());
+        assert!(assembler
+            .push(&frame(1, vec![0; 12]), Some(geometry))
+            .is_none());
+        assert!(assembler
+            .push(&frame(2, vec![0, 0]), Some(geometry))
+            .is_none());
+        assert!(assembler
+            .push(&frame(1, vec![0; 12]), Some(geometry))
+            .is_none());
+        assert!(assembler
+            .push(&frame(2, vec![0, 11]), Some(geometry))
+            .is_none());
+        assert!(assembler
+            .push(&frame(1, vec![0; 12]), Some(geometry))
+            .is_none());
+        assert_eq!(
+            assembler.push(&frame(2, vec![0]), Some(geometry)),
+            Some(vec![0])
+        );
+        assert_eq!(assembler.dropped_sweeps, 0);
+    }
+
+    #[test]
     fn command_reader_can_queue_a_complete_unsolicited_sweep_for_stream_drain() {
         let mut bytes = Vec::new();
         for division in 1..=11 {
@@ -4398,6 +4653,106 @@ mod tests {
     }
 
     #[test]
+    fn exercises_data_mode_and_main_sub_control_profiles() {
+        let response = |payload: &[u8]| TestTransport::response(0x94, 0xE0, payload);
+        let (transport, writes) = TestTransport::with_reads(vec![
+            TestTransport::ack(0x94, 0xE0),
+            TestTransport::ack(0x94, 0xE0),
+            response(&[0x26, 0x00, 0x01, 0x01, 0x02]),
+        ]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+        futures::executor::block_on(
+            radio.set_control(ControlId::DataMode, ControlValue::Bool(true)),
+        )
+        .unwrap();
+        futures::executor::block_on(
+            radio.set_control(ControlId::DataMode, ControlValue::Bool(false)),
+        )
+        .unwrap();
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::DataMode)).unwrap(),
+            Some(ControlValue::Bool(true))
+        );
+        assert!(writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.ends_with(&[0x1A, 0x06, 0x01, 0x01, 0xFD])));
+
+        let response = |payload: &[u8]| TestTransport::response(0x98, 0xE0, payload);
+        let (transport, writes) = TestTransport::with_reads(vec![
+            TestTransport::ack(0x98, 0xE0),
+            response(&[0x07, 0xD2, 0x01]),
+        ]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7610),
+            0xE0,
+            0x98,
+            transport,
+        );
+        futures::executor::block_on(radio.set_control(ControlId::MainSub, ControlValue::U8(1)))
+            .unwrap();
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::MainSub)).unwrap(),
+            Some(ControlValue::Receiver(1))
+        );
+        assert!(futures::executor::block_on(
+            radio.set_control(ControlId::MainSub, ControlValue::U8(2),)
+        )
+        .is_err());
+        assert!(writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.ends_with(&[0x07, 0xD1, 0xFD])));
+    }
+
+    #[test]
+    fn exercises_combined_external_preamp_and_preamp_level_controls() {
+        let response = |payload: &[u8]| TestTransport::response(0xA2, 0xE0, payload);
+        let (transport, writes) = TestTransport::with_reads(vec![
+            response(&[0x16, 0x02, 0x03]),
+            response(&[0x16, 0x02, 0x03]),
+            TestTransport::ack(0xA2, 0xE0),
+            response(&[0x16, 0x02, 0x03]),
+            response(&[0x16, 0x02, 0x03]),
+            TestTransport::ack(0xA2, 0xE0),
+        ]);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic9700),
+            0xE0,
+            0xA2,
+            transport,
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::Preamp)).unwrap(),
+            Some(ControlValue::U8(1))
+        );
+        futures::executor::block_on(radio.set_control(ControlId::Preamp, ControlValue::U8(1)))
+            .unwrap();
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::ExternalPreamp)).unwrap(),
+            Some(ControlValue::Bool(true))
+        );
+        futures::executor::block_on(
+            radio.set_control(ControlId::ExternalPreamp, ControlValue::Bool(false)),
+        )
+        .unwrap();
+        let writes = writes.lock().unwrap();
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x16, 0x02, 0x03, 0xFD])));
+        assert!(writes
+            .iter()
+            .any(|frame| frame.ends_with(&[0x16, 0x02, 0x01, 0xFD])));
+    }
+
+    #[test]
     fn exercises_repeater_memory_frequency_power_and_filter_io() {
         let response = |payload: &[u8]| TestTransport::response(0x94, 0xE0, payload);
         let ack = || TestTransport::ack(0x94, 0xE0);
@@ -4552,6 +4907,131 @@ mod tests {
             }))
             .is_err()
         );
+        for config in [
+            ScopeConfiguration {
+                reference_level_tenths_db: Some(201),
+                ..ScopeConfiguration::default()
+            },
+            ScopeConfiguration {
+                sweep_speed: Some(9),
+                ..ScopeConfiguration::default()
+            },
+            ScopeConfiguration {
+                fixed_edges_hz: Some((14_200_000, 14_000_000)),
+                ..ScopeConfiguration::default()
+            },
+            ScopeConfiguration {
+                averaging: Some(1),
+                ..ScopeConfiguration::default()
+            },
+            ScopeConfiguration {
+                waterfall_size: Some(3),
+                ..ScopeConfiguration::default()
+            },
+            ScopeConfiguration {
+                waterfall_peak_level: Some(99),
+                ..ScopeConfiguration::default()
+            },
+        ] {
+            assert!(futures::executor::block_on(radio.set_scope_configuration(config)).is_err());
+        }
+    }
+
+    #[test]
+    fn reads_ic7300_scope_state_and_colors_from_menu_responses() {
+        let menu = profile_for_model(crate::models::IcomCivModel::Ic7300)
+            .scope
+            .and_then(|scope| scope.menu)
+            .expect("IC-7300 scope menu");
+        let response = |index: u16, data: &[u8]| {
+            let [high, low] = encode_civ_menu_index(index);
+            let mut payload = vec![0x1A, 0x05, high, low];
+            payload.extend_from_slice(data);
+            TestTransport::response(0x94, 0xE0, &payload)
+        };
+        let reads = vec![
+            response(menu.tx_display, &[1]),
+            response(menu.waterfall_display, &[1]),
+            response(menu.marker_auto_hide, &[0]),
+            response(menu.max_hold, &[2]),
+            response(menu.center_type, &[1]),
+            response(menu.marker_position, &[1]),
+            response(menu.averaging, &[2]),
+            response(menu.averaging, &[2]),
+            response(menu.waveform_type, &[1]),
+            response(menu.waterfall_peak_level, &[4]),
+            response(menu.waterfall_size, &[2]),
+            response(menu.waveform_color_current, &[0, 1, 0, 2, 0, 3]),
+            response(menu.waveform_color_line, &[0, 4, 0, 5, 0, 6]),
+            response(menu.waveform_color_max_hold, &[0, 7, 0, 8, 0, 9]),
+        ];
+        let (transport, _) = TestTransport::with_reads(reads);
+        let radio = IcomCiVRadio::with_transport(
+            Some(crate::models::IcomCivModel::Ic7300),
+            0xE0,
+            0x94,
+            transport,
+        );
+
+        let state = futures::executor::block_on(radio.get_scope_state()).unwrap();
+        assert_eq!(state.configuration.max_hold, Some(ScopeMaxHold::Continuous));
+        assert_eq!(state.configuration.averaging, Some(3));
+        assert_eq!(
+            state.waveform_color_current,
+            Some(ScopeColor {
+                red: 1,
+                green: 2,
+                blue: 3,
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_ic7300_scope_menu_enum_values() {
+        let menu = profile_for_model(crate::models::IcomCivModel::Ic7300)
+            .scope
+            .and_then(|scope| scope.menu)
+            .expect("IC-7300 scope menu");
+        let response = |index: u16, value: u8| {
+            let [high, low] = encode_civ_menu_index(index);
+            TestTransport::response(0x94, 0xE0, &[0x1A, 0x05, high, low, value])
+        };
+        for (invalid_field, invalid_value) in [(0, 3), (1, 3), (2, 2), (3, 4), (4, 2)] {
+            let mut reads = vec![
+                response(menu.tx_display, 0),
+                response(menu.waterfall_display, 0),
+                response(menu.marker_auto_hide, 0),
+            ];
+            let fields = [
+                (menu.max_hold, 0),
+                (menu.center_type, 0),
+                (menu.marker_position, 0),
+                (menu.averaging, 0),
+                (menu.waveform_type, 0),
+            ];
+            for (field, (index, value)) in fields.iter().copied().enumerate() {
+                let value = if field == invalid_field {
+                    invalid_value
+                } else {
+                    value
+                };
+                reads.push(response(index, value));
+                if field == 3 && field != invalid_field {
+                    reads.push(response(index, value));
+                }
+                if field == invalid_field {
+                    break;
+                }
+            }
+            let (transport, _) = TestTransport::with_reads(reads);
+            let radio = IcomCiVRadio::with_transport(
+                Some(crate::models::IcomCivModel::Ic7300),
+                0xE0,
+                0x94,
+                transport,
+            );
+            assert!(futures::executor::block_on(radio.get_scope_state()).is_err());
+        }
     }
 
     #[test]
@@ -4800,6 +5280,275 @@ mod tests {
         assert!(futures::executor::block_on(radio.set_scope_reference_level_tenths_db(3)).is_err());
         assert!(
             futures::executor::block_on(radio.set_scope_fixed_edge_frequencies(1, 10, 9)).is_err()
+        );
+    }
+
+    #[test]
+    fn publishes_typed_and_raw_ci_v_events() {
+        let router = RadioEventRouter::default();
+        let subscription = router.subscribe();
+        publish_civ_event(
+            &router,
+            &[
+                0xFE, 0xFE, 0xE0, 0x94, 0x03, 0x00, 0x00, 0x00, 0x14, 0x07, 0x40, 0xFD,
+            ],
+        );
+        publish_civ_event(&router, &[0xFE, 0xFE, 0xE0, 0x94, 0x06, 0x01, 0xFD]);
+        publish_civ_event(&router, &[0xFE, 0xFE, 0xE0, 0x94, 0x1C, 0x00, 0x01, 0xFD]);
+        publish_civ_event(
+            &router,
+            &[0xFE, 0xFE, 0xE0, 0x94, 0x15, 0x02, 0x00, 0x50, 0xFD],
+        );
+        for meter_id in 0x11..=0x17 {
+            publish_civ_event(
+                &router,
+                &[0xFE, 0xFE, 0xE0, 0x94, 0x15, meter_id, 0x00, 0x50, 0xFD],
+            );
+        }
+        publish_civ_event(&router, &[0xFE, 0xFE, 0xE0, 0x94, 0x07, 0xD1, 0xFD]);
+        publish_civ_event(&router, &[0xFE, 0xFE, 0xE0, 0x94, 0x99, 0x01, 0xFD]);
+        publish_civ_event(&router, &[0xFE, 0xFE, 0xE0, 0x94, 0x06, 0xFF, 0xFD]);
+        assert_eq!(subscription.drain().len(), 13);
+        assert_eq!(decode_event_mode(None), None);
+        assert_eq!(decode_event_mode(Some(0xFF)), None);
+    }
+
+    #[test]
+    fn ci_v_frame_helpers_reject_short_or_malformed_input() {
+        assert!(extract_ci_v_frames(&[0xFE, 0xFE, 0xFD]).is_empty());
+        assert!(!is_ack_frame(&[0xFE, 0xFE, 0xE0, 0x94, 0xFA, 0xFD]));
+        assert!(!is_nak_frame(&[0xFE, 0xFE, 0xE0, 0x94, 0xFB, 0xFD]));
+        assert!(!is_spectrum_data_frame(&[
+            0xFE, 0xFE, 0xE0, 0x94, 0x27, 0x00, 0x01, 0x01
+        ]));
+
+        let mut pending = vec![0x10, 0x20, 0x30];
+        assert!(drain_ci_v_frames(&mut pending).is_empty());
+        assert!(pending.is_empty());
+        pending.extend(std::iter::repeat_n(0x00, MAX_PENDING_CI_V_BYTES + 1));
+        assert!(bound_ci_v_pending(&mut pending));
+        assert!(pending.is_empty());
+        assert!(!bound_ci_v_pending(&mut pending));
+    }
+
+    #[test]
+    fn scope_enum_values_cover_all_documented_variants() {
+        assert_eq!(
+            scope_center_type_value(crate::hal_types::ScopeCenterType::FilterCenter),
+            0
+        );
+        assert_eq!(
+            scope_center_type_value(crate::hal_types::ScopeCenterType::CarrierPoint),
+            1
+        );
+        assert_eq!(
+            scope_center_type_value(crate::hal_types::ScopeCenterType::CarrierPointAbsolute),
+            2
+        );
+        assert_eq!(scope_max_hold_value(crate::hal_types::ScopeMaxHold::Off), 0);
+        assert_eq!(
+            scope_max_hold_value(crate::hal_types::ScopeMaxHold::TenSeconds),
+            1
+        );
+        assert_eq!(
+            scope_max_hold_value(crate::hal_types::ScopeMaxHold::Continuous),
+            2
+        );
+        assert_eq!(
+            scope_marker_position_value(crate::hal_types::ScopeMarkerPosition::FilterCenter),
+            0
+        );
+        assert_eq!(
+            scope_marker_position_value(crate::hal_types::ScopeMarkerPosition::CarrierPoint),
+            1
+        );
+        assert_eq!(
+            scope_waveform_type_value(crate::hal_types::ScopeWaveformType::Fill),
+            0
+        );
+        assert_eq!(
+            scope_waveform_type_value(crate::hal_types::ScopeWaveformType::FillAndLine),
+            1
+        );
+    }
+
+    #[test]
+    fn civ_codec_matrices_cover_modes_frequency_tones_and_controls() {
+        for (mode, code) in [
+            (Mode::Lsb, 0x00),
+            (Mode::Usb, 0x01),
+            (Mode::Cw, 0x03),
+            (Mode::Am, 0x02),
+            (Mode::Fm, 0x05),
+            (Mode::Wfm, 0x06),
+            (Mode::Rtty, 0x04),
+            (Mode::CwReverse, 0x07),
+            (Mode::RttyReverse, 0x08),
+            (Mode::Data, 0x01),
+        ] {
+            assert_eq!(mode_to_civ_mode(mode).unwrap(), code);
+        }
+        for (code, mode) in [
+            (0x00, Mode::Lsb),
+            (0x01, Mode::Usb),
+            (0x02, Mode::Am),
+            (0x03, Mode::Cw),
+            (0x04, Mode::Rtty),
+            (0x05, Mode::Fm),
+            (0x07, Mode::CwReverse),
+            (0x08, Mode::RttyReverse),
+        ] {
+            assert_eq!(civ_mode_to_mode(code), Some(mode));
+        }
+        assert_eq!(civ_mode_to_mode(0x06), None);
+        assert_eq!(civ_mode_to_mode(0xFF), None);
+        for (base, code) in [
+            (BaseMode::Lsb, 0x00),
+            (BaseMode::Usb, 0x01),
+            (BaseMode::Am, 0x02),
+            (BaseMode::Cw, 0x03),
+            (BaseMode::Rtty, 0x04),
+            (BaseMode::Fm, 0x05),
+            (BaseMode::Wfm, 0x06),
+            (BaseMode::CwR, 0x07),
+            (BaseMode::RttyR, 0x08),
+        ] {
+            assert_eq!(civ_mode_to_base_mode(code), base);
+            assert_eq!(base_mode_to_civ_mode(base), Some(code));
+        }
+        assert_eq!(civ_mode_to_base_mode(0xFF), BaseMode::Unknown(0xFF));
+        assert_eq!(base_mode_to_civ_mode(BaseMode::Unknown(0xFF)), None);
+
+        for frequency in [0, 1, 14_074_000, 999_999_999] {
+            assert_eq!(
+                decode_civ_frequency_bcd(&encode_civ_frequency_bcd(frequency)),
+                Some(frequency)
+            );
+        }
+        assert_eq!(decode_civ_frequency_bcd(&[]), None);
+        assert_eq!(decode_civ_frequency_bcd(&[0xFA]), None);
+        assert_eq!(
+            decode_tone_frequency(&encode_tone_frequency(885)).unwrap(),
+            885
+        );
+        assert!(decode_tone_frequency(&[0x85, 0xF8, 0x00]).is_err());
+        assert!(decode_tone_frequency(&[0x85, 0x08]).is_err());
+
+        assert_eq!(
+            encode_control_value(ControlEncoding::Bool, ControlValue::Bool(true)).unwrap(),
+            vec![1]
+        );
+        assert_eq!(
+            encode_control_value(ControlEncoding::U8, ControlValue::U8(7)).unwrap(),
+            vec![7]
+        );
+        assert_eq!(
+            encode_control_value(ControlEncoding::Level255Bcd, ControlValue::U8(173)).unwrap(),
+            vec![1, 0x73]
+        );
+        assert!(encode_control_value(ControlEncoding::Bool, ControlValue::U8(1)).is_err());
+        assert!(encode_civ_bcd_fixed(1_000_000, 3).is_err());
+        assert!(decode_civ_bcd(&[0xFA]).is_err());
+        assert_eq!(format_hex_bytes(&[0, 0xAF, 0xFF]), "00 AF FF");
+    }
+
+    #[test]
+    fn civ_memory_and_response_decoders_reject_bad_wire_values() {
+        assert_eq!(encode_memory_channel(1), [0x01, 0x00]);
+        assert_eq!(encode_memory_channel(123), [0x23, 0x01]);
+        assert_eq!(decode_memory_channel(&[0x23, 0x01]).unwrap(), 123);
+        assert!(decode_memory_channel(&[0xFA, 0x00]).is_err());
+        assert!(decode_memory_channel(&[0x00]).is_err());
+
+        let mut payload = vec![0x1A, 0x00, 0x01, 0x00, 0x00];
+        payload.extend_from_slice(&encode_civ_frequency_bcd(14_074_000));
+        payload.extend_from_slice(&[0x01, 0x00, 0x00]);
+        payload.extend_from_slice(&encode_tone_frequency(885));
+        payload.extend_from_slice(&encode_tone_frequency(885));
+        payload.extend_from_slice(b"          ");
+        let mut frame = vec![0xFE, 0xFE, 0xE0, 0x94];
+        frame.extend_from_slice(&payload);
+        frame.push(0xFD);
+        assert_eq!(
+            decode_icom_memory(&frame, &[0x1A, 0x00], MemoryLayout::Hf)
+                .unwrap()
+                .repeater
+                .tone
+                .mode,
+            ToneMode::Off
+        );
+        for (mode, expected) in [(1, ToneMode::EncodeDecode), (2, ToneMode::Encode)] {
+            frame[16] = mode;
+            assert_eq!(
+                decode_icom_memory(&frame, &[0x1A, 0x00], MemoryLayout::Hf)
+                    .unwrap()
+                    .repeater
+                    .tone
+                    .mode,
+                expected
+            );
+        }
+        frame[16] = 9;
+        assert!(decode_icom_memory(&frame, &[0x1A, 0x00], MemoryLayout::Hf).is_err());
+        frame[16] = 0;
+        frame[13] = 0xFF;
+        assert!(decode_icom_memory(&frame, &[0x1A, 0x00], MemoryLayout::Hf).is_err());
+        assert!(decode_icom_memory(
+            &[0xFE, 0xFE, 0xE0, 0x94, 0x1A, 0x00, 0xFD],
+            &[0x1A, 0x00],
+            MemoryLayout::Hf
+        )
+        .is_err());
+
+        assert!(response_data_after_prefix(&[], &[0x03]).is_err());
+        assert!(response_data_after_prefix(&[0xFE, 0xFE, 0xE0, 0x94], &[0x03]).is_err());
+        assert_eq!(
+            response_data_after_prefix(&[0xFE, 0xFE, 0xE0, 0x94, 0x03, 0xFD], &[0x03]).unwrap(),
+            &[] as &[u8]
+        );
+        assert!(
+            response_data_after_prefix(&[0xFE, 0xFE, 0xE0, 0x94, 0x04, 0x00, 0xFD], &[]).is_err()
+        );
+        assert!(
+            response_data_after_prefix(&[0xFE, 0xFE, 0xE0, 0x94, 0x04, 0x00, 0xFD], &[0x03])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn frequency_and_mode_parsers_reject_malformed_frames() {
+        assert_eq!(parse_frequency(&[]), None);
+        assert_eq!(
+            parse_frequency(&[0xFE, 0xFE, 0xE0, 0x94, 0x04, 0x01, 0xFD]),
+            None
+        );
+        assert_eq!(parse_frequency(&[0xFE, 0xFE, 0xE0, 0x94, 0x03, 0xFD]), None);
+        assert_eq!(
+            parse_frequency(&[0xFE, 0xFE, 0xE0, 0x94, 0x03, 0xFA, 0xFD]),
+            None
+        );
+        assert_eq!(parse_mode_details(&[]), None);
+        assert_eq!(
+            parse_mode_details(&[0xFE, 0xFE, 0xE0, 0x94, 0x05, 0x01, 0xFD]),
+            None
+        );
+        assert_eq!(
+            parse_mode_details(&[0xFE, 0xFE, 0xE0, 0x94, 0x26, 0x01, 0x01, 0xFD]),
+            None
+        );
+        assert_eq!(
+            parse_mode_details(&[0xFE, 0xFE, 0xE0, 0x94, 0x26, 0x00, 0xFF, 0xFD])
+                .unwrap()
+                .base,
+            BaseMode::Unknown(0xFF)
+        );
+        assert_eq!(
+            parse_mode(&[0xFE, 0xFE, 0xE0, 0x94, 0x04, 0x06, 0xFD]),
+            Some(Mode::Wfm)
+        );
+        assert_eq!(
+            parse_mode(&[0xFE, 0xFE, 0xE0, 0x94, 0x04, 0xFF, 0xFD]),
+            None
         );
     }
 

@@ -2427,6 +2427,107 @@ mod tests {
     }
 
     #[test]
+    fn ftdx10_repeater_and_memory_surface_round_trips_through_cat() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let memory_payload = format!(
+            "{:03}{:09}+{:04}00{}0{}00{}",
+            1, 14_074_000, 0, '2', '2', '1'
+        );
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            ScriptedTransport {
+                input: format!("EX0303101;CN008;CT1;OS01;MR{};", memory_payload).into_bytes(),
+                output: Arc::clone(&output),
+            },
+        );
+
+        let repeater = radio.get_repeater_settings().unwrap();
+        assert_eq!(repeater.tone.index, 8);
+        assert_eq!(repeater.tone.mode, ToneMode::EncodeDecode);
+        assert_eq!(repeater.shift, RepeaterShift::Plus);
+        radio
+            .set_repeater_settings(RepeaterSettings {
+                shift: RepeaterShift::Minus,
+                offset_hz: Some(0),
+                tone: ToneSettings {
+                    mode: ToneMode::Encode,
+                    index: 8,
+                    ..ToneSettings::default()
+                },
+            })
+            .unwrap();
+        radio.select_memory_channel(1).unwrap();
+        let memory = radio.read_memory_channel(1).unwrap();
+        assert_eq!(memory.frequency_hz, 14_074_000);
+        assert_eq!(memory.mode, Mode::Usb);
+        radio.write_memory_channel(memory.clone()).unwrap();
+
+        assert!(radio.select_memory_channel(100).is_err());
+        assert!(radio.read_memory_channel(0).is_err());
+        assert!(radio
+            .set_repeater_settings(RepeaterSettings {
+                offset_hz: Some(600_000),
+                ..RepeaterSettings::default()
+            })
+            .is_err());
+        assert!(radio
+            .set_repeater_settings(RepeaterSettings {
+                tone: ToneSettings {
+                    index: 99,
+                    ..ToneSettings::default()
+                },
+                ..RepeaterSettings::default()
+            })
+            .is_err());
+        assert!(radio
+            .set_repeater_settings(RepeaterSettings {
+                tone: ToneSettings {
+                    mode: ToneMode::Dtcs,
+                    ..ToneSettings::default()
+                },
+                ..RepeaterSettings::default()
+            })
+            .is_err());
+        assert!(radio
+            .write_memory_channel(MemoryChannel {
+                channel: 1,
+                name: Some("é".to_owned()),
+                ..memory
+            })
+            .is_err());
+
+        let written = output.lock().unwrap();
+        let written = String::from_utf8_lossy(&written);
+        assert!(written.contains("CN008;CT2;OS02;MC001;"));
+        assert!(written.contains("MR001;"));
+        assert!(written.contains("MT001014074000+0000002020010;"));
+    }
+
+    #[test]
+    fn ftdx10_power_and_split_surfaces_decode_and_emit_cat_commands() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            ScriptedTransport {
+                input: b"EX0303101;VS0;PC100;PS1;ST2;".to_vec(),
+                output: Arc::clone(&output),
+            },
+        );
+        assert_eq!(radio.get_power_watts().unwrap(), 100);
+        assert!(radio.get_power_state().unwrap());
+        assert!(radio.get_split().unwrap());
+        radio.set_power_watts(50).unwrap();
+        radio.set_power_state(false).unwrap();
+        radio.set_split(false).unwrap();
+        assert!(radio.set_power_watts(0).is_err());
+        let output = output.lock().unwrap();
+        let written = String::from_utf8_lossy(&output);
+        assert!(written.contains("PC050;PS0;ST0;"));
+    }
+
+    #[test]
     fn modern_profiles_decode_the_shared_memory_record_layout() {
         let payload = format!(
             "{:03}{:09}+{:04}00{}0{}00{}",
@@ -2479,5 +2580,162 @@ mod tests {
     fn percent_controls_use_the_shared_hal_rounding_policy() {
         assert_eq!(normalize_percent(50), 128);
         assert_eq!(denormalize_percent(128), 50);
+    }
+
+    #[test]
+    fn optional_surface_and_invalid_control_requests_are_well_bounded() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            ScriptedTransport {
+                input: b"EX0303101;CF001+0000;CF001+0000;VS1;AC001;".to_vec(),
+                output: output.clone(),
+            },
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_rit_offset_hz()).unwrap(),
+            0
+        );
+        futures::executor::block_on(radio.set_rit_offset_hz(125)).unwrap();
+        assert_eq!(
+            futures::executor::block_on(radio.get_xit_offset_hz()).unwrap(),
+            0
+        );
+        futures::executor::block_on(radio.set_xit_offset_hz(-250)).unwrap();
+        assert!(
+            futures::executor::block_on(radio.get_control(ControlId::Vfo))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            futures::executor::block_on(radio.get_control(ControlId::IpPlus))
+                .unwrap()
+                .is_none()
+        );
+        assert!(futures::executor::block_on(
+            radio.set_control(ControlId::AfGain, ControlValue::Bool(true))
+        )
+        .is_err());
+        assert!(futures::executor::block_on(radio.get_meter(MeterId::Temperature)).is_err());
+        assert!(radio.filter_bandwidth_hz(Mode::Usb, 99).is_none());
+        assert!(radio.control_max(ControlId::IpPlus).is_none());
+        assert!(radio.supported_control_values(ControlId::IpPlus).is_none());
+        assert!(radio.meter_poll_spec(MeterId::Temperature).is_none());
+        assert!(radio.meter_metadata(MeterId::Temperature).is_none());
+        assert!(futures::executor::block_on(radio.protocol_write_read(b"bad")).is_err());
+        assert!(futures::executor::block_on(radio.start_tuner()).is_ok());
+        assert!(futures::executor::block_on(radio.get_tuner_status())
+            .unwrap()
+            .is_some());
+        assert!(!output.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn radio_trait_forwards_modern_optional_writes() {
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ftdx10),
+            38_400,
+            ScriptedTransport {
+                input: Vec::new(),
+                output: Arc::new(Mutex::new(Vec::new())),
+            },
+        );
+        futures::executor::block_on(Radio::set_rit_offset_hz(&radio, 10)).unwrap();
+        futures::executor::block_on(Radio::set_xit_offset_hz(&radio, -10)).unwrap();
+        futures::executor::block_on(Radio::set_repeater_settings(
+            &radio,
+            RepeaterSettings::default(),
+        ))
+        .unwrap();
+        futures::executor::block_on(Radio::select_memory_channel(&radio, 1)).unwrap();
+        futures::executor::block_on(Radio::write_memory_channel(
+            &radio,
+            MemoryChannel {
+                channel: 1,
+                name: None,
+                frequency_hz: 14_074_000,
+                transmit_frequency_hz: None,
+                mode: Mode::Usb,
+                repeater: RepeaterSettings::default(),
+            },
+        ))
+        .unwrap();
+    }
+
+    #[test]
+    fn modern_parser_helpers_cover_invalid_and_all_mode_variants() {
+        assert!(parse_payload(b"\xff;", "FA").is_err());
+        assert!(parse_payload(b"FB123;", "FA").is_err());
+        assert!(decode_repeater_shift("").is_err());
+        assert!(decode_repeater_shift("03").is_err());
+        assert_eq!(encode_repeater_shift(RepeaterShift::Simplex), "0");
+        assert_eq!(encode_repeater_shift(RepeaterShift::Minus), "2");
+        assert_eq!(encode_common_mode(Mode::Lsb).unwrap(), '1');
+        assert_eq!(
+            encode_common_mode(Mode::Wfm).unwrap_err().to_string(),
+            "WFM has no common modern Yaesu CAT mode mapping"
+        );
+        for code in [
+            '1', '2', '3', '4', 'B', '5', 'D', '6', '7', '9', '8', 'A', 'C', 'E', 'F',
+        ] {
+            assert!(decode_common_mode(code).is_ok());
+        }
+        assert!(decode_common_mode('Z').is_err());
+        assert_eq!(display_command(b"FA\xff;"), "FA�;");
+        let mut pending = b"FA123;".to_vec();
+        pending.extend(std::iter::repeat_n(b'X', MAX_FRAME_LEN + 1));
+        assert_eq!(take_complete_frames(&mut pending), vec![b"FA123;".to_vec()]);
+    }
+
+    #[test]
+    fn modern_memory_decoder_rejects_bad_fields_and_maps_tone_variants() {
+        let base = |mode: char, tone: char, shift: char| {
+            format!("{:03}{:09}+{:04}00{mode}0{tone}00{shift}", 1, 14_074_000, 0)
+        };
+        for (tone, expected) in [
+            ('0', ToneMode::Off),
+            ('1', ToneMode::EncodeDecode),
+            ('2', ToneMode::Encode),
+        ] {
+            assert_eq!(
+                decode_modern_yaesu_memory(&base('2', tone, '2'), &FTDX10_PROFILE)
+                    .unwrap()
+                    .repeater
+                    .tone
+                    .mode,
+                expected
+            );
+        }
+        assert_eq!(
+            decode_modern_yaesu_memory(&base('2', '2', '0'), &FTDX10_PROFILE)
+                .unwrap()
+                .repeater
+                .shift,
+            RepeaterShift::Simplex
+        );
+        assert_eq!(
+            decode_modern_yaesu_memory(&base('2', '2', '1'), &FTDX10_PROFILE)
+                .unwrap()
+                .repeater
+                .shift,
+            RepeaterShift::Plus
+        );
+        assert!(decode_modern_yaesu_memory("short", &FTDX10_PROFILE).is_err());
+        assert!(decode_modern_yaesu_memory(&base('Z', '2', '0'), &FTDX10_PROFILE).is_err());
+        assert!(decode_modern_yaesu_memory(&base('2', '9', '0'), &FTDX10_PROFILE).is_err());
+        assert!(decode_modern_yaesu_memory(&base('2', '2', '9'), &FTDX10_PROFILE).is_err());
+        let mut invalid = base('2', '2', '0');
+        invalid.replace_range(0..3, "ABC");
+        assert!(decode_modern_yaesu_memory(&invalid, &FTDX10_PROFILE).is_err());
+        let mut invalid = base('2', '2', '0');
+        invalid.replace_range(3..12, "ABCDEFGHI");
+        assert!(decode_modern_yaesu_memory(&invalid, &FTDX10_PROFILE).is_err());
+        let mut invalid = base('2', '2', '0');
+        invalid.replace_range(12..13, "?");
+        assert!(decode_modern_yaesu_memory(&invalid, &FTDX10_PROFILE).is_err());
+        let mut invalid = base('2', '2', '0');
+        invalid.replace_range(13..17, "ABCD");
+        assert!(decode_modern_yaesu_memory(&invalid, &FTDX10_PROFILE).is_err());
     }
 }

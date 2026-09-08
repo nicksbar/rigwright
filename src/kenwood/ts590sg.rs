@@ -262,10 +262,103 @@ pub fn profile() -> &'static RadioModelProfile {
 mod tests {
     use super::*;
 
+    fn memory_channel() -> MemoryChannel {
+        MemoryChannel {
+            channel: 7,
+            name: Some("LOCAL".to_owned()),
+            frequency_hz: 14_074_000,
+            transmit_frequency_hz: Some(14_074_000),
+            mode: Mode::Usb,
+            repeater: RepeaterSettings {
+                shift: RepeaterShift::Simplex,
+                offset_hz: None,
+                tone: ToneSettings {
+                    mode: ToneMode::Encode,
+                    index: 8,
+                    frequency_tenths_hz: None,
+                    dtcs_code: None,
+                    dtcs_reverse: None,
+                },
+            },
+        }
+    }
+
     #[test]
     fn exposes_the_ts590sg_catalog_profile() {
         assert_eq!(profile().model, "TS-590SG");
         assert!(!CONTROLS.is_empty());
         assert!(!METERS.is_empty());
+    }
+
+    #[test]
+    fn memory_codec_covers_split_tone_and_optional_name_variants() {
+        for (split, tone, expected) in [
+            (false, ToneMode::Off, '0'),
+            (true, ToneMode::Encode, '1'),
+            (false, ToneMode::EncodeDecode, '2'),
+        ] {
+            let mut channel = memory_channel();
+            channel.transmit_frequency_hz = split.then_some(14_075_000);
+            channel.repeater.tone.mode = tone;
+            let encoded = encode_memory(channel, &CAT_PROFILE).unwrap();
+            assert_eq!(encoded.as_bytes()[0] as char, if split { '1' } else { '0' });
+            assert_eq!(encoded.as_bytes()[17] as char, expected);
+        }
+
+        let mut channel = memory_channel();
+        channel.name = None;
+        channel.transmit_frequency_hz = None;
+        let encoded = encode_memory(channel, &CAT_PROFILE).unwrap();
+        assert!(encoded.starts_with("0007"));
+        assert!(encoded.contains("00014074000"));
+        assert!(!encoded.ends_with("LOCAL"));
+
+        for (split, tone) in [('0', '0'), ('1', '1'), ('0', '2'), ('0', '3')] {
+            let payload = format!(
+                "{}{:03}{:011}{}0{}00{:02}00000000000000000",
+                split, 7, 14_074_000, '2', tone, 8
+            );
+            let decoded = decode_memory(&payload, &CAT_PROFILE).unwrap();
+            assert_eq!(decoded.transmit_frequency_hz.is_some(), split == '1');
+            assert_eq!(
+                decoded.repeater.tone.mode,
+                match tone {
+                    '0' => ToneMode::Off,
+                    '1' => ToneMode::Encode,
+                    _ => ToneMode::EncodeDecode,
+                }
+            );
+            assert_eq!(decoded.name, None);
+        }
+    }
+
+    #[test]
+    fn memory_codec_rejects_malformed_values() {
+        assert!(decode_memory("short", &CAT_PROFILE).is_err());
+        let payload = format!(
+            "0{:03}{:011}{}0X00{:02}00000000000000000",
+            7, 14_074_000, '2', 8
+        );
+        assert!(decode_memory(&payload, &CAT_PROFILE).is_err());
+        let mut bad_number = format!(
+            "0{:03}{:011}{}0000{:02}00000000000000000",
+            7, 14_074_000, '2', 8
+        );
+        bad_number.replace_range(20..22, "xx");
+        assert!(decode_memory(&bad_number, &CAT_PROFILE).is_err());
+
+        let mut channel = memory_channel();
+        channel.repeater.tone.index = 42;
+        assert!(encode_memory(channel.clone(), &CAT_PROFILE).is_err());
+        channel.repeater.tone.index = 0;
+        channel.repeater.tone.mode = ToneMode::Dtcs;
+        assert!(encode_memory(channel.clone(), &CAT_PROFILE).is_err());
+        channel.repeater.tone.mode = ToneMode::Off;
+        channel.transmit_frequency_hz = None;
+        channel.frequency_hz = 100_000_000_000;
+        assert!(encode_memory(channel.clone(), &CAT_PROFILE).is_err());
+        channel.frequency_hz = 14_000_000;
+        channel.name = Some("0123456789".to_owned());
+        assert!(encode_memory(channel, &CAT_PROFILE).is_err());
     }
 }

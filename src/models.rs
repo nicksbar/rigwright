@@ -924,6 +924,47 @@ mod tests {
     }
 
     #[test]
+    fn catalog_profiles_expose_protocol_defaults_and_control_metadata() {
+        use crate::ControlId;
+
+        for model in [
+            GENERIC_ICOM_MODEL,
+            "IC-7300",
+            GENERIC_YAESU_MODEL,
+            "FTDX10",
+            GENERIC_YAESU_CLASSIC_MODEL,
+            "FT-857D",
+            GENERIC_KENWOOD_MODEL,
+            "TS-590SG",
+            "K3",
+        ] {
+            let profile = find_model(model).expect("catalog profile");
+            assert!(profile.fastest_supported_baud_rate().is_some());
+            assert!(profile.driver_capabilities().can_raw_protocol);
+        }
+
+        let icom = find_model("IC-7300").unwrap();
+        assert!(icom.supports_control(ControlId::Attenuator));
+        assert!(icom
+            .supported_control_values(ControlId::Attenuator)
+            .is_some());
+        assert!(icom.control_max(ControlId::Preamp).is_some());
+        assert!(icom.supported_control_values(ControlId::MainSub).is_none());
+
+        let yaesu = find_model("FTDX10").unwrap();
+        assert!(yaesu.control_max(ControlId::Preamp).is_some());
+        assert!(!yaesu.supports_control(ControlId::MainSub));
+
+        let kenwood = find_model("TS-590SG").unwrap();
+        assert!(kenwood.control_max(ControlId::RfPower).is_some());
+        assert!(kenwood.supports_control(ControlId::NoiseBlanker));
+
+        let elecraft = find_model("K3").unwrap();
+        assert!(elecraft.control_max(ControlId::AfGain).is_some());
+        assert!(elecraft.control_max(ControlId::Notch).is_none());
+    }
+
+    #[test]
     fn icom_models_advertise_write_only_power_switching() {
         for model in [
             "IC-705", "IC-718", "IC-7200", "IC-7300", "IC-7610", "IC-9700",

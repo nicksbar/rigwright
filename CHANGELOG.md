@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.1.26 — coverage and driver validation
+
+### Release readiness
+- Raise the aggregate executable-line coverage gate to 90% and promote the
+  Icom CI-V, Kenwood CAT, and covered profile gates to 90%.
+- Add manual-backed regression coverage for native Icom CI-V, Kenwood CAT,
+  and model-profile command behavior.
 
 ### Tests
 - Expand `RadioSession` public-trait forwarding coverage for scope, repeater,

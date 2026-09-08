@@ -37,4 +37,13 @@ mod tests {
     fn ts590_frequency_has_eleven_digits() {
         assert_eq!(set_frequency_a(14_074_000).unwrap(), b"FA00014074000;");
     }
+
+    #[test]
+    fn common_commands_encode_reads_writes_and_ptt_edges() {
+        assert_eq!(read_frequency_a().unwrap(), b"FA;");
+        assert_eq!(read_mode().unwrap(), b"MD;");
+        assert_eq!(set_ptt(true).unwrap(), b"TX;");
+        assert_eq!(set_ptt(false).unwrap(), b"RX;");
+        assert_eq!(set_frequency_a(0).unwrap(), b"FA00000000000;");
+    }
 }

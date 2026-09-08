@@ -134,6 +134,7 @@ mod tests {
         fail_timeout: bool,
         fail_clear: bool,
         fail_flow_control: bool,
+        fail_modem_control: bool,
     }
 
     impl Read for MemoryTransport {
@@ -214,9 +215,21 @@ mod tests {
             Ok(())
         }
         fn write_request_to_send(&mut self, _level: bool) -> serialport::Result<()> {
+            if self.fail_modem_control {
+                return Err(serialport::Error::new(
+                    serialport::ErrorKind::InvalidInput,
+                    "RTS rejected",
+                ));
+            }
             Ok(())
         }
         fn write_data_terminal_ready(&mut self, _level: bool) -> serialport::Result<()> {
+            if self.fail_modem_control {
+                return Err(serialport::Error::new(
+                    serialport::ErrorKind::InvalidInput,
+                    "DTR rejected",
+                ));
+            }
             Ok(())
         }
         fn read_clear_to_send(&mut self) -> serialport::Result<bool> {
@@ -317,6 +330,30 @@ mod tests {
         }
     }
 
+    struct ZeroIoTransport;
+
+    impl Read for ZeroIoTransport {
+        fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+            Ok(0)
+        }
+    }
+
+    impl Write for ZeroIoTransport {
+        fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+            Ok(0)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl RadioTransport for ZeroIoTransport {
+        fn set_timeout(&mut self, _timeout: Duration) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn radio_transport_defaults_are_noops_for_external_transports() {
         let mut transport = MemoryTransport {
@@ -327,6 +364,7 @@ mod tests {
             fail_timeout: false,
             fail_clear: false,
             fail_flow_control: false,
+            fail_modem_control: false,
         };
         assert_eq!(transport.read(&mut [0; 2]).unwrap(), 2);
         transport.write_all(&[9, 8]).unwrap();
@@ -354,6 +392,7 @@ mod tests {
             fail_timeout: false,
             fail_clear: false,
             fail_flow_control: false,
+            fail_modem_control: false,
         };
         assert_eq!(port.name().as_deref(), Some("memory"));
         assert_eq!(port.baud_rate().unwrap(), 9_600);
@@ -403,13 +442,14 @@ mod tests {
             fail_timeout: true,
             fail_clear: true,
             fail_flow_control: true,
+            fail_modem_control: true,
         };
         let mut transport = SerialPortTransport(Box::new(port));
         assert!(transport.set_timeout(Duration::from_millis(1)).is_err());
         assert!(transport.clear_input().is_err());
         assert!(transport.set_hardware_flow_control(true).is_err());
-        assert!(transport.set_dtr(true).is_ok());
-        assert!(transport.set_rts(true).is_ok());
+        assert!(transport.set_dtr(true).is_err());
+        assert!(transport.set_rts(true).is_err());
     }
 
     #[test]
@@ -426,5 +466,16 @@ mod tests {
         let mut response = [0; 8];
         transport.read_exact(&mut response).unwrap();
         assert_eq!(&response, b"response");
+    }
+
+    #[test]
+    fn transport_contract_rejects_zero_progress() {
+        let mut transport = ZeroIoTransport;
+        let write_error = transport.write_all(b"command").unwrap_err();
+        assert_eq!(write_error.kind(), std::io::ErrorKind::WriteZero);
+
+        let mut response = [0; 1];
+        let read_error = transport.read_exact(&mut response).unwrap_err();
+        assert_eq!(read_error.kind(), std::io::ErrorKind::UnexpectedEof);
     }
 }

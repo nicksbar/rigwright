@@ -2,7 +2,7 @@
 set -euo pipefail
 
 summary_file="${1:-coverage-summary.txt}"
-minimum_percent="${2:-87}"
+minimum_percent="${2:-90}"
 target_percent="${RIGWRIGHT_COVERAGE_TARGET:-90}"
 
 if [[ ! -f "$summary_file" ]]; then
@@ -13,7 +13,10 @@ fi
 read -r total_lines missed_lines < <(
   awk '
     /^TOTAL/ {
-      print $8, $9
+      # llvm-cov TOTAL row is: lines total/missed/percent, functions,
+      # regions. The aggregate gate is intentionally based on executable
+      # lines, not the final region columns.
+      print $2, $3
       found = 1
       exit
     }

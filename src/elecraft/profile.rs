@@ -461,4 +461,92 @@ mod tests {
             ElecraftVfoMovementStrategy::Unsupported
         ));
     }
+
+    #[test]
+    fn profile_contract_rejects_unsupported_values_and_boundaries() {
+        let k3 = k3::PROFILE;
+        assert_eq!(k3.filter_bandwidth_hz(Mode::Usb, 0), Some(0));
+        assert_eq!(k3.filter_bandwidth_hz(Mode::Usb, 255), Some(9_999));
+        assert!(k3.filter_bandwidth_hz(Mode::Usb, 128).is_some());
+        assert!(k3.meter_presentation(MeterId::Signal, 128).is_none());
+        assert!(k3.meter_presentation(MeterId::Swr, 255).is_some());
+        assert!(k3.meter_presentation(MeterId::Swr, 0).is_some());
+        assert!(k3.meter_metadata(MeterId::Temperature).is_none());
+        assert!(k3.meter_poll_spec(MeterId::Temperature).is_none());
+        assert!(k3.supported_control_values(ControlId::AfGain).is_none());
+        assert!(k3.control_max(ControlId::Vfo).is_none());
+        assert!(k3.encode_mode(Mode::Wfm).is_err());
+        assert!(k3.decode_mode('!').is_err());
+        assert!(k3.validate_baud(1_200).is_err());
+        assert!(!k3.supports_frequency(99_000_000));
+        assert!(!k3.supports_frequency(99_000));
+    }
+
+    #[test]
+    fn profile_contract_exercises_optional_capability_matrices() {
+        for model in [
+            ElecraftModel::K2,
+            ElecraftModel::Kx2,
+            ElecraftModel::Kx3,
+            ElecraftModel::K3,
+            ElecraftModel::K3s,
+            ElecraftModel::K4,
+            ElecraftModel::Kh1,
+        ] {
+            let profile = profile_for_model(model);
+            for id in [
+                ControlId::AfGain,
+                ControlId::RfGain,
+                ControlId::Preamp,
+                ControlId::Attenuator,
+                ControlId::Notch,
+                ControlId::ManualNotch,
+                ControlId::ManualNotchPosition,
+                ControlId::Antenna,
+                ControlId::NoiseBlanker,
+                ControlId::NoiseReduction,
+                ControlId::NoiseReductionLevel,
+                ControlId::Agc,
+                ControlId::Filter,
+                ControlId::Tuner,
+                ControlId::TuningStep,
+                ControlId::Squelch,
+                ControlId::RfPower,
+                ControlId::Vfo,
+                ControlId::Split,
+                ControlId::Rit,
+                ControlId::Xit,
+                ControlId::RawCiV,
+            ] {
+                assert_eq!(
+                    profile.supports_control_read(id),
+                    profile.supports_control(id) && model != ElecraftModel::Kh1
+                );
+                assert_eq!(
+                    profile.supports_control_write(id),
+                    profile.supports_control(id)
+                );
+                let _ = profile.supported_control_values(id);
+                let _ = profile.control_max(id);
+            }
+            for id in [
+                MeterId::Signal,
+                MeterId::Power,
+                MeterId::Swr,
+                MeterId::Alc,
+                MeterId::Temperature,
+            ] {
+                let _ = profile.supports_meter(id);
+                let _ = profile.meter_poll_spec(id);
+                let _ = profile.meter_metadata(id);
+                let _ = profile.meter_presentation(id, 128);
+            }
+            let _ = profile.swr_sweep_setup();
+            let (lowest_frequency, _) = profile.frequency_ranges[0];
+            assert!(profile.supports_frequency(lowest_frequency));
+            if lowest_frequency > 0 {
+                assert!(!profile.supports_frequency(lowest_frequency - 1));
+            }
+        }
+    }
 }
