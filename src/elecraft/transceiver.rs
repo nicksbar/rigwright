@@ -1302,6 +1302,57 @@ mod tests {
     }
 
     #[test]
+    fn publishes_elecraft_info_control_meter_and_raw_event_variants() {
+        let router = RadioEventRouter::default();
+        let subscription = router.subscribe();
+        let model = Some(ElecraftModel::K4);
+        for frame in [
+            b"FA00014060000;".as_slice(),
+            b"MD2;".as_slice(),
+            b"TQ0;".as_slice(),
+            b"TQ1;".as_slice(),
+            b"AG030;".as_slice(),
+            b"TM012003150123;".as_slice(),
+            b"SM00015;".as_slice(),
+            b"MDZ;".as_slice(),
+            b"TQ9;".as_slice(),
+            b"XX1;".as_slice(),
+        ] {
+            publish_event(&router, model, frame);
+        }
+        let events = subscription.drain();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            RadioEvent::FrequencyChanged {
+                frequency_hz: 14_060_000
+            }
+        )));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, RadioEvent::ModeChanged { mode: Mode::Usb })));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, RadioEvent::PttChanged { enabled: true })));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, RadioEvent::PttChanged { enabled: false })));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            RadioEvent::MeterChanged {
+                id: MeterId::Power,
+                ..
+            }
+        )));
+        assert!(
+            events
+                .iter()
+                .filter(|event| matches!(event, RadioEvent::Raw { .. }))
+                .count()
+                >= 3
+        );
+    }
+
+    #[test]
     fn receiver_controls_use_model_native_ranges() {
         let output = Arc::new(Mutex::new(Vec::new()));
         let radio = ElecraftRadio::with_external_transport(

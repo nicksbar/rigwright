@@ -115,7 +115,9 @@ impl LinkHealth {
             return true;
         }
         match (self.response_timeouts, self.commands_started) {
-            (Some(timeouts), Some(started)) if started >= 8 => timeouts * 4 >= started,
+            (Some(timeouts), Some(started)) if started >= 8 => {
+                timeouts.saturating_mul(4) >= started
+            }
             _ => false,
         }
     }
@@ -468,6 +470,38 @@ mod tests {
         }
     }
 
+    struct PartialReadRadio {
+        frequency: Option<u64>,
+        mode: Option<Mode>,
+        ptt: Option<bool>,
+    }
+
+    #[async_trait]
+    impl Radio for PartialReadRadio {
+        async fn get_frequency_hz(&self) -> Result<u64> {
+            self.frequency
+                .ok_or_else(|| anyhow::anyhow!("frequency unavailable"))
+        }
+        async fn set_frequency_hz(&self, _hz: u64) -> Result<()> {
+            Ok(())
+        }
+        async fn get_mode(&self) -> Result<Mode> {
+            self.mode.ok_or_else(|| anyhow::anyhow!("mode unavailable"))
+        }
+        async fn set_mode(&self, _mode: Mode) -> Result<()> {
+            Ok(())
+        }
+        async fn set_ptt(&self, _enabled: bool) -> Result<()> {
+            Ok(())
+        }
+        async fn get_ptt(&self) -> Result<bool> {
+            self.ptt.ok_or_else(|| anyhow::anyhow!("PTT unavailable"))
+        }
+        fn capabilities(&self) -> RadioCapabilities {
+            RadioCapabilities::default()
+        }
+    }
+
     #[test]
     fn default_radio_contract_is_explicit_and_exercised() {
         let radio = MinimalRadio;
@@ -620,6 +654,20 @@ mod tests {
             ..LinkHealth::default()
         };
         assert!(!solid.is_degraded());
+
+        let exact_threshold = LinkHealth {
+            commands_started: Some(8),
+            response_timeouts: Some(2),
+            ..LinkHealth::default()
+        };
+        assert!(exact_threshold.is_degraded());
+
+        let huge_counter = LinkHealth {
+            commands_started: Some(u64::MAX),
+            response_timeouts: Some(u64::MAX),
+            ..LinkHealth::default()
+        };
+        assert!(huge_counter.is_degraded());
     }
 
     #[test]
@@ -648,5 +696,26 @@ mod tests {
         let capabilities = radio.capabilities();
         assert!(capabilities.can_get_frequency && capabilities.can_set_mode);
         assert!(!capabilities.can_set_power && !capabilities.can_raw_protocol);
+    }
+
+    #[test]
+    fn default_core_state_preserves_partial_reads_and_rejects_empty_reads() {
+        let partial = PartialReadRadio {
+            frequency: Some(14_074_000),
+            mode: None,
+            ptt: None,
+        };
+        let state = futures::executor::block_on(partial.read_core_state()).unwrap();
+        assert_eq!(state.frequency_hz, Some(14_074_000));
+        assert_eq!(state.mode, None);
+        assert_eq!(state.ptt, None);
+
+        let empty = PartialReadRadio {
+            frequency: None,
+            mode: None,
+            ptt: None,
+        };
+        let error = futures::executor::block_on(empty.read_core_state()).unwrap_err();
+        assert!(error.to_string().contains("no readable core state"));
     }
 }

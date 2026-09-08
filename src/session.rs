@@ -1737,12 +1737,73 @@ mod tests {
             Ok(true)
         }
 
+        async fn set_scope_configuration(
+            &self,
+            _config: crate::ScopeConfiguration,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn get_scope_state(&self) -> anyhow::Result<crate::ScopeState> {
+            Ok(crate::ScopeState::default())
+        }
+
         async fn protocol_write_read(&self, _request: &[u8]) -> anyhow::Result<Vec<u8>> {
             Ok(vec![0xAA])
         }
 
         async fn get_control(&self, _id: ControlId) -> anyhow::Result<Option<ControlValue>> {
             Ok(Some(ControlValue::U8(7)))
+        }
+
+        async fn get_repeater_settings(&self) -> anyhow::Result<crate::RepeaterSettings> {
+            Ok(crate::RepeaterSettings::default())
+        }
+
+        async fn set_repeater_settings(
+            &self,
+            _settings: crate::RepeaterSettings,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn get_rit_offset_hz(&self) -> anyhow::Result<i32> {
+            Ok(12)
+        }
+
+        async fn set_rit_offset_hz(&self, _offset_hz: i32) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn get_xit_offset_hz(&self) -> anyhow::Result<i32> {
+            Ok(-34)
+        }
+
+        async fn set_xit_offset_hz(&self, _offset_hz: i32) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn select_memory_channel(&self, _channel: u16) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn read_memory_channel(&self, channel: u16) -> anyhow::Result<crate::MemoryChannel> {
+            Ok(crate::MemoryChannel {
+                channel,
+                name: Some("Test memory".to_string()),
+                frequency_hz: 146_520_000,
+                transmit_frequency_hz: None,
+                mode: Mode::Fm,
+                repeater: crate::RepeaterSettings::default(),
+            })
+        }
+
+        async fn write_memory_channel(&self, _channel: crate::MemoryChannel) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn send_dtmf(&self, _sequence: crate::DtmfSequence) -> anyhow::Result<()> {
+            Ok(())
         }
 
         fn supports_scope(&self) -> bool {
@@ -1765,6 +1826,18 @@ mod tests {
         }
 
         fn supports_meter(&self, _id: crate::MeterId) -> bool {
+            true
+        }
+
+        fn supports_repeater_settings(&self) -> bool {
+            true
+        }
+
+        fn supports_memory_channels(&self) -> bool {
+            true
+        }
+
+        fn supports_send_dtmf(&self) -> bool {
             true
         }
 
@@ -1817,7 +1890,138 @@ mod tests {
             vec![0xAA]
         );
         assert!(futures::executor::block_on(Radio::get_power(&session)).unwrap());
+        assert_eq!(
+            futures::executor::block_on(Radio::get_scope_state(&session)).unwrap(),
+            crate::ScopeState::default()
+        );
+        futures::executor::block_on(Radio::set_scope_configuration(
+            &session,
+            crate::ScopeConfiguration {
+                span_hz: Some(100_000),
+                ..crate::ScopeConfiguration::default()
+            },
+        ))
+        .unwrap();
+        assert_eq!(
+            futures::executor::block_on(Radio::get_repeater_settings(&session)).unwrap(),
+            crate::RepeaterSettings::default()
+        );
+        futures::executor::block_on(Radio::set_repeater_settings(
+            &session,
+            crate::RepeaterSettings::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            futures::executor::block_on(Radio::get_rit_offset_hz(&session)).unwrap(),
+            12
+        );
+        futures::executor::block_on(Radio::set_rit_offset_hz(&session, 24)).unwrap();
+        assert_eq!(
+            futures::executor::block_on(Radio::get_xit_offset_hz(&session)).unwrap(),
+            -34
+        );
+        futures::executor::block_on(Radio::set_xit_offset_hz(&session, -12)).unwrap();
+        futures::executor::block_on(Radio::select_memory_channel(&session, 7)).unwrap();
+        let memory = futures::executor::block_on(Radio::read_memory_channel(&session, 7)).unwrap();
+        assert_eq!(memory.channel, 7);
+        assert_eq!(memory.mode, Mode::Fm);
+        futures::executor::block_on(Radio::write_memory_channel(&session, memory)).unwrap();
+        futures::executor::block_on(Radio::send_dtmf(
+            &session,
+            crate::DtmfSequence::new("12#").unwrap(),
+        ))
+        .unwrap();
+        assert!(matches!(
+            futures::executor::block_on(Radio::set_power(&session, true))
+                .expect_err("power writes are intentionally unsupported"),
+            error if error.to_string().contains("power write")
+        ));
         assert!(Radio::capabilities(&session).can_raw_protocol);
+    }
+
+    #[test]
+    fn session_forwards_metadata_discovery_and_default_optional_operations() {
+        let session = RadioSession::from_radio(
+            Arc::new(OptionalSurfaceRadio),
+            SessionConfig {
+                queue_capacity: 8,
+                refresh_interval: None,
+                max_tx_hold: None,
+            },
+        )
+        .unwrap();
+
+        assert!(Radio::event_router(&session).is_none());
+        assert_eq!(
+            Radio::link_health(&session),
+            crate::hal::LinkHealth::default()
+        );
+        assert!(Radio::event_stream_age(&session).is_none());
+        assert!(Radio::scope_metadata(&session).is_none());
+        assert!(Radio::filter_bandwidth_hz(&session, Mode::Usb, 1).is_none());
+        assert!(Radio::meter_presentation(&session, crate::MeterId::Signal, 128).is_none());
+        assert!(Radio::control_max(&session, ControlId::RfPower).is_none());
+        assert!(Radio::supported_control_values(&session, ControlId::RfPower).is_none());
+        assert!(Radio::meter_poll_spec(&session, crate::MeterId::Signal).is_none());
+        assert!(Radio::meter_metadata(&session, crate::MeterId::Signal).is_none());
+        assert!(Radio::supports_control_read(&session, ControlId::RfPower));
+        assert!(Radio::supports_control_write(&session, ControlId::RfPower));
+        assert_eq!(
+            Radio::supported_controls(&session).len(),
+            ControlId::ALL.len()
+        );
+        assert_eq!(
+            Radio::supported_meters(&session).len(),
+            crate::MeterId::ALL.len()
+        );
+
+        futures::executor::block_on(Radio::set_control(
+            &session,
+            ControlId::RfPower,
+            ControlValue::U8(42),
+        ))
+        .unwrap();
+        assert_eq!(
+            futures::executor::block_on(Radio::get_tuner_status(&session)).unwrap(),
+            None
+        );
+        assert!(futures::executor::block_on(Radio::start_tuner(&session)).is_err());
+    }
+
+    #[test]
+    fn session_rejects_unsupported_optional_requests_before_transport() {
+        let session = RadioSession::from_radio(
+            fake(),
+            SessionConfig {
+                queue_capacity: 8,
+                refresh_interval: None,
+                max_tx_hold: None,
+            },
+        )
+        .unwrap();
+
+        assert!(futures::executor::block_on(Radio::set_scope_configuration(
+            &session,
+            crate::ScopeConfiguration::default(),
+        ))
+        .is_err());
+        assert!(futures::executor::block_on(Radio::get_scope_state(&session)).is_err());
+        assert!(futures::executor::block_on(Radio::get_repeater_settings(&session)).is_err());
+        assert!(futures::executor::block_on(Radio::set_repeater_settings(
+            &session,
+            crate::RepeaterSettings::default(),
+        ))
+        .is_err());
+        assert!(futures::executor::block_on(Radio::get_rit_offset_hz(&session)).is_err());
+        assert!(futures::executor::block_on(Radio::set_xit_offset_hz(&session, 10)).is_err());
+        assert!(futures::executor::block_on(Radio::select_memory_channel(&session, 1)).is_err());
+        assert!(futures::executor::block_on(Radio::read_memory_channel(&session, 1)).is_err());
+        assert!(futures::executor::block_on(Radio::send_dtmf(
+            &session,
+            crate::DtmfSequence::new("1").unwrap(),
+        ))
+        .is_err());
+        assert!(session.set_frequency(0).is_err());
     }
 
     #[test]
@@ -1916,6 +2120,27 @@ mod tests {
             Err(SessionError::InvalidFrame(_))
         ));
         assert_eq!(session.diagnostics().completed, 2);
+    }
+
+    #[test]
+    fn session_operation_metadata_covers_command_classes_and_coalescing() {
+        let operations = [
+            SessionOperation::Refresh,
+            SessionOperation::SetPtt(true),
+            SessionOperation::SetFrequency(7_000_000),
+            SessionOperation::SetMode(Mode::Usb),
+            SessionOperation::SetControl(ControlId::RfPower, ControlValue::U8(5)),
+            SessionOperation::Raw(vec![0xFE, 0xFD]),
+        ];
+        assert_eq!(operations[0].class(), SessionCommandClass::Query);
+        assert_eq!(operations[1].class(), SessionCommandClass::SafetyCritical);
+        assert_eq!(operations[2].class(), SessionCommandClass::StateWrite);
+        assert_eq!(operations[5].class(), SessionCommandClass::Raw);
+        assert!(operations[..5]
+            .iter()
+            .all(|operation| operation.coalesce_key().is_some()));
+        assert!(operations[5].coalesce_key().is_none());
+        assert!(operations[1].priority() < operations[0].priority());
     }
 
     #[test]

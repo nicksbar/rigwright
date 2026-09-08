@@ -637,6 +637,19 @@ mod tests {
     }
 
     #[test]
+    fn filter_bandwidth_tables_cover_voice_and_data_mode_families() {
+        let profile = profile_for_model(YaesuCatModel::Ft710);
+        assert_eq!(profile.filter_bandwidth_hz(Mode::Usb, 5), Some(1100));
+        assert_eq!(profile.filter_bandwidth_hz(Mode::Rtty, 1), Some(50));
+        assert_eq!(profile.filter_bandwidth_hz(Mode::Am, 1), None);
+        assert_eq!(profile.filter_bandwidth_hz(Mode::Data, 1), None);
+        assert_eq!(
+            profile_for_model(YaesuCatModel::Generic).filter_bandwidth_hz(Mode::Usb, 1),
+            None
+        );
+    }
+
+    #[test]
     fn common_controls_own_their_documented_cat_commands() {
         let profile = profile_for_model(YaesuCatModel::Ft710);
         assert_eq!(profile.control(ControlId::AfGain).unwrap().command, "AG");

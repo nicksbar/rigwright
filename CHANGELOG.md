@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.26 — coverage and driver validation
+
+### Release readiness
+- Raise the aggregate executable-line coverage gate to 90% and promote the
+  Icom CI-V, Kenwood CAT, and covered profile gates to 90%.
+- Add manual-backed regression coverage for native Icom CI-V, Kenwood CAT,
+  and model-profile command behavior.
+
+### Tests
+- Expand `RadioSession` public-trait forwarding coverage for scope, repeater,
+  RIT/XIT, memory, DTMF, tuner, raw protocol, meters, and capability-gated
+  operations.
+- Make probe-log temporary-file fixtures safe under parallel test and coverage
+  execution.
+- Add an aggregate 87% CI coverage floor with a documented 90%+ project target,
+  and refresh the README coverage snapshot.
+
 ## 0.1.25 — FT-991A IF mode reads
 
 ### Fixed
