@@ -39,9 +39,8 @@ check_target() {
   (( covered_lines * 100 >= total_lines * threshold_percent ))
 }
 
-# The event-stream and scope-health additions expanded the shared CI-V driver;
-# keep the enforced floor just below the current 84.91% measured coverage
-# while retaining the per-file changed-code gate below.
+# Keep the enforced floor below the current measured coverage while retaining
+# the per-file changed-code gate below.
 check_target "Icom" '^icom/' 84
 check_target "HAL" '^hal\.rs$' 95
 check_target "Android" '^android\.rs$' 84

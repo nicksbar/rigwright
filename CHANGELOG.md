@@ -8,6 +8,8 @@
   operations.
 - Make probe-log temporary-file fixtures safe under parallel test and coverage
   execution.
+- Add an aggregate 87% CI coverage floor with a documented 90%+ project target,
+  and refresh the README coverage snapshot.
 
 ## 0.1.25 — FT-991A IF mode reads
 
