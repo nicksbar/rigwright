@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Tests
+- Expand `RadioSession` public-trait forwarding coverage for scope, repeater,
+  RIT/XIT, memory, DTMF, tuner, raw protocol, meters, and capability-gated
+  operations.
+- Make probe-log temporary-file fixtures safe under parallel test and coverage
+  execution.
+
 ## 0.1.25 — FT-991A IF mode reads
 
 ### Fixed

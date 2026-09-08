@@ -190,6 +190,21 @@ mod tests {
     }
 
     fn unique_temp_path() -> PathBuf {
-        std::env::temp_dir().join(format!("rigwright-probe-test-{}.json", std::process::id()))
+        let thread_name = std::thread::current()
+            .name()
+            .unwrap_or("unnamed")
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() {
+                    character
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        std::env::temp_dir().join(format!(
+            "rigwright-probe-test-{}-{thread_name}.json",
+            std::process::id()
+        ))
     }
 }
