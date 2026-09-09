@@ -1155,11 +1155,17 @@ impl IcomCiVRadio {
                 .with_serial_policy(self.serial_policy);
                 match candidate.probe() {
                     Ok(status) => {
+                        if status.frequency_hz.is_none() || status.mode.is_none() {
+                            failures.push(format!(
+                                "baud {baud_rate}, address {radio_address:#04x}: response did not contain frequency and mode"
+                            ));
+                            continue;
+                        }
                         return Ok(IcomProbeResult {
                             baud_rate,
                             radio_address,
                             status,
-                        })
+                        });
                     }
                     Err(error) => failures.push(format!(
                         "baud {baud_rate}, address {radio_address:#04x}: {error}"

@@ -16,6 +16,16 @@
 - Add the interactive `probe_wizard` example for serial-device selection,
   bounded read-only identification, explicit model override, and opt-in
   minimum-power PTT validation with de-key and RF-power restoration.
+- Expand `probe_wizard` with a file-backed HAL diagnostic that records
+  advertised controls, meters, optional surfaces, timings, PASS/FAIL/SKIP
+  results, and driver error details; safe same-value write round-trips are
+  available only through explicit `--exercise-writes`.
+- Improve CI-V discovery by scanning documented model addresses and baud
+  rates, retaining the detected endpoint, and rejecting responses that do not
+  contain both a parsed frequency and mode.
+- Make diagnostic optional-surface results mode-aware for the IC-7300, so
+  documented Data-mode limitations and unimplemented HAL methods are reported
+  as skips instead of misleading driver failures.
 
 ### Deliberate limitations
 - The profiles are framework support; physical IC-756PROII validation remains

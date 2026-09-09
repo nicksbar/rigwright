@@ -273,17 +273,17 @@ workflow; it prints the test and coverage summary in the pull request's check
 details and uploads the complete HTML report as a workflow artifact.
 
 The README coverage labels are the latest measured line-coverage snapshot from
-357 tests. The workflow badge is the authoritative pass/fail result. CI
+367 tests. The workflow badge is the authoritative pass/fail result. CI
 enforces a 90% aggregate executable-line coverage floor. Icom CI-V, Kenwood
 CAT, and the covered profile areas also have 90% gates; the remaining
 sub-90% production modules are tracked by the coverage report and remain the
 next test targets.
 The aggregate gate is implemented by `scripts/check-total-coverage.sh` and the
 area gates by `scripts/check-icom-coverage.sh` and
-scripts/check-elecraft-coverage.sh. The latest local run reached 92.25%
-overall executable-line coverage (16,902 executable lines, 1,310 missed), including
-97.19% Elecraft profile, 97.84% TS-590SG, 97.53% TS-890S, 89.60% Elecraft
-transport, 93.63% generic transport, and 96.67% HAL coverage. The remaining
+scripts/check-elecraft-coverage.sh. The latest local run reached 91.35%
+overall executable-line coverage (27,611 executable lines, 2,387 missed), including
+91.58% Icom coverage, 97.19% Elecraft profile, 97.84% TS-590SG, 97.53% TS-890S,
+89.60% Elecraft transport, 93.63% generic transport, and 94.60% HAL coverage. The remaining
 sub-90% modules are tracked by the coverage report and are the next test
 targets. All current local coverage gates pass. The workflow badge reports
 whether these tests and gates pass; the uploaded LLVM report provides the
