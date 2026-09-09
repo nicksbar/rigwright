@@ -19,6 +19,12 @@ pub enum ControlEncoding {
     Level255Bcd,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModeCommand {
+    Legacy,
+    Detailed,
+}
+
 /// A model-specific control mapped to an Icom CI-V command prefix.
 ///
 /// The resulting request is `[command_prefix..., value...]`; a get request
@@ -243,6 +249,14 @@ pub struct IcomCivProfile {
     pub frequency_ranges: &'static [(u64, u64)],
     /// Controls implemented by the generic profile executor.
     pub controls: &'static [ControlSpec],
+    /// Controls inherited by this concrete profile. Generic CI-V deliberately
+    /// leaves this empty so unsupported controls are never implied.
+    pub common_controls: &'static [ControlSpec],
+    /// Whether this model uses the original 0x04/0x06 mode commands or the
+    /// newer 0x26 operating-mode command family.
+    pub mode_command: ModeCommand,
+    /// Model-owned tuning-step values. Empty means the control is unsupported.
+    pub tuning_step_values: &'static [u8],
     /// Base operating modes documented by this model.
     pub modes: &'static [BaseMode],
     /// Waveform frame geometry, if the model's scope stream is supported.
@@ -301,6 +315,9 @@ impl PartialEq for IcomCivProfile {
             && self.default_address == other.default_address
             && self.frequency_ranges == other.frequency_ranges
             && self.controls == other.controls
+            && self.common_controls == other.common_controls
+            && self.mode_command == other.mode_command
+            && self.tuning_step_values == other.tuning_step_values
             && self.modes == other.modes
             && self.scope_geometry == other.scope_geometry
             && self.scope == other.scope
@@ -459,11 +476,10 @@ impl IcomCivProfile {
         self.modes.contains(&mode)
     }
     pub fn control(self, id: ControlId) -> Option<&'static ControlSpec> {
-        self.controls.iter().find(|spec| spec.id == id).or_else(|| {
-            (self.model != crate::models::IcomCivModel::Generic)
-                .then(|| COMMON_CONTROLS.iter().find(|spec| spec.id == id))
-                .flatten()
-        })
+        self.controls
+            .iter()
+            .chain(self.common_controls.iter())
+            .find(|spec| spec.id == id)
     }
 
     pub fn supports_meter(self, id: MeterId) -> bool {
@@ -474,6 +490,7 @@ impl IcomCivProfile {
         self.control(id).is_some()
             || (id == ControlId::DataMode && self.control_capabilities.supports_data_mode)
             || (id == ControlId::Filter && !self.control_capabilities.filter_values.is_empty())
+            || (id == ControlId::TuningStep && !self.tuning_step_values.is_empty())
             || id == ControlId::RawCiV
             || (id == ControlId::Vfo && self.control_capabilities.supports_vfo)
             || (id == ControlId::MainSub && self.main_sub.is_some())
@@ -504,6 +521,9 @@ impl IcomCivProfile {
         match id {
             ControlId::Attenuator => Some(self.attenuator_values),
             ControlId::Filter => Some(self.control_capabilities.filter_values),
+            ControlId::TuningStep if !self.tuning_step_values.is_empty() => {
+                Some(self.tuning_step_values)
+            }
             _ => None,
         }
     }
@@ -543,6 +563,9 @@ pub fn profile_for_model(model: crate::models::IcomCivModel) -> &'static IcomCiv
         crate::models::IcomCivModel::Ic7300 => &crate::icom::ic7300::CIV_PROFILE,
         crate::models::IcomCivModel::Ic7610 => &crate::icom::ic7610::CIV_PROFILE,
         crate::models::IcomCivModel::Ic9700 => &crate::icom::ic9700::CIV_PROFILE,
+        crate::models::IcomCivModel::Ic756Pro => &crate::icom::ic756pro::CIV_PROFILE,
+        crate::models::IcomCivModel::Ic756ProIi => &crate::icom::ic756proii::CIV_PROFILE,
+        crate::models::IcomCivModel::Ic756ProIii => &crate::icom::ic756proiii::CIV_PROFILE,
     }
 }
 
@@ -589,6 +612,9 @@ mod tests {
             IcomCivModel::Ic7300,
             IcomCivModel::Ic7610,
             IcomCivModel::Ic9700,
+            IcomCivModel::Ic756Pro,
+            IcomCivModel::Ic756ProIi,
+            IcomCivModel::Ic756ProIii,
         ] {
             let profile = profile_for_model(model);
             assert_eq!(profile.model, model);

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.28 — IC-756 PRO family CI-V support
+
+### Added
+- Add independent CI-V profiles for IC-756PRO, IC-756PROII, and IC-756PROIII,
+  including their documented addresses, legacy mode commands, tuning steps,
+  frequency ranges, controls, and model-specific meter surfaces.
+- Add searchable Markdown extractions of all three instruction manuals and
+  record their source PDFs, page counts, extraction tool, and the IC-756PROII
+  hardware-validation target.
+
+### Deliberate limitations
+- The profiles are framework support; physical IC-756PROII validation remains
+  pending and no hardware-validation claim is made yet.
+
 ## 0.1.27 — TM-V71A and TM-D710 Kenwood profiles
 
 ### Added

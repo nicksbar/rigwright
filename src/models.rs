@@ -396,6 +396,9 @@ pub enum IcomCivModel {
     Ic7300,
     Ic7610,
     Ic9700,
+    Ic756Pro,
+    Ic756ProIi,
+    Ic756ProIii,
 }
 
 /// Modern, semicolon-terminated Yaesu ASCII CAT models.
@@ -453,6 +456,9 @@ impl IcomCivModel {
             Self::Ic7300 => "IC-7300",
             Self::Ic7610 => "IC-7610",
             Self::Ic9700 => "IC-9700",
+            Self::Ic756Pro => "IC-756PRO",
+            Self::Ic756ProIi => "IC-756PROII",
+            Self::Ic756ProIii => "IC-756PROIII",
         }
     }
 
@@ -465,6 +471,13 @@ impl IcomCivModel {
             "IC-7300" => Some(Self::Ic7300),
             "IC-7610" => Some(Self::Ic7610),
             "IC-9700" => Some(Self::Ic9700),
+            "IC-756PRO" | "IC756PRO" | "IC-756 PRO" => Some(Self::Ic756Pro),
+            "IC-756PROII" | "IC756PROII" | "IC-756PRO2" | "IC756PRO2" | "IC-756 PRO II" => {
+                Some(Self::Ic756ProIi)
+            }
+            "IC-756PROIII" | "IC756PROIII" | "IC-756PRO3" | "IC756PRO3" | "IC-756 PRO III" => {
+                Some(Self::Ic756ProIii)
+            }
             _ => None,
         }
     }
@@ -637,6 +650,33 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
             vhf_uhf: true,
             ..HF_SCOPE
         },
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Icom,
+        model: "IC-756PRO",
+        protocol: Protocol::IcomCiV {
+            default_address: 0x5C,
+        },
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Icom,
+        model: "IC-756PROII",
+        protocol: Protocol::IcomCiV {
+            default_address: 0x64,
+        },
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Icom,
+        model: "IC-756PROIII",
+        protocol: Protocol::IcomCiV {
+            default_address: 0x6E,
+        },
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Yaesu,

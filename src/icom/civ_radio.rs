@@ -1614,16 +1614,19 @@ impl IcomCiVRadio {
                 .transact(&[0x06, mode_to_civ_mode(mode)?], false)
                 .map(|_| ());
         }
+        let profile = self.active_profile();
+        if matches!(profile.mode_command, super::profile::ModeCommand::Legacy) {
+            return self
+                .transact(&[0x06, mode_to_civ_mode(mode)?], false)
+                .map(|_| ());
+        }
         let (base_mode, data_mode) = hal_mode_to_icom_operating_mode(mode);
-        let current_filter = if self.model.is_some() {
-            self.transact(&[0x26, 0x00], true)
-                .ok()
-                .and_then(|response| parse_mode_details(&response))
-                .and_then(|details| details.filter)
-                .unwrap_or(1)
-        } else {
-            1
-        };
+        let current_filter = self
+            .transact(&[0x26, 0x00], true)
+            .ok()
+            .and_then(|response| parse_mode_details(&response))
+            .and_then(|details| details.filter)
+            .unwrap_or(1);
         self.set_operating_mode_blocking(base_mode, data_mode, current_filter)
     }
 
@@ -1660,10 +1663,9 @@ impl IcomCiVRadio {
     }
 
     fn get_mode_blocking(&self) -> Result<Mode> {
-        let request: &[u8] = if self.model.is_some() {
-            &[0x26, 0x00]
-        } else {
-            &[0x04]
+        let request: &[u8] = match self.model.map(|_| self.active_profile().mode_command) {
+            Some(super::profile::ModeCommand::Detailed) => &[0x26, 0x00],
+            Some(super::profile::ModeCommand::Legacy) | None => &[0x04],
         };
         let response = self.transact(request, true)?;
         parse_mode(&response).context("mode not present or unsupported in CI-V response")
@@ -1853,18 +1855,22 @@ impl IcomCiVRadio {
             };
         }
 
-        if id == ControlId::TuningStep {
+        if !profile.tuning_step_values.is_empty() && id == ControlId::TuningStep {
             return match op {
                 ControlOp::Set => {
                     let step = match value.context("missing tuning-step value")? {
-                        ControlValue::U8(value) if value <= 5 => value,
-                        _ => anyhow::bail!("IC-7200 tuning step expects U8 0..=5"),
+                        ControlValue::U8(value) if profile.tuning_step_values.contains(&value) => {
+                            value
+                        }
+                        _ => anyhow::bail!(
+                            "tuning-step value is not documented for this Icom profile"
+                        ),
                     };
                     self.transact_ack(&[0x10, step])?;
                     Ok(None)
                 }
                 ControlOp::Get => {
-                    anyhow::bail!("IC-7200 tuning-step selection is write-only through CI-V")
+                    anyhow::bail!("tuning-step selection is write-only through CI-V")
                 }
             };
         }
@@ -3705,6 +3711,9 @@ mod tests {
                     crate::models::IcomCivModel::Ic7300 => 0x94,
                     crate::models::IcomCivModel::Ic7610 => 0x98,
                     crate::models::IcomCivModel::Ic9700 => 0xA2,
+                    crate::models::IcomCivModel::Ic756Pro => 0x5C,
+                    crate::models::IcomCivModel::Ic756ProIi => 0x64,
+                    crate::models::IcomCivModel::Ic756ProIii => 0x6E,
                     crate::models::IcomCivModel::Generic => unreachable!(),
                 },
                 transport,
@@ -3734,6 +3743,9 @@ mod tests {
                     crate::models::IcomCivModel::Ic7300 => 0x94,
                     crate::models::IcomCivModel::Ic7610 => 0x98,
                     crate::models::IcomCivModel::Ic9700 => 0xA2,
+                    crate::models::IcomCivModel::Ic756Pro => 0x5C,
+                    crate::models::IcomCivModel::Ic756ProIi => 0x64,
+                    crate::models::IcomCivModel::Ic756ProIii => 0x6E,
                     crate::models::IcomCivModel::Generic => unreachable!(),
                 },
                 0xE0,
@@ -3748,6 +3760,9 @@ mod tests {
                     crate::models::IcomCivModel::Ic7300 => 0x94,
                     crate::models::IcomCivModel::Ic7610 => 0x98,
                     crate::models::IcomCivModel::Ic9700 => 0xA2,
+                    crate::models::IcomCivModel::Ic756Pro => 0x5C,
+                    crate::models::IcomCivModel::Ic756ProIi => 0x64,
+                    crate::models::IcomCivModel::Ic756ProIii => 0x6E,
                     crate::models::IcomCivModel::Generic => unreachable!(),
                 },
                 transport,
