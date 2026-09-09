@@ -419,6 +419,8 @@ pub enum YaesuCatModel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum YaesuLegacyModel {
     Generic,
+    Ft1000,
+    Ft1000D,
     Ft817Nd,
     Ft818,
     Ft857D,
@@ -512,6 +514,8 @@ impl YaesuLegacyModel {
     pub fn model_name(self) -> &'static str {
         match self {
             Self::Generic => GENERIC_YAESU_CLASSIC_MODEL,
+            Self::Ft1000 => "FT-1000",
+            Self::Ft1000D => "FT-1000D",
             Self::Ft817Nd => "FT-817ND",
             Self::Ft818 => "FT-818",
             Self::Ft857D => "FT-857D",
@@ -522,6 +526,8 @@ impl YaesuLegacyModel {
     pub fn from_model_name(model: &str) -> Option<Self> {
         match model.to_ascii_uppercase().as_str() {
             "CLASSIC CAT (GENERIC)" | "YAESU CLASSIC (GENERIC)" => Some(Self::Generic),
+            "FT-1000" | "FT1000" => Some(Self::Ft1000),
+            "FT-1000D" | "FT1000D" => Some(Self::Ft1000D),
             "FT-817ND" | "FT817ND" => Some(Self::Ft817Nd),
             "FT-818" | "FT818" | "FT-818ND" | "FT818ND" => Some(Self::Ft818),
             "FT-857D" | "FT857D" => Some(Self::Ft857D),
@@ -691,6 +697,20 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         protocol: Protocol::YaesuLegacyCat,
         support: SupportLevel::Framework,
         capabilities: ALL_MODE_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Yaesu,
+        model: "FT-1000",
+        protocol: Protocol::YaesuLegacyCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
+    },
+    RadioModelProfile {
+        manufacturer: Manufacturer::Yaesu,
+        model: "FT-1000D",
+        protocol: Protocol::YaesuLegacyCat,
+        support: SupportLevel::Framework,
+        capabilities: HF_BASE,
     },
     RadioModelProfile {
         manufacturer: Manufacturer::Yaesu,
@@ -916,7 +936,9 @@ mod tests {
 
     #[test]
     fn catalogs_legacy_yaesu_binary_cat_family() {
-        for model in ["FT-817ND", "FT-818", "FT-857D", "FT-897D"] {
+        for model in [
+            "FT-1000", "FT-1000D", "FT-817ND", "FT-818", "FT-857D", "FT-897D",
+        ] {
             let profile = find_model(model).expect("legacy Yaesu profile");
             assert_eq!(profile.protocol, Protocol::YaesuLegacyCat);
             assert_eq!(profile.support, SupportLevel::Framework);

@@ -9,10 +9,17 @@
 - Add searchable Markdown extractions of all three instruction manuals and
   record their source PDFs, page counts, extraction tool, and the IC-756PROII
   hardware-validation target.
+- Add separate Yaesu FT-1000 and FT-1000D legacy CAT profiles under the
+  profile-owned `src/yaesu/ft1000/` package, including documented 8N2/4800
+  serial settings, five-byte commands, status-update decoding, split, mode,
+  frequency, and PTT support.
 
 ### Deliberate limitations
 - The profiles are framework support; physical IC-756PROII validation remains
   pending and no hardware-validation claim is made yet.
+- FT-1000/FT-1000D support is framework-level pending physical validation;
+  Digimode 4 is an external serial/level interface and is not modeled as a
+  separate radio protocol.
 
 ## 0.1.27 — TM-V71A and TM-D710 Kenwood profiles
 

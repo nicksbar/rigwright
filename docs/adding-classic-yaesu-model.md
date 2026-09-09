@@ -11,7 +11,9 @@ Use the exact model operating manual and record its filename in
 - every command is four parameter bytes followed by one opcode byte;
 - the serial format is 8 data bits, no parity, and two stop bits;
 - supported CAT baud rates and the required radio menu/jack setting;
-- response length for each read opcode;
+- response length for each read opcode, including any model-specific status
+  update block rather than assuming the one-byte/five-byte layouts of the
+  smaller classic radios;
 - frequency encoding precision and documented tuning ranges;
 - writable mode codes separately from codes that may only appear in status;
 - RX/TX status-bit polarity, especially PTT and split, where zero means on.
@@ -37,8 +39,10 @@ commands in the individual model module.
 Manual examples are not hardware captures. A new profile remains `Framework`
 until frequency and mode read/write, PTT read/write, RX/TX status, split,
 timeouts, reconnects, and emergency de-key have been exercised on that exact
-radio. Confirm that set commands really return no bytes and that status reads
-return exactly the documented one or five bytes.
+radio. Confirm that set commands really return no bytes and that each status
+read returns exactly the documented response length for that model. For
+example, the FT-1000 family returns a 1,636-byte `Update` block for its
+frequency/mode status command, in addition to five-byte flags responses.
 
 Do not expose remote radio power-off through the root HAL. The FT-817ND and
 FT-818 manuals document power commands, but an accidental or unacknowledged

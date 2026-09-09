@@ -686,6 +686,13 @@ mod tests {
             Some(YaesuLegacyModel::Ft857D)
         );
         assert!(open_model("FT-857D", "/dev/null", 19_200, 0xE0).is_err());
+
+        let ft1000d = open_model("FT-1000D", "/dev/null", 4_800, 0xE0).unwrap();
+        assert_eq!(
+            ft1000d.as_legacy_yaesu().and_then(LegacyYaesuRadio::model),
+            Some(YaesuLegacyModel::Ft1000D)
+        );
+        assert!(open_model("FT-1000", "/dev/null", 9_600, 0xE0).is_err());
     }
     #[test]
     fn factory_selects_the_exact_kenwood_profile_and_validates_baud() {
@@ -821,6 +828,7 @@ mod tests {
             open_model("FTDX10", "/dev/null", 38_400, 0xE0).unwrap(),
             open_model("TS-590SG", "/dev/null", 115_200, 0xE0).unwrap(),
             open_model("FT-857D", "/dev/null", 9_600, 0xE0).unwrap(),
+            open_model("FT-1000", "/dev/null", 4_800, 0xE0).unwrap(),
             open_model("K4", "/dev/null", 38_400, 0xE0).unwrap(),
             open_dxlab_localhost(),
             open_rigctld("127.0.0.1:4532"),
