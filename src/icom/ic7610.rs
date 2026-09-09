@@ -210,6 +210,9 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     default_address: 0x98,
     frequency_ranges: FREQUENCY_RANGES,
     controls: CONTROLS,
+    common_controls: super::profile::COMMON_CONTROLS,
+    mode_command: super::profile::ModeCommand::Detailed,
+    tuning_step_values: &[],
     modes: super::profile::DEFAULT_MODES,
     scope_geometry: Some(crate::models::IcomScopeGeometry {
         divisions: 15,

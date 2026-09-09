@@ -4,6 +4,7 @@
 //! older five-byte binary CAT family remains a separate protocol backend.
 
 pub mod cat_radio;
+pub mod ft1000;
 pub mod ft710;
 pub mod ft817nd;
 pub mod ft818;

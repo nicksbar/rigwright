@@ -21,7 +21,7 @@ use crate::{
     transport::{RadioTransport, SerialPortTransport},
 };
 
-use super::legacy_profile::{profile_for_model, YaesuLegacyProfile};
+use super::legacy_profile::{profile_for_model, LegacyCatDialect, YaesuLegacyProfile};
 
 // RS918/mcHF-class FT-817 CAT emulators need time to apply a write before a
 // following status query. This is also consistent with the command/mode delay
@@ -168,6 +168,12 @@ impl LegacyYaesuRadio {
         self.model.map(profile_for_model)
     }
 
+    fn dialect(&self) -> LegacyCatDialect {
+        self.profile()
+            .map(|profile| profile.dialect)
+            .unwrap_or(LegacyCatDialect::Classic)
+    }
+
     pub fn transport_metrics(&self) -> LegacyYaesuTransportMetrics {
         self.transport
             .lock()
@@ -191,9 +197,16 @@ impl LegacyYaesuRadio {
     }
 
     pub fn get_frequency_mode_status(&self) -> Result<FrequencyModeStatus> {
-        let response = self.transact(yaesu_legacy_cat::read_frequency_and_mode(), 5)?;
-        yaesu_legacy_cat::decode_frequency_and_mode(&response).map_err(|error| {
-            anyhow!("{error}; classic Yaesu status response bytes={response:02X?}")
+        let dialect = self.dialect();
+        let (request, response_len) = dialect.frequency_mode_request();
+        let response = self.transact(request, response_len)?;
+        dialect.decode_frequency_mode(&response).map_err(|error| {
+            anyhow!(
+                "{error}; {} status response bytes={response:02X?}",
+                self.model
+                    .map(|model| model.model_name())
+                    .unwrap_or("classic Yaesu")
+            )
         })
     }
 
@@ -208,12 +221,15 @@ impl LegacyYaesuRadio {
                 );
             }
         }
-        self.transact(yaesu_legacy_cat::set_mode(mode), 0)?;
+        let frame = self.dialect().set_mode(mode);
+        self.transact(frame, 0)?;
         Ok(())
     }
 
     pub fn get_tx_status(&self) -> Result<TxStatus> {
-        yaesu_legacy_cat::decode_tx_status(&self.transact(yaesu_legacy_cat::read_tx_status(), 1)?)
+        let dialect = self.dialect();
+        let (request, response_len) = dialect.tx_status_request();
+        dialect.decode_tx_status(&self.transact(request, response_len)?)
     }
 
     pub fn get_split(&self) -> Result<bool> {
@@ -221,7 +237,8 @@ impl LegacyYaesuRadio {
     }
 
     pub fn set_split(&self, enabled: bool) -> Result<()> {
-        self.transact(yaesu_legacy_cat::set_split(enabled), 0)?;
+        let frame = self.dialect().set_split(enabled);
+        self.transact(frame, 0)?;
         Ok(())
     }
 
@@ -242,7 +259,7 @@ impl LegacyYaesuRadio {
     /// Execute one complete five-byte command and read its documented response
     /// length. This is the escape hatch for model commands not in the root HAL.
     pub fn transact_raw(&self, frame: [u8; 5], response_len: usize) -> Result<Vec<u8>> {
-        if response_len > 256 {
+        if response_len > 2_048 {
             bail!("legacy Yaesu response length exceeds safety limit");
         }
         self.transact(frame, response_len)
@@ -272,7 +289,7 @@ impl LegacyYaesuRadio {
                     .parity(Parity::None)
                     .stop_bits(StopBits::Two)
                     .flow_control(FlowControl::None)
-                    .timeout(Duration::from_millis(1_200))
+                    .timeout(Duration::from_millis(self.dialect().serial_timeout_ms()))
                     .open()
                     .with_context(|| format!("failed to open classic CAT port {}", self.port))?,
             )));
@@ -333,7 +350,8 @@ impl Radio for LegacyYaesuRadio {
                 );
             }
         }
-        self.transact(yaesu_legacy_cat::set_frequency(hz)?, 0)?;
+        let frame = self.dialect().set_frequency(hz)?;
+        self.transact(frame, 0)?;
         Ok(())
     }
 
@@ -348,7 +366,8 @@ impl Radio for LegacyYaesuRadio {
     }
 
     async fn set_ptt(&self, enabled: bool) -> Result<()> {
-        self.transact(yaesu_legacy_cat::set_ptt(enabled), 0)?;
+        let frame = self.dialect().set_ptt(enabled);
+        self.transact(frame, 0)?;
         let actual = self.get_tx_status()?.transmitting;
         if actual != enabled {
             bail!(
@@ -366,11 +385,7 @@ impl Radio for LegacyYaesuRadio {
         let frame: [u8; 5] = request
             .try_into()
             .context("classic Yaesu CAT command must contain exactly five bytes")?;
-        let response_len = match frame[4] {
-            0xE7 | 0xF7 => 1,
-            0x03 => 5,
-            _ => 0,
-        };
+        let response_len = self.dialect().response_length(frame);
         self.transact(frame, response_len)
     }
 
@@ -382,6 +397,9 @@ impl Radio for LegacyYaesuRadio {
     }
 
     async fn set_control(&self, id: ControlId, value: ControlValue) -> Result<()> {
+        if !self.supports_control_write(id) {
+            bail!("classic Yaesu control {id:?} is not writable for this model");
+        }
         match (id, value) {
             (ControlId::Split, ControlValue::Bool(enabled)) => self.set_split(enabled),
             (ControlId::Rit, ControlValue::Bool(enabled)) => {
@@ -411,6 +429,10 @@ impl Radio for LegacyYaesuRadio {
     }
 
     async fn set_rit_offset_hz(&self, offset_hz: i32) -> Result<()> {
+        anyhow::ensure!(
+            self.supports_control_write(ControlId::Rit),
+            "classic Yaesu RIT is not writable for this model"
+        );
         self.transact(yaesu_legacy_cat::set_clarifier_offset(offset_hz)?, 0)?;
         Ok(())
     }
@@ -682,7 +704,7 @@ mod tests {
         assert!(radio.set_legacy_mode(LegacyMode::FmNarrow).is_err());
         assert!(futures::executor::block_on(radio.set_mode(Mode::Wfm)).is_err());
         assert!(futures::executor::block_on(radio.protocol_write_read(&[0x01, 0x02])).is_err());
-        assert!(radio.transact_raw([0; 5], 257).is_err());
+        assert!(radio.transact_raw([0; 5], 2_049).is_err());
         assert!(futures::executor::block_on(
             radio.set_control(ControlId::Split, ControlValue::U8(1),)
         )
@@ -692,6 +714,17 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+
+        let ft1000 = LegacyYaesuRadio::with_transport(
+            Some(YaesuLegacyModel::Ft1000),
+            4_800,
+            ScriptedTransport::new(),
+        );
+        assert!(futures::executor::block_on(
+            ft1000.set_control(ControlId::Rit, ControlValue::Bool(true))
+        )
+        .is_err());
+        assert!(futures::executor::block_on(ft1000.set_rit_offset_hz(100)).is_err());
     }
 
     #[test]

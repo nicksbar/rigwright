@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.1.28 — IC-756 PRO family CI-V support
+
+### Added
+- Add independent CI-V profiles for IC-756PRO, IC-756PROII, and IC-756PROIII,
+  including their documented addresses, legacy mode commands, tuning steps,
+  frequency ranges, controls, and model-specific meter surfaces.
+- Add searchable Markdown extractions of all three instruction manuals and
+  record their source PDFs, page counts, extraction tool, and the IC-756PROII
+  hardware-validation target.
+- Add separate Yaesu FT-1000 and FT-1000D legacy CAT profiles under the
+  profile-owned `src/yaesu/ft1000/` package, including documented 8N2/4800
+  serial settings, five-byte commands, status-update decoding, split, mode,
+  frequency, and PTT support.
+- Add the interactive `probe_wizard` example for serial-device selection,
+  bounded read-only identification, explicit model override, and opt-in
+  minimum-power PTT validation with de-key and RF-power restoration.
+- Expand `probe_wizard` with a file-backed HAL diagnostic that records
+  advertised controls, meters, optional surfaces, timings, PASS/FAIL/SKIP
+  results, and driver error details; safe same-value write round-trips are
+  available only through explicit `--exercise-writes`.
+- Improve CI-V discovery by scanning documented model addresses and baud
+  rates, retaining the detected endpoint, and rejecting responses that do not
+  contain both a parsed frequency and mode.
+- Make diagnostic optional-surface results mode-aware for the IC-7300, so
+  documented Data-mode limitations and unimplemented HAL methods are reported
+  as skips instead of misleading driver failures.
+
+### Deliberate limitations
+- The profiles are framework support; physical IC-756PROII validation remains
+  pending and no hardware-validation claim is made yet.
+- FT-1000/FT-1000D support is framework-level pending physical validation;
+  Digimode 4 is an external serial/level interface and is not modeled as a
+  separate radio protocol.
+
 ## 0.1.27 — TM-V71A and TM-D710 Kenwood profiles
 
 ### Added

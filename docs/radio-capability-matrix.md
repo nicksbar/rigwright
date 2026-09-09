@@ -309,6 +309,7 @@ and `RawCiV` where the selected profile permits them.
 | FTDX10 | Full modern typed-control set, repeater controls, full memory records; hardware-validated CAT path |
 | FT-710, FTDX101D, FTDX101MP | Full modern typed-control set, repeater controls, full memory records |
 | FT-991A | Full modern typed-control set, repeater controls, full memory records, and profile-gated split |
+| FT-1000, FT-1000D | Split (read/write); frequency, mode, PTT, and CAT status update through the profile-specific FT-1000 dialect |
 | FT-817ND, FT-818, FT-857D, FT-897D | Split (read/write), RIT/clarifier and repeater shift/tone/offset (write-only), VFO toggle, CAT lock |
 | TS-590SG | AF/RF gain, squelch, RF power, preamp, NB, NR, notch, filter A/B, RIT/XIT, VFO, split, tuner, signal/power/SWR/ALC/COMP meters, AI, and memory records |
 | TS-890S | AF/RF gain, squelch, RF power, preamp, NB, NR, notch, filter A/B/C, AGC, RIT/XIT, VFO, split, tuner, signal/power/SWR/ALC/COMP/current/voltage/temperature meters, AI, and memory records |
@@ -342,6 +343,7 @@ forced into physical units; they remain normalized or unavailable.
 |---|---|---|
 | Icom IC-705, IC-718, IC-7200, IC-7300, IC-7610, IC-9700 | CI-V level BCD values already encoded as 0–255 | Exact 0–255 decode; model profiles gate availability |
 | Modern Yaesu FT-710, FTDX10, FTDX101D, FTDX101MP, FT-991A | `RM` meters 0–255; `PC` power has model watt range | Exact meter values; power maps profile minimum/maximum watts to 0–255 |
+| Classic Yaesu FT-1000, FT-1000D | Status update flags; no typed meter surface currently advertised | Meters remain unavailable until model-specific status fields are validated |
 | Classic Yaesu FT-817ND, FT-818, FT-857D, FT-897D | `E7`/`F7` meter dots 0–15 | Profile-independent half-up scaling to 0–255 |
 | Kenwood TS-590SG, TS-890S, TS-2000 | `SM`/`RM` meter dots, profile maxima 30 or 70 | Half-up scaling by the selected model profile; power maps 5–100 W |
 | Elecraft K2, KX2, KX3, K3, K3S, K4 | Model-native `SM$`, `BG`, `SW`, `PO`, and profile control maxima | Half-up scaling using model maxima; K4/K3-family meter availability remains profile-gated |

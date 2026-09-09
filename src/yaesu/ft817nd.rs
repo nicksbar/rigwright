@@ -23,6 +23,7 @@ pub const CAT_PROFILE: YaesuLegacyProfile = YaesuLegacyProfile {
     meter_metadata: super::legacy_profile::METER_METADATA,
     supports_repeater_settings: true,
     documents_power_commands: true,
+    dialect: super::legacy_profile::LegacyCatDialect::Classic,
 };
 
 pub fn profile() -> &'static RadioModelProfile {

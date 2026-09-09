@@ -17,7 +17,7 @@ claim a working end-to-end driver for that radio.
 | Icom | IC-705, IC-718, IC-7200, IC-7610, IC-9700 | [IC-705](https://www.icomjapan.com/lineup/products/IC-705/), [IC-7610 CI-V guide](https://www.icomjapan.com/support/manual/1745/), [IC-9700](https://www.icomjapan.com/lineup/products/143/) |
 | Yaesu | FTDX10 | [FTDX10 downloads](https://www.yaesu.com/indexVS.cfm?cmd=DisplayProducts&ProdCatID=102&encProdID=1ABBC23C7EC57175A35CB0FDE7A639A0) |
 | Yaesu | FT-710, FTDX101D, FTDX101MP, FT-991A | [FT-710 CAT manual](https://yaesu.com/product-detail.aspx?CatName=HF+Transceivers%2FAmplifiers&Model=FT-710), [FTDX101MP/D CAT manual](https://www.yaesu.com/product-detail.aspx?CatName=HF+Transceivers%2FAmplifiers&Model=FTDX101D), [FT-991A CAT manual](https://www.yaesu.com/Files/4CB893D7-1018-01AF-FA97E9E9AD48B50C/FT-991A_CAT_OM_ENG_1711-D.pdf) |
-| Yaesu legacy binary CAT | FT-817ND, FT-818, FT-857D, FT-897D | [FT-817ND manual](https://www.yaesu.com/product-detail.aspx?CatName=Legacy&Model=FT-817ND), [FT-818 manual](https://public2024.yaesu.com/product-detail.aspx?CatName=Legacy&Model=FT-818), [FT-857D manual](https://www.yaesu.com/product-detail.aspx?CatName=Legacy&Model=FT-857D), [FT-897D manual](https://www.yaesu.com/product-detail.aspx?CatName=Legacy&Model=FT-897D) |
+| Yaesu legacy binary CAT | FT-1000, FT-1000D, FT-817ND, FT-818, FT-857D, FT-897D | [FT-1000 operating manual](https://www.yaesu.com/Files/4CB893D7-1018-01AF-FA97E9E9AD48B50C/FT-1000_OpManual%40.pdf), [FT-817ND manual](https://www.yaesu.com/product-detail.aspx?CatName=Legacy&Model=FT-817ND), [FT-818 manual](https://public2024.yaesu.com/product-detail.aspx?CatName=Legacy&Model=FT-818), [FT-857D manual](https://public2024.yaesu.com/product-detail.aspx?CatName=Legacy&Model=FT-857D), [FT-897D manual](https://public2024.yaesu.com/product-detail.aspx?CatName=Legacy&Model=FT-897D) |
 | Kenwood | TS-590SG, TS-890S, TS-2000 | [Kenwood command-reference downloads](https://www.kenwood.com/i/products/info/amateur/software_download.html), [TS-2000 manual](https://www.kenwood.com/usa/Support/pdf/TS-2000-Owner-Manual.PDF) |
 
 ## Elecraft component audit
@@ -129,6 +129,7 @@ behavior.
 | FT-818 | `FT-818ND_OM_ENG_E13772004_2003u-ES-1.pdf` | Same five-byte family; distinct 0.1-56 MHz low receive range; status layouts; baud rates; power commands intentionally not exposed |
 | FT-857D | `FT-857D_OM_ENG_EH007M108.pdf` | CAT/LINEAR jack; 8N2; segmented receive ranges; FM-N write code; WFM/CW-N status codes; RX/TX bit layouts; clarifier and repeater opcodes |
 | FT-897D | `FT-897_OpMan.pdf` | Available FT-897 family manual; CAT/LINEAR menu; segmented receive ranges; FM-N and WFM codes; RX/TX bit layouts; shared classic opcode family |
+| FT-1000 / FT-1000D | `FT-1000_OpManual.pdf` | Five-byte CAT commands; 8N2 at 4800 baud; `0A` frequency, `0C` mode, `0F` PTT, `10` 1636-byte update, `FA` flags; profile-specific update/status decoding; Digimode 4 remains an external interface |
 
 Classic CAT has no model ID query with which to detect an incorrect operator
 selection. The driver also exposes the documented VFO toggle and CAT-lock
