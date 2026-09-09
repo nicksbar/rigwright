@@ -13,6 +13,9 @@
   profile-owned `src/yaesu/ft1000/` package, including documented 8N2/4800
   serial settings, five-byte commands, status-update decoding, split, mode,
   frequency, and PTT support.
+- Add the interactive `probe_wizard` example for serial-device selection,
+  bounded read-only identification, explicit model override, and opt-in
+  minimum-power PTT validation with de-key and RF-power restoration.
 
 ### Deliberate limitations
 - The profiles are framework support; physical IC-756PROII validation remains

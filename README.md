@@ -230,6 +230,22 @@ hardware result needs investigation; it preserves the exact connection
 context and distinguishes an unsupported operation from a skipped or failed
 one.
 
+For a simple all-vendor workflow, use the interactive probe wizard:
+
+```text
+cargo run --locked --example probe_wizard --
+```
+
+It lists available USB/serial devices, displays USB identity hints, tries
+bounded read-only CAT identification checks, and lets you select any catalog
+model when automatic identification is unavailable. `--list` prints devices
+without opening them; `--model MODEL --port PATH --baud RATE` makes selection
+non-interactive. The wizard is read-only by default. `--ptt` requires typing
+`PTT`, sets normalized RF power to the profile minimum, performs a short PTT
+check, de-keys, and restores the previous RF-power value. It refuses the PTT
+check when the selected profile cannot safely expose a writable RF-power
+minimum and readback.
+
 ## Tests and coverage
 
 Run the full locked test suite locally with:
