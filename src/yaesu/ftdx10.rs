@@ -25,6 +25,7 @@ pub const CAT_PROFILE: YaesuCatProfile = YaesuCatProfile {
     preferred_baud_rate: 38_400,
     modes: MODERN_HF_MODES,
     controls: COMMON_CONTROLS,
+    filter_width_prefix: "00",
     control_maxes: CONTROL_MAXES,
     control_values: CONTROL_VALUES,
     meters: COMMON_METERS,

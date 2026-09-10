@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.29 — FT-991A filter-width CAT framing
+
+### Fixed
+- Make `SH` filter-width set and answer layouts model-owned. FT-991A uses
+  one fixed selector before the two-digit width index (`SH001;` for index 1);
+  FT-710, FTDX10, and FTDX101D/MP retain their additional reserved field
+  (`SH0001;`). Correct FT-991A readback to accept `SH012;` for index 12.
+- Validate the profiled selector/reserved prefix when decoding width answers.
+
+### Tests and evidence
+- Check exact read/write frames for all five modern Yaesu models, malformed
+  FT-991A answers, and frequency polling after a width read. Command layouts
+  were checked against the official CAT manuals.
+- Investigated a QSONaut 0.4.0 report where FT-991A CAT polling failed after
+  applying an FT8 preset. The malformed write is confirmed in software;
+  physical-radio confirmation of the full timeout sequence remains pending.
+- This release corrects CAT framing. Application preset bandwidth selection
+  and model/mode-specific bandwidth tables need a separate audit; width index
+  1 is not a universal digital-mode bandwidth preset.
+
 ## 0.1.28 — IC-756 PRO family CI-V support
 
 ### Added

@@ -1,19 +1,20 @@
 # Rigwright
 
+[![Development version 0.1.29](https://img.shields.io/badge/development-0.1.29-blue)](Cargo.toml)
 [![CI](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml)
 [![Release workflow](https://github.com/nicksbar/rigwright/actions/workflows/release.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/nicksbar/rigwright?display_name=tag&sort=semver)](https://github.com/nicksbar/rigwright/releases)
 [![Coverage gate](https://github.com/nicksbar/rigwright/actions/workflows/coverage.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/coverage.yml)
-[![Icom 91.93%](https://img.shields.io/badge/Icom-91.93%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Icom 91.59%](https://img.shields.io/badge/Icom-91.59%25-brightgreen)](docs/radio-capability-matrix.md)
 [![HAL 94.60%](https://img.shields.io/badge/HAL-94.60%25-brightgreen)](docs/radio-capability-matrix.md)
-[![Android 87.71%](https://img.shields.io/badge/Android-87.71%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Android 87.72%](https://img.shields.io/badge/Android-87.72%25-brightgreen)](docs/radio-capability-matrix.md)
 [![Transport 91.59%](https://img.shields.io/badge/Transport-91.59%25-brightgreen)](docs/radio-capability-matrix.md)
-[![Drivers 96.45%](https://img.shields.io/badge/Drivers-96.45%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Drivers 96.48%](https://img.shields.io/badge/Drivers-96.48%25-brightgreen)](docs/radio-capability-matrix.md)
 [![IQ 100%](https://img.shields.io/badge/IQ-100%25-brightgreen)](docs/radio-capability-matrix.md)
 [![rigctld 94.76%](https://img.shields.io/badge/rigctld-94.76%25-brightgreen)](docs/radio-capability-matrix.md)
-[![DX Lab 95.27%](https://img.shields.io/badge/DX%20Lab-95.27%25-brightgreen)](docs/radio-capability-matrix.md)
+[![DX Lab 95.28%](https://img.shields.io/badge/DX%20Lab-95.28%25-brightgreen)](docs/radio-capability-matrix.md)
 [![Kenwood CAT 93.44%](https://img.shields.io/badge/Kenwood%20CAT-93.44%25-brightgreen)](docs/radio-capability-matrix.md)
-[![Kenwood profile 96.18%](https://img.shields.io/badge/Kenwood%20profile-96.18%25-brightgreen)](docs/radio-capability-matrix.md)
+[![Kenwood profile 96.21%](https://img.shields.io/badge/Kenwood%20profile-96.21%25-brightgreen)](docs/radio-capability-matrix.md)
 [![Yaesu profile 92.13%](https://img.shields.io/badge/Yaesu%20profile-92.13%25-brightgreen)](docs/radio-capability-matrix.md)
 [![Classic Yaesu profile 100%](https://img.shields.io/badge/Classic%20Yaesu%20profile-100%25-brightgreen)](docs/radio-capability-matrix.md)
 [![Elecraft 94.17%](https://img.shields.io/badge/Elecraft-94.17%25-brightgreen)](docs/radio-capability-matrix.md)
@@ -273,17 +274,20 @@ workflow; it prints the test and coverage summary in the pull request's check
 details and uploads the complete HTML report as a workflow artifact.
 
 The README coverage labels are the latest measured line-coverage snapshot from
-367 tests. The workflow badge is the authoritative pass/fail result. CI
-enforces a 90% aggregate executable-line coverage floor. Icom CI-V, Kenwood
+370 tests. The workflow badge is the authoritative pass/fail result. CI
+enforces a 90% aggregate executable-region coverage floor. Icom CI-V, Kenwood
 CAT, and the covered profile areas also have 90% gates; the remaining
 sub-90% production modules are tracked by the coverage report and remain the
 next test targets.
 The aggregate gate is implemented by `scripts/check-total-coverage.sh` and the
 area gates by `scripts/check-icom-coverage.sh` and
-scripts/check-elecraft-coverage.sh. The latest local run reached 91.35%
-overall executable-line coverage (27,611 executable lines, 2,387 missed), including
-91.58% Icom coverage, 97.19% Elecraft profile, 97.84% TS-590SG, 97.53% TS-890S,
-89.60% Elecraft transport, 93.63% generic transport, and 94.60% HAL coverage. The remaining
+`scripts/check-elecraft-coverage.sh`. The latest local run reached 91.94%
+overall line coverage (17,323 executable lines, 1,396 missed) and 91.38%
+region coverage (27,705 regions, 2,387 missed). The aggregate script currently
+checks the region columns, although its output labels them as lines; area
+checks use the line columns. Line coverage includes 91.59% Icom, 98.57%
+Elecraft profile, 100% TS-590SG and TS-890S, 93.79% Elecraft transport,
+91.59% generic transport, and 94.60% HAL. The remaining
 sub-90% modules are tracked by the coverage report and are the next test
 targets. All current local coverage gates pass. The workflow badge reports
 whether these tests and gates pass; the uploaded LLVM report provides the
