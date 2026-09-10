@@ -1177,7 +1177,10 @@ impl Radio for YaesuCatRadio {
             (ControlId::Filter, ControlValue::U8(value))
                 if value <= profile.control_max(ControlId::Filter).unwrap_or(0) =>
             {
-                self.send_set(command()?, &format!("00{value:02}"))
+                self.send_set(
+                    command()?,
+                    &format!("{}{value:02}", profile.filter_width_prefix),
+                )
             }
             (ControlId::Rit, ControlValue::Bool(enabled)) => {
                 self.send_set(command()?, if enabled { "1" } else { "0" })
@@ -1442,11 +1445,12 @@ impl YaesuCatRadio {
     }
 
     fn get_yaesu_width(&self, command: &str) -> Result<u8> {
-        let response = self.query(command, Some("0"), 4)?;
+        let prefix = self.selected_profile()?.filter_width_prefix;
+        let response = self.query(command, Some("0"), prefix.len() + 2)?;
         let payload = parse_payload(&response, command)?;
         payload
-            .get(2..4)
-            .context("invalid Yaesu SH response")?
+            .strip_prefix(prefix)
+            .context("invalid Yaesu SH response prefix")?
             .parse()
             .context("invalid Yaesu width index")
     }
@@ -2181,6 +2185,82 @@ mod tests {
             assert!(!YaesuCatRadio::new_for_model(model, "test", 38_400)
                 .unwrap()
                 .supports_meter(MeterId::Temperature));
+        }
+    }
+
+    #[test]
+    fn filter_width_round_trips_use_each_models_documented_layout() {
+        // FT-991A CAT manual p.16: SH P1 P2 P2;
+        // FT-710 p.20, FTDX10/FTDX101 p.21: SH P1 P2 P3 P3;
+        for (model, answer, writes) in [
+            (YaesuCatModel::Ft991A, "SH012;", "SH001;SH012;SH0;"),
+            (YaesuCatModel::Ft710, "SH0012;", "SH0001;SH0012;SH0;"),
+            (YaesuCatModel::Ftdx10, "SH0012;", "SH0001;SH0012;SH0;"),
+            (YaesuCatModel::Ftdx101D, "SH0012;", "SH0001;SH0012;SH0;"),
+            (YaesuCatModel::Ftdx101Mp, "SH0012;", "SH0001;SH0012;SH0;"),
+        ] {
+            let output = Arc::new(Mutex::new(Vec::new()));
+            let radio = YaesuCatRadio::with_external_transport(
+                Some(model),
+                38_400,
+                ScriptedTransport {
+                    input: answer.as_bytes().to_vec(),
+                    output: output.clone(),
+                },
+            );
+            // Isolate the width transaction from the separately tested RTS probe.
+            *radio.cat_rts_detected.lock().unwrap() = true;
+            for value in [1, 12] {
+                futures::executor::block_on(
+                    radio.set_control(ControlId::Filter, ControlValue::U8(value)),
+                )
+                .unwrap();
+            }
+            assert_eq!(
+                futures::executor::block_on(radio.get_control(ControlId::Filter)).unwrap(),
+                Some(ControlValue::U8(12)),
+                "{model:?}"
+            );
+            assert_eq!(*output.lock().unwrap(), writes.as_bytes(), "{model:?}");
+        }
+    }
+
+    #[test]
+    fn ft991a_filter_read_ignores_other_layout_and_preserves_following_frequency_read() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let radio = YaesuCatRadio::with_external_transport(
+            Some(YaesuCatModel::Ft991A),
+            38_400,
+            ScriptedTransport {
+                input: b"SH0012;SH012;FA007074000;".to_vec(),
+                output: output.clone(),
+            },
+        );
+        *radio.cat_rts_detected.lock().unwrap() = true;
+        assert_eq!(
+            futures::executor::block_on(radio.get_control(ControlId::Filter)).unwrap(),
+            Some(ControlValue::U8(12))
+        );
+        assert_eq!(
+            futures::executor::block_on(radio.get_frequency_hz()).unwrap(),
+            7_074_000
+        );
+        assert_eq!(*output.lock().unwrap(), b"SH0;FA;");
+    }
+
+    #[test]
+    fn ft991a_filter_read_rejects_invalid_selector_and_index() {
+        for response in [b"SH112;", b"SH0xx;"] {
+            let radio = YaesuCatRadio::with_external_transport(
+                Some(YaesuCatModel::Ft991A),
+                38_400,
+                ScriptedTransport {
+                    input: response.to_vec(),
+                    output: Arc::new(Mutex::new(Vec::new())),
+                },
+            );
+            *radio.cat_rts_detected.lock().unwrap() = true;
+            assert!(futures::executor::block_on(radio.get_control(ControlId::Filter)).is_err());
         }
     }
 

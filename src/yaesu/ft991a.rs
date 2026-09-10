@@ -89,6 +89,7 @@ pub const CAT_PROFILE: YaesuCatProfile = YaesuCatProfile {
     preferred_baud_rate: 38_400,
     modes: MODES,
     controls: COMMON_CONTROLS,
+    filter_width_prefix: "0",
     control_maxes: CONTROL_MAXES,
     control_values: CONTROL_VALUES,
     meters: COMMON_METERS,
@@ -127,6 +128,7 @@ mod tests {
 
     #[test]
     fn exposes_the_ft991a_catalog_profile() {
+        assert_eq!(CAT_PROFILE.filter_width_prefix, "0");
         assert_eq!(profile().model, "FT-991A");
         assert_eq!(CAT_PROFILE.model, crate::models::YaesuCatModel::Ft991A);
     }

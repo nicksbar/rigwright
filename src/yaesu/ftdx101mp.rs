@@ -16,6 +16,7 @@ pub const CAT_PROFILE: YaesuCatProfile = YaesuCatProfile {
     preferred_baud_rate: 38_400,
     modes: MODERN_HF_MODES,
     controls: COMMON_CONTROLS,
+    filter_width_prefix: "00",
     control_maxes: CONTROL_MAXES,
     control_values: CONTROL_VALUES,
     meters: super::ftdx101::METERS,
@@ -50,6 +51,7 @@ mod tests {
 
     #[test]
     fn exposes_the_ftdx101mp_catalog_profile() {
+        assert_eq!(CAT_PROFILE.filter_width_prefix, "00");
         assert_eq!(profile().model, "FTDX101MP");
         assert_eq!(CAT_PROFILE.model, crate::models::YaesuCatModel::Ftdx101Mp);
     }

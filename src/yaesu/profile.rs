@@ -51,6 +51,9 @@ pub struct YaesuCatProfile {
     pub modes: &'static [YaesuModeSpec],
     /// Controls shared by the model's documented CAT surface.
     pub controls: &'static [YaesuControlSpec],
+    /// Fixed receiver/reserved fields before the two-digit `SH` width index
+    /// in set commands and answers. Read commands use receiver selector `0`.
+    pub filter_width_prefix: &'static str,
     /// Model-owned maxima for indexed controls.
     pub control_maxes: &'static [(ControlId, u8)],
     /// Enumerated legal values for controls whose choices are not merely a
@@ -482,6 +485,7 @@ pub const GENERIC_PROFILE: YaesuCatProfile = YaesuCatProfile {
     preferred_baud_rate: 38_400,
     modes: GENERIC_MODERN_MODES,
     controls: &[],
+    filter_width_prefix: "00",
     control_maxes: &[],
     control_values: &[],
     meters: GENERIC_METERS,

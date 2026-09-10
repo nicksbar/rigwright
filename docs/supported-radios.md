@@ -115,6 +115,16 @@ subscriptions. The profile mode table chooses DATA-U for the protocol-neutral
 `Mode::Data`; other DATA variants still
 decode as data because the root HAL intentionally has a coarser mode type.
 
+For 0.1.29, filter-width framing was checked against the FT-991A CAT manual
+p.16, FT-710 p.20, and FTDX10/FTDX101MP-D p.21. FT-991A uses `SH0nn;` for
+sets and answers; the other four profiles use `SH00nn;`. All use `SH0;` to
+query the primary receiver. The shared driver consumes this layout from the
+model profile. Exact-frame regression tests cover both forms; they do not
+establish physical FT-991A recovery after the reported FT8 preset failure.
+Bandwidth indices remain native radio indices, not portable application
+presets. Model/mode-specific bandwidth mapping and digital-preset selection
+remain a separate audit item.
+
 ## Classic Yaesu manual audit
 
 Classic Yaesu models use a separate five-byte binary protocol. The profiled
