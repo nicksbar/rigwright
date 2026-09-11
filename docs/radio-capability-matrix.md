@@ -15,7 +15,7 @@ implementation, profile, application, and validation claims:
 | **H** | Exposed as a typed Rigwright HAL operation or value. |
 | **P** | Implemented and gated by the selected model profile. |
 | **Q** | Currently consumed by native QSONaut UI/workflows. |
-| **V** | Hardware-validated in the project. Current validated radios are the IC-7300 and FTDX10. |
+| **V** | Hardware-validated in the project. Current validated radios are the IC-7300, IC-756PROII, and FTDX10. |
 | **—** | Not available, not applicable, or intentionally not claimed. |
 | **R** | Read-only telemetry. **W** means writable control. **RW** means both. |
 
@@ -89,11 +89,11 @@ integration. No qsonaut-modems or qsonaut-third-party change is required.
 
 | Operation | HAL surface | Icom CI-V | Modern Yaesu CAT | Classic Yaesu CAT | Kenwood PC control | QSONaut native use |
 |---|---|---:|---:|---:|---:|---|
-| Frequency read/write | `get/set_frequency_hz` | H/P/V for IC-7300 | H/P | H/P | H/P | Q |
-| Operating mode read/write | `get/set_mode` | H/P/V for IC-7300 | H/P | H/P | H/P | Q |
+| Frequency read/write | `get/set_frequency_hz` | H/P/V for IC-7300 and IC-756PROII | H/P | H/P | H/P | Q |
+| Operating mode read/write | `get/set_mode` | H/P/V for IC-7300 and IC-756PROII | H/P | H/P | H/P | Q |
 | PTT write | `set_ptt` | H/P/V | H/P | H/P | H/P | Q |
 | PTT read | `get_ptt` | H/P/V | H/P | H/P | P for TS-590SG/TS-2000; unavailable for TS-890S | Q |
-| Radio power write | `set_power` | H/P/V behavior validated on IC-7300 | H/P | — | H/P | Q |
+| Radio power write | `set_power` | H/P/V behavior validated on IC-7300 and IC-756PROII | H/P | — | H/P | Q |
 | Radio power read | `get_power` | —; CI-V power is write-only | H/P | — | H/P | Q/pending-state handling |
 | Raw protocol | `protocol_write_read` | H/P | H/P | H/P | H/P | Not a normal UI control |
 | Tuner start/status | `start_tuner`, `get_tuner_status` | H/P/V for profiled Icoms | H/P | H/P | H/P | Q: tuner and SWR sweep workflow |
@@ -303,7 +303,8 @@ and `RawCiV` where the selected profile permits them.
 | Model/profile | Typed controls currently advertised by Rigwright |
 |---|---|
 | IC-705 | AF gain, RF gain, squelch, RF power, preamp, attenuator, AGC, NB, NR, IP+, auto notch, manual notch, tuner, split, data mode, filter, VFO, raw CI-V |
-| IC-7300 | Same as IC-705; this is the hardware-validated Icom profile |
+| IC-7300 | Same as IC-705; hardware-validated Icom profile |
+| IC-756PROII | Legacy CI-V frequency/mode/PTT path; hardware-validated at 19,200 baud. RIT offset and tuner status are intentionally not advertised because the manual does not document those read commands; Split is write-only. |
 | IC-7610 | AF gain, RF gain, squelch, RF power, preamp, attenuator, NB, NR, IP+, auto notch, manual notch, tuner, split, data mode, filter, VFO, main/sub, raw CI-V; AGC is manual-only and not typed in this profile |
 | IC-9700 | IC-705 set plus external preamp and main/sub |
 | FTDX10 | Full modern typed-control set, repeater controls, full memory records; hardware-validated CAT path |
@@ -323,7 +324,7 @@ documented ratio anchors, but those anchors are not shared by Yaesu or Kenwood.
 
 | HAL meter | Icom CI-V | Modern Yaesu CAT | Classic Yaesu CAT | Kenwood | Elecraft | QSONaut native use |
 |---|---:|---:|---:|---:|---:|---|
-| `Signal` | R/P via `15 02`; IC-7300 V | R/P via `RM1` | R/P via `E7`, 0-15 | R/P via `SM`, profile max 30 or 70 | R/P profile-native maximums | Q normalized meter panel where advertised |
+| `Signal` | R/P via `15 02`; IC-7300 and IC-756PROII V | R/P via `RM1` | R/P via `E7`, 0-15 | R/P via `SM`, profile max 30 or 70 | R/P profile-native maximums | Q normalized meter panel where advertised |
 | `Power` | R/P via `15 11`; IC-7300 V | R/P via `RM5` | R/P via `F7`, 0-15 | R/P via `SM` (TX), profile max 30 or 70 | R/P `BG`/`PO`, profile-native maximums | Q normalized meter panel where advertised |
 | `Swr` | R/P via `15 12`; IC-7300 V | R/P via `RM6` | M, not typed | R/P via `RM`; selector and range profile-specific | R/P where model profile exposes it | Q live meter and stepped SWR chart |
 | `Alc` | R/P via `15 13`; IC-7300 V | R/P via `RM4` | M, not typed | R/P TS-890S via `RM1` | R/P K3/K3S and K4 event surface | Q normalized meter panel where advertised |

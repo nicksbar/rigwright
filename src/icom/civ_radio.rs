@@ -2409,6 +2409,10 @@ impl Radio for IcomCiVRadio {
         self.supports_control(id)
             && id != ControlId::RawCiV
             && id != ControlId::TuningStep
+            && !profile_for_model(model)
+                .control_capabilities
+                .write_only_controls
+                .contains(&id)
             && (id != ControlId::Vfo || profile_for_model(model).control_capabilities.vfo_readable)
     }
 

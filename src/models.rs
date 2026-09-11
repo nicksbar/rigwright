@@ -672,7 +672,7 @@ pub const POPULAR_RADIOS: &[RadioModelProfile] = &[
         protocol: Protocol::IcomCiV {
             default_address: 0x64,
         },
-        support: SupportLevel::Framework,
+        support: SupportLevel::HardwareValidated,
         capabilities: HF_BASE,
     },
     RadioModelProfile {
@@ -921,7 +921,7 @@ mod tests {
             .filter(|profile| profile.support == SupportLevel::HardwareValidated)
             .map(|profile| profile.model)
             .collect();
-        assert_eq!(validated, ["IC-7300", "FTDX10"]);
+        assert_eq!(validated, ["IC-7300", "IC-756PROII", "FTDX10"]);
     }
 
     #[test]
