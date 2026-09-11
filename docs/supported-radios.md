@@ -14,6 +14,7 @@ claim a working end-to-end driver for that radio.
 | Vendor | Models | Official command documentation |
 |---|---|---|
 | Icom | IC-7300 | [Icom IC-7300 support](https://www.icomjapan.com/lineup/products/IC-7300/) |
+| Icom | IC-756PROII | Workspace extraction: `_manuals/IC-756PROII.md` from `IC-756PRO2.pdf`; CI-V command table, address `64`, and legacy 300–19200 baud settings |
 | Icom | IC-705, IC-718, IC-7200, IC-7610, IC-9700 | [IC-705](https://www.icomjapan.com/lineup/products/IC-705/), [IC-7610 CI-V guide](https://www.icomjapan.com/support/manual/1745/), [IC-9700](https://www.icomjapan.com/lineup/products/143/) |
 | Yaesu | FTDX10 | [FTDX10 downloads](https://www.yaesu.com/indexVS.cfm?cmd=DisplayProducts&ProdCatID=102&encProdID=1ABBC23C7EC57175A35CB0FDE7A639A0) |
 | Yaesu | FT-710, FTDX101D, FTDX101MP, FT-991A | [FT-710 CAT manual](https://yaesu.com/product-detail.aspx?CatName=HF+Transceivers%2FAmplifiers&Model=FT-710), [FTDX101MP/D CAT manual](https://www.yaesu.com/product-detail.aspx?CatName=HF+Transceivers%2FAmplifiers&Model=FTDX101D), [FT-991A CAT manual](https://www.yaesu.com/Files/4CB893D7-1018-01AF-FA97E9E9AD48B50C/FT-991A_CAT_OM_ENG_1711-D.pdf) |
@@ -72,6 +73,7 @@ reproducible without treating a product-page compatibility claim as evidence:
 | IC-718 | `IC-718 ADVANCED MANUAL 2024.pdf` | address `5E`; HF/50 MHz CI-V command table; frequency/mode, VFO, split, tuning step, AGC, preamp, NB, NR, ATT, RF power, memory, and S-meter operations; no native scope or repeater surface; framework-only pending hardware testing |
 | IC-705 | `IC-705_ENG_CI-V_6.pdf`, Jan. 2023 | address `A4`; commands `0F`, `11`, `14`, `16`, `26`, `27`; WFM; 11/475 scope; 0.03–200 and 400–470 MHz scope ranges |
 | IC-7300 | `IC-7300_Full_English v6.pdf` / `.md` | address `94`; commands `0F`, `11`, `14`, `16`, `21`, `26`, `27`; 20 dB attenuator only; FM; 11/475 scope; live RIT is rejected in the connected USB-D/Data configuration |
+| IC-756PROII | `IC-756PRO2.pdf` / `IC-756PROII.md` | address `64`; legacy mode commands; commands `0F`, `10`, `11`, `14`, `15`, `16`, `19`, `1A`, `1B`, `1C`; RIT-offset and tuner-status reads are not documented; physical validation record retained in `docs/hardware-validation/ic756proii-20260910.md` |
 | IC-7610 | `IC-7610_ENG_CI-V_4.pdf`, Sep. 2025 | address `98`; commands `07 D0/D1/D2`, `0F`, `11`, `14`, `16`, `26`, `27`; main/sub; 15/689 scope; 0.03–60 MHz scope range |
 | IC-9700 | `IC-9700_ENG_CI-V_4.pdf`, Mar. 2023 | address `A2`; commands `07 D0/D1/D2`, `0F`, `11`, `16 02`, `26`, `27`; combined internal/external preamp; 144/430/1240 MHz bands; 11/475 scope |
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.30 — IC-756PROII CI-V capability correction
+
+### Fixed
+- Align the IC-756PROII profile with the manual's CI-V command table:
+  RIT-offset and tuner-status reads are no longer advertised, and Split is
+  represented as write-only because the radio documents only `0F 00`/`0F 01`
+  set commands.
+- Validate the corrected capability surface against a physical IC-756PROII
+  at 19,200 baud; the read-only exercise now reports unsupported commands as
+  skips rather than CI-V timeouts.
+
 ## 0.1.29 — FT-991A filter-width CAT framing
 
 ### Fixed
@@ -48,8 +59,8 @@
   as skips instead of misleading driver failures.
 
 ### Deliberate limitations
-- The profiles are framework support; physical IC-756PROII validation remains
-  pending and no hardware-validation claim is made yet.
+- IC-756PRO and IC-756PROIII remain framework support pending physical
+  validation; IC-756PROII was promoted to hardware-validated in 0.1.30.
 - FT-1000/FT-1000D support is framework-level pending physical validation;
   Digimode 4 is an external serial/level interface and is not modeled as a
   separate radio protocol.

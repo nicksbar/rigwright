@@ -169,7 +169,8 @@ advertising a scope stream. Geometry, metadata layout, and receiver selection
 are model-specific profile data.
 
 Current Icom status is deliberately split: the IC-7300 has a hardware-validated
-CI-V scope stream but no USB I/Q capability in its profile. The IC-7610 profile
+CI-V scope stream, and the IC-756PROII has a hardware-validated legacy CI-V
+control path, but neither claims USB I/Q capability. The IC-7610 profile
 records documented USB I/Q output, while Rigwright 0.1.15 still provides only
 the shared sample decoder; no IC-7610 I/Q transport can be opened by the driver.
 
@@ -181,9 +182,9 @@ waveform metadata.
 
 ## Validation policy
 
-IC-7300 and FTDX10 behavior are hardware-validated for the exercised CAT
-paths. Other model profiles are based on the available official command
-references until tested against physical hardware.
+IC-7300, IC-756PROII, and FTDX10 behavior are hardware-validated for the
+exercised CAT paths. Other model profiles are based on the available official
+command references until tested against physical hardware.
 Captured protocol fixtures and parser tests are preferred over compatibility
 claims.
 

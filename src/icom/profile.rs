@@ -216,6 +216,8 @@ pub struct ControlCapabilities {
     pub filter_values: &'static [u8],
     pub supports_vfo: bool,
     pub vfo_readable: bool,
+    /// Controls whose CI-V command is documented for writes but not reads.
+    pub write_only_controls: &'static [ControlId],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

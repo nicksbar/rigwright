@@ -95,6 +95,7 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
         filter_values: &[],
         supports_vfo: true,
         vfo_readable: false,
+        write_only_controls: &[],
     },
     memory_layout: MemoryLayout::Hf,
     supports_repeater_settings: false,

@@ -36,6 +36,19 @@ const CONTROLS: &[ControlSpec] = &[
 ];
 const BAUD_RATES: &[u32] = &[300, 1_200, 4_800, 9_600, 19_200];
 const METERS: &[MeterId] = &[MeterId::Signal];
+const PROFILE_COMMON_CONTROLS: &[ControlSpec] = &[
+    super::profile::COMMON_CONTROLS[1],
+    super::profile::COMMON_CONTROLS[2],
+    super::profile::COMMON_CONTROLS[3],
+    super::profile::COMMON_CONTROLS[4],
+    super::profile::COMMON_CONTROLS[5],
+    super::profile::COMMON_CONTROLS[6],
+    super::profile::COMMON_CONTROLS[7],
+    super::profile::COMMON_CONTROLS[8],
+    super::profile::COMMON_CONTROLS[9],
+    super::profile::COMMON_CONTROLS[10],
+    super::profile::COMMON_CONTROLS[12],
+];
 
 pub fn profile() -> &'static RadioModelProfile {
     find_model("IC-756PROII").expect("built-in IC-756PROII profile")
@@ -50,7 +63,7 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
     default_address: 0x64,
     frequency_ranges: FREQUENCY_RANGES,
     controls: CONTROLS,
-    common_controls: super::profile::COMMON_CONTROLS,
+    common_controls: PROFILE_COMMON_CONTROLS,
     mode_command: ModeCommand::Legacy,
     tuning_step_values: &[0, 1, 2, 3, 4, 5, 6, 7, 8],
     modes: super::profile::DEFAULT_MODES,
@@ -71,6 +84,7 @@ pub const CIV_PROFILE: IcomCivProfile = IcomCivProfile {
         filter_values: &[],
         supports_vfo: true,
         vfo_readable: false,
+        write_only_controls: &[ControlId::Split],
     },
     memory_layout: MemoryLayout::Hf,
     supports_repeater_settings: true,
@@ -91,6 +105,9 @@ mod tests {
         assert_eq!(CIV_PROFILE.default_address, 0x64);
         assert_eq!(CIV_PROFILE.mode_command, ModeCommand::Legacy);
         assert!(!CIV_PROFILE.supports_control(ControlId::DataMode));
+        assert!(!CIV_PROFILE.supports_control(ControlId::Rit));
+        assert!(!CIV_PROFILE.supports_control(ControlId::Tuner));
+        assert!(CIV_PROFILE.supports_control(ControlId::Split));
         assert!(CIV_PROFILE.supports_control(ControlId::TuningStep));
     }
 }

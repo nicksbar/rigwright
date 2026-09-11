@@ -1,6 +1,6 @@
 # Rigwright
 
-[![Development version 0.1.29](https://img.shields.io/badge/development-0.1.29-blue)](Cargo.toml)
+[![Development version 0.1.30](https://img.shields.io/badge/development-0.1.30-blue)](Cargo.toml)
 [![CI](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/ci.yml)
 [![Release workflow](https://github.com/nicksbar/rigwright/actions/workflows/release.yml/badge.svg)](https://github.com/nicksbar/rigwright/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/nicksbar/rigwright?display_name=tag&sort=semver)](https://github.com/nicksbar/rigwright/releases)
@@ -36,7 +36,8 @@ reported through the CodeQL check and GitHub code-scanning alerts.
   admission, desired/observed snapshots, worker refresh, events, and recovery.
 - A normalized `0..=255` HAL scale for radio controls and meter deflection,
   with vendor-specific physical units kept in the driver/profile layer.
-- Native Icom CI-V over serial, developed and exercised with the IC-7300.
+- Native Icom CI-V over serial, hardware-validated with the IC-7300 and
+  IC-756PROII; the IC-756PROII path uses legacy CI-V commands at 19,200 baud.
 - Low-latency Icom CI-V response demultiplexing, bounded interleaved-frame
   retention, USB echo filtering, and transport health metrics.
 - All native ASCII vendor transports own a persistent serialized session,
@@ -63,8 +64,9 @@ reported through the CodeQL check and GitHub code-scanning alerts.
   model-specific Icom controls including IP+, notch, tuner, memory, repeater,
   main/sub, external preamp, and normalized meters where documented.
 
-The IC-7300 and FTDX10 are regularly hardware-tested. Other profiles are not
-yet claimed as hardware validated. Modern Yaesu models use a profile-driven ASCII
+The IC-7300, IC-756PROII, and FTDX10 are hardware-validated for their exercised
+CAT paths. Other profiles are not yet claimed as hardware validated. Modern
+Yaesu models use a profile-driven ASCII
 CAT engine with model IDs, ranges, mode maps, readable PTT, RF power, and split
 gating. Classic Yaesu models use a separate profile-driven five-byte 8N2 engine
 with readable PTT, split, and status. Kenwood models use a

@@ -12,6 +12,11 @@ const IC7300_HARDWARE_EVIDENCE: &[&str] = &[
 ];
 const FTDX10_HARDWARE_EVIDENCE: &[&str] =
     &["docs/radio-capability-matrix.md", "examples/yaesu_probe.rs"];
+const IC756PROII_HARDWARE_EVIDENCE: &[&str] = &[
+    "docs/radio-capability-matrix.md",
+    "docs/hardware-validation/ic756proii-20260910.md",
+    "examples/probe_wizard.rs",
+];
 const NO_HARDWARE_EVIDENCE: &[&str] = &[];
 
 /// The three evidence states deliberately remain independent.
@@ -88,6 +93,7 @@ impl SupportMatrix {
                 let references = match profile.model {
                     "IC-7300" => IC7300_HARDWARE_EVIDENCE,
                     "FTDX10" => FTDX10_HARDWARE_EVIDENCE,
+                    "IC-756PROII" => IC756PROII_HARDWARE_EVIDENCE,
                     _ => NO_HARDWARE_EVIDENCE,
                 };
                 SupportMatrixEntry {
